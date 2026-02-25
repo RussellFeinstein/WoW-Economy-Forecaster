@@ -1,0 +1,31 @@
+slug,display_name,event_type,scope,severity,expansion_slug,patch_version,start_date,end_date,announced_at,is_recurring,recurrence_rule,notes
+# ── Column reference ──────────────────────────────────────────────────────────
+# slug          (required) Unique machine-readable ID. Use kebab-case. e.g. tww-rtwf-s1
+# display_name  (required) Human-readable label.
+# event_type    (required) One of: expansion_launch, expansion_prepatch, major_patch,
+#                          minor_patch, season_start, season_end, rtwf,
+#                          holiday_event, world_boss_release, trading_post_reset,
+#                          content_drought, blizzcon, class_tuning,
+#                          profession_tuning, economy_fix, server_first,
+#                          limited_time_offer, pvp_season_start, pvp_season_end,
+#                          world_quest_bonus, timewalking, arena_tournament,
+#                          content_patch, prepatch_event, other
+# scope         (required) One of: global, region, realm_cluster, faction
+# severity      (required) One of: critical, major, moderate, minor, negligible
+# expansion_slug(required) One of: classic, tbc, wotlk, cata, mop, wod,
+#                          legion, bfa, shadowlands, dragonflight, tww, midnight
+# patch_version (optional) e.g. 11.0.5 — leave empty if unknown
+# start_date    (required) YYYY-MM-DD
+# end_date      (optional) YYYY-MM-DD — leave empty for open-ended or single-day events
+# announced_at  (optional) ISO 8601 with timezone: 2025-11-03T18:00:00Z
+#               IMPORTANT: fill this in for backtest bias guard (is_known_at)
+# is_recurring  (optional) true / false (default: false)
+# recurrence_rule (optional) iCal RRULE string for recurring events
+# notes         (optional) Free-form researcher annotation
+# ─────────────────────────────────────────────────────────────────────────────
+# Example rows — delete or replace before importing:
+tww-launch,The War Within — Expansion Launch,expansion_launch,global,critical,tww,11.0.0,2024-08-26,,2023-11-03T18:00:00Z,false,,TWW expansion day; historic demand spike for all consumables and crafting mats.
+tww-prepatch-11.0,The War Within — Pre-Patch 11.0,expansion_prepatch,global,major,tww,11.0.0,2024-08-13,,2024-07-23T17:00:00Z,false,,Pre-patch brings class changes; flask/gem demand shifts.
+tww-rtwf-nerubar-s1,RTWF: Nerub-ar Palace Season 1,rtwf,global,major,tww,11.0.0,2024-09-10,2024-09-24,2024-08-19T17:00:00Z,false,,Race to World First; extreme consumable demand spike for ~2 weeks.
+tww-season-1-start,TWW Season 1 Start,season_start,global,major,tww,11.0.0,2024-09-10,,2024-08-19T17:00:00Z,false,,Season 1 launches; crafted gear / enchant / gem surge.
+tww-holiday-winter-veil-2024,Winter Veil 2024,holiday_event,global,minor,tww,,2024-12-16,2025-01-02,,true,RRULE:FREQ=YEARLY,Annual holiday; limited demand for seasonal items.
