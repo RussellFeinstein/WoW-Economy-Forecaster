@@ -1,0 +1,84 @@
+# WoW Economy Forecaster — Default Configuration
+# This file is committed to git. Use config/local.toml (gitignored) for local overrides.
+# Use .env for secrets (API keys, etc.). See .env.example.
+
+[project]
+name    = "wow-economy-forecaster"
+version = "0.1.0"
+debug   = false
+
+# ── Database ──────────────────────────────────────────────────────────────────
+
+[database]
+# Path relative to project root (or absolute)
+db_path = "data/db/wow_forecaster.db"
+# WAL journal mode enables concurrent reads during pipeline runs
+wal_mode = true
+# Milliseconds to wait when DB is locked before raising OperationalError
+busy_timeout_ms = 5000
+
+# ── Data Directories ──────────────────────────────────────────────────────────
+
+[data]
+raw_dir           = "data/raw"
+processed_dir     = "data/processed"
+events_seed_file  = "config/events/tww_events.json"
+
+# ── Expansions ────────────────────────────────────────────────────────────────
+
+[expansions]
+known = [
+    "classic", "tbc", "wotlk", "cata", "mop", "wod",
+    "legion", "bfa", "shadowlands", "dragonflight", "tww", "midnight",
+]
+# Expansion to ingest data FROM (source of historical patterns)
+active = "tww"
+# Expansion to transfer patterns TO (forecast target)
+transfer_target = "midnight"
+
+# ── Realms ────────────────────────────────────────────────────────────────────
+
+[realms]
+# Default realm slugs to track when none specified on CLI
+# US high-pop realms covering both Alliance and Horde player bases
+defaults = ["area-52", "illidan", "stormrage"]
+# AH faction: "neutral" = commodity AH (most accurate for commodities)
+default_faction = "neutral"
+
+# ── Pipeline ──────────────────────────────────────────────────────────────────
+
+[pipeline]
+# How many raw observations to process per normalize batch
+normalize_batch_size = 1000
+# Z-score threshold for outlier detection (|z| > threshold → is_outlier=True)
+outlier_z_threshold = 3.0
+# Minimum observations required to build a usable feature vector
+min_obs_for_feature = 30
+
+# ── Forecast ──────────────────────────────────────────────────────────────────
+
+[forecast]
+# Time horizons to generate forecasts for (Nd, Nw, or Nm format)
+horizons = ["1d", "7d", "30d"]
+# Confidence interval level (0.80 = 80% CI)
+confidence_pct = 0.80
+# Default model slug used until real models are trained
+default_model_slug = "stub_linear_v0"
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+[logging]
+# Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+level = "INFO"
+# Log file (relative to project root); set to "" to disable file logging
+log_file = "data/logs/forecaster.log"
+# Structured JSON logging (useful for future log aggregation)
+json_format = false
+
+# ── Backtest ──────────────────────────────────────────────────────────────────
+
+[backtest]
+# Walk-forward window size in days (training window for each fold)
+window_days = 30
+# Step size between consecutive walk-forward windows
+step_days = 7
