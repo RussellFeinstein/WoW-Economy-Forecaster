@@ -49,31 +49,6 @@ class TestAllStubsHaveCorrectStageName:
         assert RecommendStage.stage_name == "recommend"
 
 
-class TestStubStagesRaiseNotImplemented:
-    """Stages not yet implemented should raise NotImplementedError.
-    IngestStage and NormalizeStage are now implemented (see TestImplementedStages).
-    """
-
-    @pytest.fixture
-    def minimal_config(self):
-        """Create a minimal AppConfig for testing."""
-        from wow_forecaster.config import AppConfig
-        return AppConfig()
-
-    def test_feature_build_execute_raises(self, minimal_config):
-        stage = FeatureBuildStage(config=minimal_config)
-        from wow_forecaster.models.meta import RunMetadata
-        from wow_forecaster.utils.time_utils import utcnow
-        run = RunMetadata(
-            run_slug="test-slug",
-            pipeline_stage="feature_build",
-            config_snapshot={},
-            started_at=utcnow(),
-        )
-        with pytest.raises(NotImplementedError):
-            stage._execute(run=run)
-
-
 class TestImplementedStages:
     """IngestStage and NormalizeStage are implemented skeletons (no longer stubs)."""
 

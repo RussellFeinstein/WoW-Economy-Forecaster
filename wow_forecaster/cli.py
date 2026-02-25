@@ -23,8 +23,7 @@ Install and run::
 from __future__ import annotations
 
 import json
-import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -462,6 +461,254 @@ def backtest(
     )
     typer.echo("")
     typer.echo("This command is a scaffold stub. Implement pipeline stages first.")
+
+
+@app.command("build-datasets")
+def build_datasets_cmd(
+    realm: Optional[list[str]] = typer.Option(
+        None,
+        "--realm",
+        help="Realm slug to process (e.g. area-52). Repeatable; uses config defaults if omitted.",
+    ),
+    start_date: Optional[str] = typer.Option(
+        None,
+        "--start-date",
+        help="ISO date for the start of the training window (e.g. 2024-09-01). "
+             "Defaults to today minus config.features.training_lookback_days.",
+    ),
+    end_date: Optional[str] = typer.Option(
+        None,
+        "--end-date",
+        help="ISO date for the end of the training window (e.g. 2025-01-31). "
+             "Defaults to today.",
+    ),
+    no_inference: bool = typer.Option(
+        False,
+        "--no-inference",
+        help="Skip writing the inference Parquet file (training only).",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Validate inputs and print what would be built, then exit without writing files.",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Build training + inference Parquet feature datasets.
+
+    \b
+    Steps:
+      1. Aggregates market_observations_normalized to daily (archetype, realm, date) grain.
+      2. Adds lag (1/3/7/14/28d), rolling (7/14/28d), momentum, and target label features.
+      3. Adds event proximity features with strict leakage guard (announced_at IS NOT NULL).
+      4. Adds archetype category, cold-start, and transfer mapping features.
+      5. Writes training Parquet (45 cols) and inference Parquet (42 cols, no targets).
+      6. Writes a JSON manifest with quality report and file checksums.
+
+    \b
+    Output paths:
+      data/processed/features/training/train_{realm}_{start}_{end}.parquet
+      data/processed/features/inference/inference_{realm}_{today}.parquet
+      data/processed/features/manifests/manifest_{realm}_{today}.json
+    """
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.db.schema import apply_schema
+    from wow_forecaster.features.dataset_builder import build_datasets
+    from wow_forecaster.models.meta import RunMetadata
+    from wow_forecaster.utils.time_utils import utcnow
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_db = db_path or config.database.db_path
+    target_realms: list[str] = list(realm) if realm else list(config.realms.defaults)
+
+    # Parse / default dates.
+    try:
+        end = date.fromisoformat(end_date) if end_date else date.today()
+        start = (
+            date.fromisoformat(start_date)
+            if start_date
+            else end - timedelta(days=config.features.training_lookback_days)
+        )
+    except ValueError as exc:
+        typer.echo(f"[ERROR] Invalid date format: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    if end <= start:
+        typer.echo("[ERROR] --end-date must be after --start-date.", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        f"build-datasets | realms={', '.join(target_realms)} | "
+        f"{start} → {end} | db={target_db}"
+    )
+
+    if dry_run:
+        typer.echo("[DRY RUN] Would build:")
+        for r in target_realms:
+            typer.echo(f"  training:  data/processed/features/training/train_{r}_{start}_{end}.parquet")
+            if not no_inference:
+                typer.echo(f"  inference: data/processed/features/inference/inference_{r}_{date.today()}.parquet")
+            typer.echo(f"  manifest:  data/processed/features/manifests/manifest_{r}_{date.today()}.json")
+        return
+
+    # Ensure schema exists.
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        apply_schema(conn)
+
+    # Create a RunMetadata for this build.
+    run = RunMetadata(
+        run_slug=f"feature-build-{date.today().isoformat()}",
+        pipeline_stage="feature_build",
+        config_snapshot={"features": config.features.model_dump()},
+        started_at=utcnow(),
+    )
+
+    try:
+        with get_connection(
+            target_db,
+            wal_mode=config.database.wal_mode,
+            busy_timeout_ms=config.database.busy_timeout_ms,
+        ) as conn:
+            total = build_datasets(
+                conn=conn,
+                config=config,
+                run=run,
+                realm_slugs=target_realms,
+                start_date=start,
+                end_date=end,
+                build_training=True,
+                build_inference=not no_inference,
+            )
+    except Exception as exc:
+        typer.echo(f"[ERROR] Dataset build failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"[OK] Built {total} training rows across {len(target_realms)} realm(s).")
+
+
+@app.command("validate-datasets")
+def validate_datasets_cmd(
+    manifest: str = typer.Option(
+        ...,
+        "--manifest",
+        help="Path to a manifest JSON file (written by build-datasets).",
+    ),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Exit with code 1 if any quality warnings are present (not just hard errors).",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Validate a feature dataset using its manifest JSON.
+
+    Loads the training Parquet file referenced in the manifest and runs
+    a full data quality report.  Prints a human-readable summary.
+
+    \b
+    Exit codes:
+      0 — report is clean (or warnings-only when --strict is not set).
+      1 — hard quality errors found (duplicates or leakage warnings).
+          Also 1 if --strict is set and any warnings are present.
+    """
+    import pyarrow.parquet as pq
+
+    from wow_forecaster.features.quality import build_quality_report
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    manifest_path = Path(manifest)
+    if not manifest_path.exists():
+        typer.echo(f"[ERROR] Manifest file not found: {manifest_path}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        with open(manifest_path, encoding="utf-8") as f:
+            manifest_data = json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        typer.echo(f"[ERROR] Failed to read manifest: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    training_info = manifest_data.get("files", {}).get("training", {})
+    training_path = Path(training_info.get("path", ""))
+
+    if not training_path.exists():
+        typer.echo(f"[ERROR] Training Parquet not found: {training_path}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Loading Parquet: {training_path}")
+    try:
+        table = pq.read_table(str(training_path))
+        rows = table.to_pylist()
+    except Exception as exc:
+        typer.echo(f"[ERROR] Failed to read Parquet: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Running quality report on {len(rows)} rows...")
+    items_excluded = manifest_data.get("quality", {}).get("items_excluded_no_archetype", 0)
+    report = build_quality_report(rows, items_excluded=items_excluded)
+
+    # ── Print report ──────────────────────────────────────────────────────────
+    typer.echo("")
+    typer.echo("=== Data Quality Report ===")
+    typer.echo(f"  Realm:            {manifest_data.get('realm_slug', '?')}")
+    typer.echo(f"  Date range:       {manifest_data.get('date_range', {}).get('start')} → {manifest_data.get('date_range', {}).get('end')}")
+    typer.echo(f"  Total rows:       {report.total_rows}")
+    typer.echo(f"  Total archetypes: {report.total_archetypes}")
+    typer.echo(f"  Total realms:     {report.total_realms}")
+    typer.echo(f"  Duplicates:       {report.duplicate_key_count}")
+    typer.echo(f"  Series w/ gaps:   {report.date_gap_series_count}")
+    typer.echo(f"  Volume proxy:     {report.volume_proxy_pct:.1%}")
+    typer.echo(f"  Cold-start rows:  {report.cold_start_pct:.1%}")
+    typer.echo(f"  Items excl. (no archetype): {report.items_excluded_no_archetype}")
+    typer.echo(f"  Is clean:         {report.is_clean}")
+
+    if report.high_missingness_cols:
+        typer.echo(f"\n  High-missingness columns (>{report.total_rows * 0:.0f} threshold):")
+        for col in report.high_missingness_cols:
+            frac = report.missingness.get(col, 0.0)
+            typer.echo(f"    {col}: {frac:.1%} null")
+
+    if report.leakage_warnings:
+        typer.echo(f"\n  [WARN] Leakage warnings ({len(report.leakage_warnings)}):")
+        for w in report.leakage_warnings[:5]:
+            typer.echo(f"    {w}")
+        if len(report.leakage_warnings) > 5:
+            typer.echo(f"    ... and {len(report.leakage_warnings) - 5} more.")
+
+    typer.echo("")
+
+    has_errors   = not report.is_clean
+    has_warnings = bool(report.high_missingness_cols or report.date_gap_series_count > 0)
+
+    if has_errors:
+        typer.echo("[FAIL] Dataset has hard quality errors.")
+        raise typer.Exit(code=1)
+    elif strict and has_warnings:
+        typer.echo("[FAIL] Dataset has quality warnings (--strict mode).")
+        raise typer.Exit(code=1)
+    else:
+        typer.echo("[OK] Dataset quality check passed.")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

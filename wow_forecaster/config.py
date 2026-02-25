@@ -64,7 +64,7 @@ class RealmsConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    defaults: list[str] = ["area-52", "illidan", "stormrage"]
+    defaults: list[str] = ["area-52", "illidan", "stormrage", "tichondrius"]
     default_faction: str = "neutral"
 
 
@@ -122,6 +122,23 @@ class BacktestConfig(BaseModel):
     step_days: int = 7
 
 
+class FeatureConfig(BaseModel):
+    """Feature engineering parameters for the dataset builder.
+
+    These values control which lag/rolling windows are computed, when an
+    archetype series is considered "cold start", and how far back the
+    training window extends by default.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    lag_days: list[int] = [1, 3, 7, 14, 28]
+    rolling_windows: list[int] = [7, 14, 28]
+    cold_start_threshold: int = 30       # obs below this → is_cold_start=True
+    training_lookback_days: int = 180    # default training window length
+    target_horizons_days: list[int] = [1, 7, 28]  # forward-looking price targets
+
+
 class AppConfig(BaseModel):
     """Complete application configuration — the single source of truth.
 
@@ -139,6 +156,7 @@ class AppConfig(BaseModel):
     forecast: ForecastConfig = ForecastConfig()
     logging: LoggingConfig = LoggingConfig()
     backtest: BacktestConfig = BacktestConfig()
+    features: FeatureConfig = FeatureConfig()
     debug: bool = False
 
 
@@ -250,5 +268,6 @@ def _build_app_config(raw: dict[str, Any]) -> AppConfig:
         forecast=ForecastConfig(**raw.get("forecast", {})),
         logging=LoggingConfig(**raw.get("logging", {})),
         backtest=BacktestConfig(**raw.get("backtest", {})),
+        features=FeatureConfig(**raw.get("features", {})),
         debug=raw.get("debug", project.get("debug", False)),
     )
