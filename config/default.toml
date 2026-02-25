@@ -100,3 +100,35 @@ cold_start_threshold = 30
 training_lookback_days = 180
 # Forward-looking price horizons (in days) to use as training targets
 target_horizons_days = [1, 7, 28]
+
+# ── ML Model ──────────────────────────────────────────────────────────────────
+
+[model]
+# Model architecture: "lightgbm" (only option in v0.5.0)
+model_type = "lightgbm"
+# LightGBM tree complexity (max leaves per tree; higher = more complex)
+num_leaves = 31
+# Gradient boosting step size; lower = slower convergence but better generalisation
+learning_rate = 0.05
+# Maximum number of boosting rounds (early stopping may reduce this)
+n_estimators = 100
+# Minimum observations per leaf (critical for thin archetype series)
+min_child_samples = 5
+# Fraction of features sampled per tree (reduces overfitting, speeds training)
+feature_fraction = 0.8
+# Fraction of rows sampled per boosting round (bagging)
+bagging_fraction = 0.8
+# Apply bagging every N rounds (0 = disable bagging)
+bagging_freq = 5
+# Stop early if val MAE does not improve for N rounds
+early_stopping_rounds = 20
+# Number of trailing days to hold out as the time-based validation set
+validation_split_days = 14
+# Where trained model artifacts (.pkl + .json) are written
+artifact_dir = "data/outputs/model_artifacts"
+# Where daily forecast CSV/JSON reports are written
+forecast_output_dir = "data/outputs/forecasts"
+# Where recommendation CSV/JSON reports are written
+recommendation_output_dir = "data/outputs/recommendations"
+# Maximum recommendations returned per archetype category
+top_n_per_category = 3

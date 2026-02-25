@@ -141,6 +141,31 @@ class FeatureConfig(BaseModel):
     target_horizons_days: list[int] = [1, 7, 28]  # forward-looking price targets
 
 
+class ModelConfig(BaseModel):
+    """ML model training and inference parameters.
+
+    Controls LightGBM hyperparameters, artifact output paths, and
+    recommendation engine settings.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    model_type: str = "lightgbm"
+    num_leaves: int = 31
+    learning_rate: float = 0.05
+    n_estimators: int = 100
+    min_child_samples: int = 5
+    feature_fraction: float = 0.8
+    bagging_fraction: float = 0.8
+    bagging_freq: int = 5
+    early_stopping_rounds: int = 20
+    validation_split_days: int = 14
+    artifact_dir: str = "data/outputs/model_artifacts"
+    forecast_output_dir: str = "data/outputs/forecasts"
+    recommendation_output_dir: str = "data/outputs/recommendations"
+    top_n_per_category: int = 3
+
+
 class AppConfig(BaseModel):
     """Complete application configuration — the single source of truth.
 
@@ -159,6 +184,7 @@ class AppConfig(BaseModel):
     logging: LoggingConfig = LoggingConfig()
     backtest: BacktestConfig = BacktestConfig()
     features: FeatureConfig = FeatureConfig()
+    model: ModelConfig = ModelConfig()
     debug: bool = False
 
 
@@ -271,5 +297,6 @@ def _build_app_config(raw: dict[str, Any]) -> AppConfig:
         logging=LoggingConfig(**raw.get("logging", {})),
         backtest=BacktestConfig(**raw.get("backtest", {})),
         features=FeatureConfig(**raw.get("features", {})),
+        model=ModelConfig(**raw.get("model", {})),
         debug=raw.get("debug", project.get("debug", False)),
     )
