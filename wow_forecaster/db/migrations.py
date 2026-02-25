@@ -1,0 +1,119 @@
+"""
+Simple sequential schema migration bootstrap.
+
+This is NOT a full migration framework (no Alembic, no down migrations).
+For a local research tool, we use a lightweight approach:
+
+  1. A ``schema_versions`` table tracks applied migration IDs.
+  2. Each migration is a Python function taking a ``sqlite3.Connection``.
+  3. ``run_migrations()`` applies any migrations not yet recorded.
+
+Adding a new migration:
+  1. Define a function ``migration_NNNN_description(conn)`` below.
+  2. Add it to ``MIGRATIONS`` with a string key like ``"0001_initial"``.
+
+Migrations are applied in dictionary insertion order (Python 3.7+ guarantees).
+The initial schema is applied via ``apply_schema()`` in ``schema.py`` before
+any migrations run — migrations are for incremental changes only.
+"""
+
+from __future__ import annotations
+
+import logging
+import sqlite3
+from collections.abc import Callable
+
+logger = logging.getLogger(__name__)
+
+MigrationFn = Callable[[sqlite3.Connection], None]
+
+
+def _ensure_version_table(conn: sqlite3.Connection) -> None:
+    """Create the ``schema_versions`` tracking table if it does not exist."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS schema_versions (
+            version_id  TEXT    NOT NULL PRIMARY KEY,
+            applied_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+            description TEXT
+        );
+    """)
+    conn.commit()
+
+
+def _get_applied_versions(conn: sqlite3.Connection) -> set[str]:
+    """Return the set of already-applied migration version IDs."""
+    rows = conn.execute("SELECT version_id FROM schema_versions;").fetchall()
+    return {row["version_id"] for row in rows}
+
+
+def _mark_applied(conn: sqlite3.Connection, version_id: str, description: str) -> None:
+    """Record a migration as applied."""
+    conn.execute(
+        "INSERT INTO schema_versions(version_id, description) VALUES (?, ?);",
+        (version_id, description),
+    )
+    conn.commit()
+
+
+# ── Migration functions ────────────────────────────────────────────────────────
+# Each function receives an open connection. Apply DDL changes here.
+# The initial schema is handled by apply_schema() in schema.py,
+# so migrations start from schema version 0001 onwards.
+
+def migration_0001_add_schema_versions(conn: sqlite3.Connection) -> None:
+    """Bootstrap: ensure schema_versions table exists (no-op after first run)."""
+    # Already handled by _ensure_version_table above; this entry just anchors
+    # the migration version baseline so future migrations have a reference point.
+    pass
+
+
+# ── Registry ──────────────────────────────────────────────────────────────────
+# Add new migrations here. They will run once, in order.
+
+MIGRATIONS: dict[str, tuple[MigrationFn, str]] = {
+    "0001_bootstrap": (
+        migration_0001_add_schema_versions,
+        "Baseline: schema_versions table created",
+    ),
+    # Future example:
+    # "0002_add_item_tags": (
+    #     migration_0002_add_item_tags,
+    #     "Add item_tags table for flexible item labeling",
+    # ),
+}
+
+
+def run_migrations(conn: sqlite3.Connection) -> int:
+    """Apply all pending migrations.
+
+    Args:
+        conn: An open ``sqlite3.Connection`` with FK enforcement enabled.
+
+    Returns:
+        Number of migrations applied in this call.
+    """
+    _ensure_version_table(conn)
+    applied = _get_applied_versions(conn)
+
+    count = 0
+    for version_id, (fn, description) in MIGRATIONS.items():
+        if version_id in applied:
+            logger.debug("Migration %s already applied; skipping.", version_id)
+            continue
+
+        logger.info("Applying migration %s: %s", version_id, description)
+        try:
+            fn(conn)
+            _mark_applied(conn, version_id, description)
+            count += 1
+        except Exception as exc:
+            conn.rollback()
+            logger.error("Migration %s FAILED: %s", version_id, exc)
+            raise
+
+    if count:
+        logger.info("Applied %d migration(s).", count)
+    else:
+        logger.debug("No pending migrations.")
+
+    return count
