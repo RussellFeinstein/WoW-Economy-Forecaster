@@ -1,0 +1,11 @@
+slug,display_name,event_type,scope,severity,expansion_slug,patch_version,start_date,end_date,announced_at,is_recurring,recurrence_rule,notes
+midnight-launch,Midnight — Expansion Launch,expansion_launch,global,critical,midnight,12.0.0,2026-11-11,,2025-11-03T18:00:00Z,false,,Expected launch window (speculative). Historically the largest economy spike in a 2-year cycle.
+midnight-prepatch,Midnight — Pre-Patch 12.0,expansion_prepatch,global,major,midnight,12.0.0,2026-10-28,,2025-11-03T18:00:00Z,false,,Estimated 2-week pre-patch before expansion. Class reworks → demand shift for gems/enchants.
+midnight-rtwf-s1,RTWF: Midnight Season 1 Raid,rtwf,global,major,midnight,12.0.0,2026-11-25,2026-12-09,2026-11-03T18:00:00Z,false,,Estimated 2 weeks post-launch. Highest consumable demand window in expansion cycle.
+midnight-season-1-start,Midnight Season 1 Start,season_start,global,major,midnight,12.0.0,2026-11-25,,2026-11-03T18:00:00Z,false,,Season 1 launch: crafted gear surge, enchant/gem demand peak.
+midnight-blizzcon-2025-announcement,Midnight — BlizzCon 2025 Announcement,blizzcon,global,moderate,midnight,,2025-11-03,2025-11-04,2025-11-03T18:00:00Z,false,,Announcement event; early speculation drives Dragonflight-era mat hoarding.
+midnight-holiday-winter-veil-2026,Winter Veil 2026,holiday_event,global,minor,midnight,,2026-12-16,2027-01-02,,true,RRULE:FREQ=YEARLY,Recurring Winter Veil; seasonal item demand spike.
+midnight-holiday-midsummer-2027,Midsummer Fire Festival 2027,holiday_event,global,minor,midnight,,2027-06-21,2027-07-05,,true,RRULE:FREQ=YEARLY,Annual Midsummer; moderate seasonal demand.
+midnight-season-1-end,Midnight Season 1 End,season_end,global,moderate,midnight,,2027-03-15,,2027-02-01T18:00:00Z,false,,Season 1 end; consumable demand crash as progression stops.
+midnight-season-2-start,Midnight Season 2 Start,season_start,global,major,midnight,,2027-03-22,,2027-03-01T18:00:00Z,false,,New season: fresh tier sets → enchant/gem demand spike.
+midnight-major-patch-12.1,Midnight Patch 12.1,major_patch,global,major,midnight,12.1.0,2027-01-20,,2026-12-15T18:00:00Z,false,,First major content patch; profession recipes / materials update.

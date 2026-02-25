@@ -257,6 +257,29 @@ CREATE TABLE IF NOT EXISTS recommendation_outputs (
 );
 """
 
+_DDL_INGESTION_SNAPSHOTS = """
+CREATE TABLE IF NOT EXISTS ingestion_snapshots (
+    snapshot_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id          INTEGER REFERENCES run_metadata(run_id),
+    source          TEXT    NOT NULL,
+    endpoint        TEXT    NOT NULL,
+    snapshot_path   TEXT    NOT NULL DEFAULT '',
+    content_hash    TEXT,
+    record_count    INTEGER NOT NULL DEFAULT 0,
+    success         INTEGER NOT NULL DEFAULT 1,
+    error_message   TEXT,
+    fetched_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+"""
+
+_DDL_INGESTION_SNAPSHOTS_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_snapshots_source_time
+    ON ingestion_snapshots(source, fetched_at);
+CREATE INDEX IF NOT EXISTS idx_snapshots_run
+    ON ingestion_snapshots(run_id)
+    WHERE run_id IS NOT NULL;
+"""
+
 # ── Ordered list of all DDL to apply ──────────────────────────────────────────
 
 _ALL_DDL: list[str] = [
@@ -276,6 +299,8 @@ _ALL_DDL: list[str] = [
     _DDL_FORECAST_OUTPUTS,
     _DDL_FORECAST_OUTPUTS_INDEXES,
     _DDL_RECOMMENDATION_OUTPUTS,
+    _DDL_INGESTION_SNAPSHOTS,
+    _DDL_INGESTION_SNAPSHOTS_INDEXES,
 ]
 
 # Table names for introspection / tests
@@ -292,6 +317,7 @@ ALL_TABLE_NAMES = [
     "run_metadata",
     "forecast_outputs",
     "recommendation_outputs",
+    "ingestion_snapshots",
 ]
 
 

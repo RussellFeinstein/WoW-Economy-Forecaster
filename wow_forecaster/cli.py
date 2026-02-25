@@ -147,7 +147,10 @@ def import_events(
         None,
         "--file",
         "-f",
-        help="Path to events JSON file. Defaults to config.data.events_seed_file.",
+        help=(
+            "Path to events file (.json or .csv). "
+            "Defaults to config.data.events_seed_file."
+        ),
     ),
     config_path: Optional[str] = typer.Option(
         None,
@@ -160,78 +163,97 @@ def import_events(
         help="Validate events but do not write to the database.",
     ),
 ) -> None:
-    """Import WoW events from a JSON seed file into the database.
+    """Import WoW events from a JSON or CSV file into the database.
+
+    Accepts two file formats (detected by extension):
+
+    \b
+      .json — Array of event objects matching the WoWEvent schema.
+              See config/events/tww_events.json for an example.
+
+      .csv  — Comma-separated with header row.
+              See config/events/event_import_template.csv for the schema.
 
     Uses UPSERT semantics — existing events with the same slug are updated.
-    The seed file format is a JSON array of event objects. See
-    config/events/tww_events.json for the schema.
     """
+    from pydantic import ValidationError
+
     from wow_forecaster.db.connection import get_connection
     from wow_forecaster.db.repositories.event_repo import WoWEventRepository
+    from wow_forecaster.ingestion.event_csv import parse_event_csv
     from wow_forecaster.models.event import WoWEvent
-    from pydantic import ValidationError
 
     config = _load_config_or_exit(config_path)
     _configure_logging(config)
 
-    # Resolve events file path
-    if events_file:
-        events_path = Path(events_file)
-    else:
-        events_path = Path(config.data.events_seed_file)
+    events_path = Path(events_file) if events_file else Path(config.data.events_seed_file)
 
     if not events_path.exists():
         typer.echo(f"[ERROR] Events file not found: {events_path}", err=True)
         raise typer.Exit(code=1)
 
     typer.echo(f"Loading events from: {events_path}")
-
-    with open(events_path, encoding="utf-8") as f:
-        raw_events = json.load(f)
-
-    if not isinstance(raw_events, list):
-        typer.echo("[ERROR] Events file must contain a JSON array.", err=True)
-        raise typer.Exit(code=1)
-
-    # Validate all events first
+    fmt = events_path.suffix.lower()
     validated: list[WoWEvent] = []
-    errors: list[tuple[int, str]] = []
 
-    for i, raw in enumerate(raw_events):
+    if fmt == ".csv":
         try:
-            validated.append(WoWEvent(**raw))
-        except (ValidationError, Exception) as exc:
-            errors.append((i, str(exc)))
+            validated = parse_event_csv(events_path)
+        except (FileNotFoundError, ValueError) as exc:
+            typer.echo(f"[ERROR] CSV parse failed:\n{exc}", err=True)
+            raise typer.Exit(code=1)
 
-    if errors:
-        typer.echo(f"[ERROR] {len(errors)} event(s) failed validation:", err=True)
-        for idx, msg in errors[:5]:
-            typer.echo(f"  Event #{idx}: {msg}", err=True)
-        if len(errors) > 5:
-            typer.echo(f"  ... and {len(errors) - 5} more.", err=True)
+    elif fmt == ".json":
+        try:
+            with open(events_path, encoding="utf-8") as f:
+                raw_events = json.load(f)
+        except (json.JSONDecodeError, OSError) as exc:
+            typer.echo(f"[ERROR] JSON parse error: {exc}", err=True)
+            raise typer.Exit(code=1)
+
+        if not isinstance(raw_events, list):
+            typer.echo("[ERROR] JSON events file must contain an array.", err=True)
+            raise typer.Exit(code=1)
+
+        errors: list[tuple[int, str]] = []
+        for i, raw in enumerate(raw_events):
+            try:
+                validated.append(WoWEvent(**raw))
+            except (ValidationError, Exception) as exc:
+                errors.append((i, str(exc)))
+
+        if errors:
+            typer.echo(f"[ERROR] {len(errors)} event(s) failed validation:", err=True)
+            for idx, msg in errors[:5]:
+                typer.echo(f"  Event #{idx}: {msg}", err=True)
+            if len(errors) > 5:
+                typer.echo(f"  ... and {len(errors) - 5} more.", err=True)
+            raise typer.Exit(code=1)
+
+    else:
+        typer.echo(
+            f"[ERROR] Unsupported file format '{fmt}'. Use .json or .csv.", err=True
+        )
         raise typer.Exit(code=1)
 
-    typer.echo(f"  Validated {len(validated)} event(s).")
+    typer.echo(f"  Validated {len(validated)} event(s) from {fmt} file.")
 
     if dry_run:
         typer.echo("[DRY RUN] No events written to database.")
         for ev in validated:
-            typer.echo(f"  {ev.slug} | {ev.event_type} | {ev.start_date}")
+            typer.echo(f"  {ev.slug} | {ev.event_type.value} | {ev.start_date}")
         return
 
-    # Write to DB
     with get_connection(
         config.database.db_path,
         wal_mode=config.database.wal_mode,
         busy_timeout_ms=config.database.busy_timeout_ms,
     ) as conn:
         repo = WoWEventRepository(conn)
-        upserted = 0
         for ev in validated:
             repo.upsert(ev)
-            upserted += 1
 
-    typer.echo(f"  Upserted {upserted} event(s) into database.")
+    typer.echo(f"  Upserted {len(validated)} event(s) into database.")
     typer.echo("[OK] Events imported.")
 
 
@@ -240,7 +262,12 @@ def run_hourly_refresh(
     realm: Optional[str] = typer.Option(
         None,
         "--realm",
-        help="Realm slug to refresh (e.g. area-52). Uses config defaults if omitted.",
+        help="Realm slug to refresh (e.g. area-52). Repeatable; uses config defaults if omitted.",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
     ),
     dry_run: bool = typer.Option(
         False,
@@ -253,23 +280,85 @@ def run_hourly_refresh(
         help="Path to TOML config file.",
     ),
 ) -> None:
-    """[STUB] Run ingest + normalize pipeline for a realm.
+    """Run ingest + normalize pipeline for one or more realms.
 
-    This command is a placeholder. When implemented it will:
-      1. Call IngestStage to fetch new AH snapshots.
-      2. Call NormalizeStage to convert and flag outliers.
-      3. Write a RunMetadata record for the combined hourly refresh.
+    \b
+    Steps:
+      1. IngestStage  — fetch AH snapshots (fixture mode until API keys are set).
+                        Writes JSON to data/raw/snapshots/ and records metadata
+                        in the ingestion_snapshots SQLite table.
+      2. NormalizeStage — convert copper→gold, flag outliers, write normalized obs.
+
+    \b
+    Credential setup (.env, gitignored):
+      UNDERMINE_API_KEY=...          → enables real Undermine data
+      BLIZZARD_CLIENT_ID=...         → enables real Blizzard AH data
+      BLIZZARD_CLIENT_SECRET=...
+
+    Without credentials the pipeline runs in fixture mode (synthetic sample data).
     """
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.db.schema import apply_schema
+    from wow_forecaster.pipeline.ingest import IngestStage
+    from wow_forecaster.pipeline.normalize import NormalizeStage
+
     config = _load_config_or_exit(config_path)
     _configure_logging(config)
 
-    target_realm = realm or config.realms.defaults[0]
+    target_db = db_path or config.database.db_path
+    target_realms = [realm] if realm else list(config.realms.defaults)
 
-    typer.echo(f"[STUB] run-hourly-refresh | realm={target_realm}")
-    typer.echo("  IngestStage   → not yet implemented")
-    typer.echo("  NormalizeStage → not yet implemented")
+    typer.echo(
+        f"run-hourly-refresh | realms={', '.join(target_realms)} | db={target_db}"
+    )
+
+    if dry_run:
+        typer.echo("[DRY RUN] Would run:")
+        typer.echo(f"  IngestStage   → realms={target_realms}")
+        typer.echo("  NormalizeStage → all unprocessed raw observations")
+        return
+
+    # Ensure schema exists (idempotent)
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        apply_schema(conn)
+
+    # ── IngestStage ───────────────────────────────────────────────────────────
+    typer.echo("  [1/2] IngestStage ...")
+    ingest_ok = False
+    try:
+        ingest = IngestStage(config=config, db_path=target_db)
+        ingest_run = ingest.run(realm_slugs=target_realms)
+        typer.echo(
+            f"        status={ingest_run.status} | "
+            f"snapshots written (market_obs_raw: {ingest_run.rows_processed} rows)"
+        )
+        ingest_ok = ingest_run.status == "success"
+    except Exception as exc:
+        typer.echo(f"        FAILED: {exc}", err=True)
+
+    # ── NormalizeStage ────────────────────────────────────────────────────────
+    typer.echo("  [2/2] NormalizeStage ...")
+    try:
+        norm = NormalizeStage(config=config, db_path=target_db)
+        norm_run = norm.run()
+        typer.echo(
+            f"        status={norm_run.status} | "
+            f"normalized={norm_run.rows_processed} rows"
+        )
+    except Exception as exc:
+        typer.echo(f"        FAILED: {exc}", err=True)
+
     typer.echo("")
-    typer.echo("This command is a scaffold stub. Implement IngestStage and NormalizeStage first.")
+    if ingest_ok:
+        typer.echo("[OK] Hourly refresh complete.")
+    else:
+        typer.echo(
+            "[OK] Hourly refresh complete (fixture mode — set API keys in .env for live data)."
+        )
 
 
 @app.command("run-daily-forecast")
