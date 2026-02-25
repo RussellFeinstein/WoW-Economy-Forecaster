@@ -280,6 +280,53 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_run
     WHERE run_id IS NOT NULL;
 """
 
+_DDL_BACKTEST_RUNS = """
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    backtest_run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id          INTEGER REFERENCES run_metadata(run_id),
+    realm_slug      TEXT    NOT NULL,
+    backtest_start  TEXT    NOT NULL,
+    backtest_end    TEXT    NOT NULL,
+    window_days     INTEGER NOT NULL,
+    step_days       INTEGER NOT NULL,
+    fold_count      INTEGER NOT NULL DEFAULT 0,
+    models          TEXT    NOT NULL,
+    config_snapshot TEXT    NOT NULL,
+    created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+"""
+
+_DDL_BACKTEST_FOLD_RESULTS = """
+CREATE TABLE IF NOT EXISTS backtest_fold_results (
+    result_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    backtest_run_id     INTEGER NOT NULL REFERENCES backtest_runs(backtest_run_id),
+    fold_index          INTEGER NOT NULL,
+    train_end           TEXT    NOT NULL,
+    test_date           TEXT    NOT NULL,
+    horizon_days        INTEGER NOT NULL,
+    archetype_id        INTEGER NOT NULL,
+    realm_slug          TEXT    NOT NULL,
+    category_tag        TEXT,
+    model_name          TEXT    NOT NULL,
+    actual_price        REAL,
+    predicted_price     REAL,
+    abs_error           REAL,
+    pct_error           REAL,
+    direction_actual    INTEGER,
+    direction_predicted INTEGER,
+    direction_correct   INTEGER,
+    is_event_window     INTEGER NOT NULL DEFAULT 0,
+    created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+"""
+
+_DDL_BACKTEST_FOLD_RESULTS_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_bt_results_run
+    ON backtest_fold_results(backtest_run_id);
+CREATE INDEX IF NOT EXISTS idx_bt_results_archetype
+    ON backtest_fold_results(archetype_id, model_name, horizon_days);
+"""
+
 # ── Ordered list of all DDL to apply ──────────────────────────────────────────
 
 _ALL_DDL: list[str] = [
@@ -301,6 +348,9 @@ _ALL_DDL: list[str] = [
     _DDL_RECOMMENDATION_OUTPUTS,
     _DDL_INGESTION_SNAPSHOTS,
     _DDL_INGESTION_SNAPSHOTS_INDEXES,
+    _DDL_BACKTEST_RUNS,
+    _DDL_BACKTEST_FOLD_RESULTS,
+    _DDL_BACKTEST_FOLD_RESULTS_INDEXES,
 ]
 
 # Table names for introspection / tests
@@ -318,6 +368,8 @@ ALL_TABLE_NAMES = [
     "forecast_outputs",
     "recommendation_outputs",
     "ingestion_snapshots",
+    "backtest_runs",
+    "backtest_fold_results",
 ]
 
 

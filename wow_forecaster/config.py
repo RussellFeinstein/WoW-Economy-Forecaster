@@ -120,6 +120,8 @@ class BacktestConfig(BaseModel):
 
     window_days: int = 30
     step_days: int = 7
+    horizons_days: list[int] = [1, 3]
+    min_train_rows: int = 14
 
 
 class FeatureConfig(BaseModel):

@@ -82,6 +82,10 @@ json_format = false
 window_days = 30
 # Step size between consecutive walk-forward windows
 step_days = 7
+# Forecast horizons in days to evaluate (1d = next-day price, 3d = 3-day-ahead price)
+horizons_days = [1, 3]
+# Minimum number of non-null training rows required before fitting a model on a series
+min_train_rows = 14
 
 # ── Feature Engineering ───────────────────────────────────────────────────────
 
