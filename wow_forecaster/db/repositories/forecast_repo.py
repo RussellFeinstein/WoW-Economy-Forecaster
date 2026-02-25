@@ -58,6 +58,9 @@ class ForecastOutputRepository(BaseRepository):
     def insert_recommendation(self, rec: RecommendationOutput) -> int:
         """Insert a recommendation output and return its ``rec_id``.
 
+        Persists all fields including ``score``, ``score_components``, and
+        ``category_tag`` (added in migration 0003).
+
         Args:
             rec: The ``RecommendationOutput`` to persist.
 
@@ -67,8 +70,9 @@ class ForecastOutputRepository(BaseRepository):
         self.execute(
             """
             INSERT INTO recommendation_outputs (
-                forecast_id, action, reasoning, priority, expires_at
-            ) VALUES (?, ?, ?, ?, ?);
+                forecast_id, action, reasoning, priority, expires_at,
+                score, score_components, category_tag
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
             """,
             (
                 rec.forecast_id,
@@ -76,6 +80,9 @@ class ForecastOutputRepository(BaseRepository):
                 rec.reasoning,
                 rec.priority,
                 rec.expires_at.isoformat() if rec.expires_at else None,
+                rec.score,
+                rec.score_components,
+                rec.category_tag,
             ),
         )
         return self.last_insert_rowid()

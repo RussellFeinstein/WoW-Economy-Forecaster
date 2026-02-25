@@ -360,17 +360,22 @@ def run_hourly_refresh(
         )
 
 
-@app.command("run-daily-forecast")
-def run_daily_forecast(
-    realm: Optional[str] = typer.Option(
+@app.command("train-model")
+def train_model(
+    realm: Optional[list[str]] = typer.Option(
         None,
         "--realm",
-        help="Realm slug to forecast (e.g. area-52). Uses config defaults if omitted.",
+        help="Realm slug(s) to train for. Repeatable; uses config defaults if omitted.",
     ),
-    horizon: str = typer.Option(
-        "7d",
-        "--horizon",
-        help="Forecast horizon (1d, 7d, 14d, 30d, 90d).",
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would train without executing.",
     ),
     config_path: Optional[str] = typer.Option(
         None,
@@ -378,26 +383,272 @@ def run_daily_forecast(
         help="Path to TOML config file.",
     ),
 ) -> None:
-    """[STUB] Run feature_build + train + forecast + recommend pipeline.
+    """Train LightGBM forecasting models from the latest feature Parquet.
 
-    This command is a placeholder. When implemented it will:
-      1. FeatureBuildStage: engineer features from normalized observations.
-      2. TrainStage: update models with latest data.
-      3. ForecastStage: generate price forecasts for configured horizons.
-      4. RecommendStage: produce ranked buy/sell/hold/avoid recommendations.
+    \b
+    Steps:
+      1. Locate the latest training Parquet for each realm.
+      2. Apply a time-based validation split (last N days held out).
+      3. Train one LightGBM model per configured horizon (1d, 7d, 28d).
+      4. Write .pkl + .json artifacts to config.model.artifact_dir.
+      5. Register each model in model_metadata (marking old models inactive).
+
+    \b
+    Run 'build-datasets' first to generate the training Parquet.
     """
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.db.schema import apply_schema
+    from wow_forecaster.pipeline.train import TrainStage
+
     config = _load_config_or_exit(config_path)
     _configure_logging(config)
 
+    target_db     = db_path or config.database.db_path
+    target_realms = list(realm) if realm else list(config.realms.defaults)
+    artifact_dir  = config.model.artifact_dir
+
+    typer.echo(
+        f"train-model | realms={', '.join(target_realms)} | "
+        f"horizons={list(config.features.target_horizons_days)} | db={target_db}"
+    )
+
+    if dry_run:
+        typer.echo("[DRY RUN] Would train:")
+        for r in target_realms:
+            typer.echo(
+                f"  realm={r} | horizons={list(config.features.target_horizons_days)} | "
+                f"artifacts -> {artifact_dir}"
+            )
+        return
+
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        apply_schema(conn)
+
+    try:
+        stage      = TrainStage(config=config, db_path=target_db)
+        result_run = stage.run(realm_slugs=target_realms)
+    except Exception as exc:
+        typer.echo(f"[ERROR] Training failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        f"  status={result_run.status} | models_trained={result_run.rows_processed}"
+    )
+    typer.echo("")
+    typer.echo(f"[OK] Training complete. Artifacts in: {artifact_dir}")
+
+
+@app.command("run-daily-forecast")
+def run_daily_forecast(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Realm slug to forecast (e.g. area-52). Uses config defaults if omitted.",
+    ),
+    skip_train: bool = typer.Option(
+        False,
+        "--skip-train",
+        help="Skip TrainStage and reuse the most recent model artifacts.",
+    ),
+    skip_recommend: bool = typer.Option(
+        False,
+        "--skip-recommend",
+        help="Skip RecommendStage (forecast only).",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Run the full daily forecast pipeline: train -> forecast -> recommend.
+
+    \b
+    Steps:
+      1. TrainStage:     Fit/update LightGBM models from the latest training Parquet.
+      2. ForecastStage:  Predict prices for all archetypes (1d, 7d, 28d horizons).
+      3. RecommendStage: Rank forecast outputs into buy/sell/hold/avoid recommendations.
+
+    \b
+    Outputs:
+      data/outputs/model_artifacts/  -- updated .pkl model files
+      data/outputs/forecasts/        -- forecast_{realm}_{date}.csv
+      data/outputs/recommendations/  -- recommendations_{realm}_{date}.csv/.json
+
+    \b
+    Run 'build-datasets' first to generate the required feature Parquet files.
+    Use --skip-train to reuse existing artifacts (useful for intra-day re-runs).
+    """
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.db.schema import apply_schema
+    from wow_forecaster.pipeline.forecast import ForecastStage
+    from wow_forecaster.pipeline.recommend import RecommendStage
+    from wow_forecaster.pipeline.train import TrainStage
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_db    = db_path or config.database.db_path
     target_realm = realm or config.realms.defaults[0]
 
-    typer.echo(f"[STUB] run-daily-forecast | realm={target_realm} | horizon={horizon}")
-    typer.echo("  FeatureBuildStage → not yet implemented")
-    typer.echo("  TrainStage        → not yet implemented")
-    typer.echo("  ForecastStage     → not yet implemented")
-    typer.echo("  RecommendStage    → not yet implemented")
+    typer.echo(
+        f"run-daily-forecast | realm={target_realm} | date={date.today()} | "
+        f"skip_train={skip_train} | skip_recommend={skip_recommend}"
+    )
+
+    # Ensure schema exists (idempotent).
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        apply_schema(conn)
+
+    # ── Step 1: TrainStage ─────────────────────────────────────────────────────
+    if not skip_train:
+        typer.echo("  [1/3] TrainStage ...")
+        try:
+            train_stage  = TrainStage(config=config, db_path=target_db)
+            train_result = train_stage.run(realm_slugs=[target_realm])
+            typer.echo(
+                f"        status={train_result.status} | "
+                f"models={train_result.rows_processed}"
+            )
+        except Exception as exc:
+            typer.echo(f"        [WARN] TrainStage failed: {exc}", err=True)
+            typer.echo("        Proceeding with existing model artifacts.")
+    else:
+        typer.echo("  [1/3] TrainStage skipped (--skip-train).")
+
+    # ── Step 2: ForecastStage ──────────────────────────────────────────────────
+    typer.echo("  [2/3] ForecastStage ...")
+    try:
+        fc_stage  = ForecastStage(config=config, db_path=target_db)
+        fc_result = fc_stage.run(realm_slug=target_realm)
+        typer.echo(
+            f"        status={fc_result.status} | "
+            f"forecast_rows={fc_result.rows_processed}"
+        )
+    except Exception as exc:
+        typer.echo(f"[ERROR] ForecastStage failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    # ── Step 3: RecommendStage ─────────────────────────────────────────────────
+    if not skip_recommend:
+        typer.echo("  [3/3] RecommendStage ...")
+        try:
+            rec_stage  = RecommendStage(config=config, db_path=target_db)
+            rec_result = rec_stage.run(
+                realm_slug=target_realm,
+                forecast_run_id=fc_result.run_id,
+            )
+            typer.echo(
+                f"        status={rec_result.status} | "
+                f"recommendations={rec_result.rows_processed}"
+            )
+        except Exception as exc:
+            typer.echo(f"        [WARN] RecommendStage failed: {exc}", err=True)
+    else:
+        typer.echo("  [3/3] RecommendStage skipped (--skip-recommend).")
+
     typer.echo("")
-    typer.echo("This command is a scaffold stub. Implement pipeline stages first.")
+    typer.echo(
+        f"[OK] Daily forecast complete. "
+        f"Reports in: {config.model.recommendation_output_dir}"
+    )
+
+
+@app.command("recommend-top-items")
+def recommend_top_items(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Realm slug (e.g. area-52). Uses first config default if omitted.",
+    ),
+    top_n: Optional[int] = typer.Option(
+        None,
+        "--top-n",
+        help="Max recommendations per category. Defaults to config.model.top_n_per_category.",
+    ),
+    forecast_run_id: Optional[int] = typer.Option(
+        None,
+        "--forecast-run-id",
+        help="Score forecasts from a specific run_id. Defaults to the most recent.",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Score forecast outputs and write ranked buy/sell/hold/avoid recommendations.
+
+    \b
+    Loads the most recent ForecastOutput rows from the database, scores them
+    with the 5-component formula, and writes CSV + JSON report files.
+
+    \b
+    Score formula (0-100):
+      total = 0.35 x opportunity  +  0.20 x liquidity
+            - 0.20 x volatility   +  0.15 x event_boost
+            - 0.10 x uncertainty
+
+    \b
+    Actions:
+      buy   -- predicted ROI >= 10%
+      sell  -- predicted ROI <= -10%
+      avoid -- CI width > 80% or CV > 80% (too risky)
+      hold  -- otherwise
+
+    \b
+    Run 'run-daily-forecast' first to generate forecast outputs.
+    """
+    from wow_forecaster.pipeline.recommend import RecommendStage
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_db    = db_path or config.database.db_path
+    target_realm = realm or config.realms.defaults[0]
+    n            = top_n or config.model.top_n_per_category
+
+    typer.echo(
+        f"recommend-top-items | realm={target_realm} | "
+        f"top_n={n} | forecast_run_id={forecast_run_id or 'latest'}"
+    )
+
+    try:
+        stage  = RecommendStage(config=config, db_path=target_db)
+        result = stage.run(
+            realm_slug=target_realm,
+            top_n_per_category=n,
+            forecast_run_id=forecast_run_id,
+        )
+    except Exception as exc:
+        typer.echo(f"[ERROR] Recommend failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        f"  status={result.status} | recommendations={result.rows_processed}"
+    )
+    typer.echo("")
+    typer.echo(
+        f"[OK] Recommendations written to: {config.model.recommendation_output_dir}"
+    )
 
 
 @app.command("backtest")

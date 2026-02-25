@@ -114,6 +114,27 @@ def migration_0002_add_backtest_tables(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def migration_0003_add_recommendation_score(conn: sqlite3.Connection) -> None:
+    """Add score, score_components, and category_tag to recommendation_outputs."""
+    existing = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(recommendation_outputs);").fetchall()
+    }
+    if "score" not in existing:
+        conn.execute(
+            "ALTER TABLE recommendation_outputs ADD COLUMN score REAL DEFAULT 0.0;"
+        )
+    if "score_components" not in existing:
+        conn.execute(
+            "ALTER TABLE recommendation_outputs ADD COLUMN score_components TEXT;"
+        )
+    if "category_tag" not in existing:
+        conn.execute(
+            "ALTER TABLE recommendation_outputs ADD COLUMN category_tag TEXT;"
+        )
+    conn.commit()
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 # Add new migrations here. They will run once, in order.
 
@@ -125,6 +146,10 @@ MIGRATIONS: dict[str, tuple[MigrationFn, str]] = {
     "0002_backtest_tables": (
         migration_0002_add_backtest_tables,
         "Add backtest_runs and backtest_fold_results tables",
+    ),
+    "0003_recommendation_score": (
+        migration_0003_add_recommendation_score,
+        "Add score, score_components, category_tag to recommendation_outputs",
     ),
 }
 

@@ -18,8 +18,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-ForecastHorizon = Literal["1d", "7d", "14d", "30d", "90d"]
-VALID_HORIZONS: frozenset[str] = frozenset({"1d", "7d", "14d", "30d", "90d"})
+ForecastHorizon = Literal["1d", "7d", "14d", "28d", "30d", "90d"]
+VALID_HORIZONS: frozenset[str] = frozenset({"1d", "7d", "14d", "28d", "30d", "90d"})
 
 RecommendationAction = Literal["buy", "sell", "hold", "avoid"]
 
@@ -107,6 +107,9 @@ class RecommendationOutput(BaseModel):
     reasoning: str
     priority: int = 5
     expires_at: Optional[datetime] = None
+    score: float = 0.0
+    score_components: Optional[str] = None  # JSON blob of ScoreComponents
+    category_tag: Optional[str] = None
 
     @field_validator("priority")
     @classmethod
