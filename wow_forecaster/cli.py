@@ -420,7 +420,30 @@ def backtest(
     window_days: Optional[int] = typer.Option(
         None,
         "--window-days",
-        help="Walk-forward window size in days. Uses config default if omitted.",
+        help="Walk-forward training window size in days. Uses config default if omitted.",
+    ),
+    step_days: Optional[int] = typer.Option(
+        None,
+        "--step-days",
+        help="Days to advance between folds. Uses config default if omitted.",
+    ),
+    horizons: Optional[str] = typer.Option(
+        None,
+        "--horizons",
+        help=(
+            "Comma-separated forecast horizons in days (e.g. '1,3'). "
+            "Uses config default if omitted."
+        ),
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would run (fold count, model names) without executing.",
     ),
     config_path: Optional[str] = typer.Option(
         None,
@@ -428,22 +451,37 @@ def backtest(
         help="Path to TOML config file.",
     ),
 ) -> None:
-    """[STUB] Run walk-forward backtest over historical TWW data.
+    """Run walk-forward backtest over historical TWW data.
 
-    This command is a placeholder. When implemented it will:
-      1. Iterate over (start_date, end_date) in walk-forward windows.
-      2. For each window: build features, train, forecast, evaluate.
-      3. Respect WoWEvent.is_known_at() to prevent look-ahead bias.
-      4. Compute MAE, RMSE, directional accuracy per archetype.
-      5. Write evaluation results to outputs/backtest/.
+    \b
+    For each realm:
+      1. Load normalised market observations and build daily feature rows.
+      2. Generate walk-forward folds from start_date to end_date.
+      3. Fit all baseline models (last_value, rolling_mean, day_of_week,
+         simple_volatility) on each fold's training window.
+      4. Evaluate predictions vs actual prices; compute MAE, RMSE, MAPE,
+         directional accuracy.
+      5. Persist results to backtest_runs + backtest_fold_results (SQLite).
+      6. Write CSV summaries and JSON manifest to:
+           data/processed/backtest/{realm}_{start}_{end}/horizon_{N}d/
+
+    \b
+    Leakage prevention:
+      - Models only see data up to (and including) each fold's train_end date.
+      - Event window classification is post-hoc (never a model input).
+      - target_price_* columns are never passed to any model.
     """
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.db.schema import apply_schema
+    from wow_forecaster.pipeline.backtest import BacktestStage
+
     config = _load_config_or_exit(config_path)
     _configure_logging(config)
 
-    # Validate date format
+    # Validate dates.
     try:
         start = date.fromisoformat(start_date)
-        end = date.fromisoformat(end_date)
+        end   = date.fromisoformat(end_date)
     except ValueError as exc:
         typer.echo(f"[ERROR] Invalid date format: {exc}", err=True)
         raise typer.Exit(code=1)
@@ -452,15 +490,251 @@ def backtest(
         typer.echo("[ERROR] --end-date must be after --start-date.", err=True)
         raise typer.Exit(code=1)
 
+    # Parse optional horizon override.
+    parsed_horizons: Optional[list[int]] = None
+    if horizons:
+        try:
+            parsed_horizons = [int(h.strip()) for h in horizons.split(",")]
+            if any(h < 1 for h in parsed_horizons):
+                raise ValueError("All horizons must be >= 1.")
+        except ValueError as exc:
+            typer.echo(f"[ERROR] Invalid --horizons value: {exc}", err=True)
+            raise typer.Exit(code=1)
+
+    target_db    = db_path or config.database.db_path
     target_realm = realm or config.realms.defaults[0]
-    win = window_days or config.backtest.window_days
+    win  = window_days or config.backtest.window_days
+    step = step_days   or config.backtest.step_days
+    hors = parsed_horizons or config.backtest.horizons_days
 
     typer.echo(
-        f"[STUB] backtest | realm={target_realm} | "
-        f"{start} → {end} | window={win}d"
+        f"backtest | realm={target_realm} | {start} -> {end} | "
+        f"window={win}d | step={step}d | horizons={hors}"
+    )
+
+    if dry_run:
+        from wow_forecaster.backtest.splits import generate_walk_forward_splits
+        from wow_forecaster.backtest.models import all_baseline_models
+        models = all_baseline_models()
+        typer.echo("[DRY RUN] Would execute:")
+        for h in hors:
+            folds = generate_walk_forward_splits(start, end, win, step, h)
+            typer.echo(
+                f"  horizon={h}d | folds={len(folds)} | "
+                f"models={[m.name for m in models]}"
+            )
+        return
+
+    # Ensure schema exists (idempotent).
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        apply_schema(conn)
+
+    typer.echo(f"  Running BacktestStage ...")
+    try:
+        stage = BacktestStage(config=config, db_path=target_db)
+        result_run = stage.run(
+            realm_slug=target_realm,
+            start_date=start,
+            end_date=end,
+            horizons_days=hors,
+            window_days=win,
+            step_days=step,
+        )
+    except Exception as exc:
+        typer.echo(f"[ERROR] Backtest failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        f"  status={result_run.status} | records={result_run.rows_processed}"
     )
     typer.echo("")
-    typer.echo("This command is a scaffold stub. Implement pipeline stages first.")
+    typer.echo(
+        f"[OK] Backtest complete. "
+        f"Results in: data/processed/backtest/{target_realm.replace('-', '_')}_{start}_{end}/"
+    )
+
+
+@app.command("report-backtest")
+def report_backtest(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Filter results to this realm slug.",
+    ),
+    backtest_run_id: Optional[int] = typer.Option(
+        None,
+        "--run-id",
+        help="Show results for a specific backtest_run_id.",
+    ),
+    horizon: Optional[int] = typer.Option(
+        None,
+        "--horizon",
+        help="Filter to a specific horizon in days (e.g. 1 or 3).",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Print a summary of the most recent backtest results.
+
+    \b
+    Shows:
+      - Run metadata (realm, date range, window, fold count).
+      - Per-model aggregate metrics (MAE, RMSE, MAPE, directional accuracy).
+      - Event vs non-event accuracy split.
+
+    \b
+    Use --run-id to target a specific run; otherwise the most recent run
+    matching --realm is shown.
+    """
+    from wow_forecaster.backtest.metrics import BacktestMetrics, PredictionRecord
+    from wow_forecaster.backtest.slices import (
+        slice_by_event_window,
+        slice_by_model_and_horizon,
+    )
+    from wow_forecaster.db.connection import get_connection
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_db = db_path or config.database.db_path
+
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        # ── Find the target backtest run ─────────────────────────────────────
+        if backtest_run_id is not None:
+            run_row = conn.execute(
+                "SELECT * FROM backtest_runs WHERE backtest_run_id = ?;",
+                (backtest_run_id,),
+            ).fetchone()
+        else:
+            q = "SELECT * FROM backtest_runs"
+            params: list = []
+            if realm:
+                q += " WHERE realm_slug = ?"
+                params.append(realm)
+            q += " ORDER BY backtest_run_id DESC LIMIT 1;"
+            run_row = conn.execute(q, params).fetchone()
+
+        if run_row is None:
+            typer.echo("[ERROR] No backtest runs found in the database.", err=True)
+            typer.echo(
+                "  Run 'wow-forecaster backtest --start-date ... --end-date ...' first.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        bt_run_id   = run_row["backtest_run_id"]
+        realm_slug  = run_row["realm_slug"]
+        bt_start    = run_row["backtest_start"]
+        bt_end      = run_row["backtest_end"]
+        fold_count  = run_row["fold_count"]
+        window_days = run_row["window_days"]
+
+        typer.echo("")
+        typer.echo("=== Backtest Report ===")
+        typer.echo(f"  Run ID:      {bt_run_id}")
+        typer.echo(f"  Realm:       {realm_slug}")
+        typer.echo(f"  Date range:  {bt_start} -> {bt_end}")
+        typer.echo(f"  Window:      {window_days}d | Folds: {fold_count}")
+
+        # ── Load prediction records ──────────────────────────────────────────
+        q_results = """
+            SELECT fold_index, archetype_id, realm_slug, category_tag,
+                   model_name, train_end, test_date, horizon_days,
+                   actual_price, predicted_price,
+                   direction_actual, direction_predicted, direction_correct,
+                   is_event_window
+            FROM backtest_fold_results
+            WHERE backtest_run_id = ?
+        """
+        params_r: list = [bt_run_id]
+        if horizon is not None:
+            q_results += " AND horizon_days = ?"
+            params_r.append(horizon)
+        result_rows = conn.execute(q_results, params_r).fetchall()
+
+    if not result_rows:
+        typer.echo("  No prediction records found for this run.")
+        raise typer.Exit(code=0)
+
+    # ── Reconstruct PredictionRecords ────────────────────────────────────────
+    import datetime as _dt
+    records: list[PredictionRecord] = []
+    for r in result_rows:
+        try:
+            train_end  = _dt.date.fromisoformat(r["train_end"])
+            test_date  = _dt.date.fromisoformat(r["test_date"])
+        except (ValueError, TypeError):
+            continue
+        records.append(PredictionRecord(
+            fold_index=r["fold_index"],
+            archetype_id=r["archetype_id"],
+            realm_slug=r["realm_slug"],
+            category_tag=r["category_tag"],
+            model_name=r["model_name"],
+            train_end=train_end,
+            test_date=test_date,
+            horizon_days=r["horizon_days"],
+            actual_price=r["actual_price"],
+            predicted_price=r["predicted_price"],
+            last_known_price=None,  # not stored; not needed for reporting
+            is_event_window=bool(r["is_event_window"]),
+        ))
+
+    typer.echo(f"  Predictions: {len(records)}")
+
+    # ── Per-model × horizon metrics ──────────────────────────────────────────
+    model_metrics = slice_by_model_and_horizon(records)
+    typer.echo("")
+    typer.echo("Per-model metrics (MAE in gold | RMSE | MAPE | Dir.Acc):")
+    header = f"  {'Model':<22} {'H':>3}  {'N':>6}  {'MAE':>8}  {'RMSE':>8}  {'MAPE':>7}  {'DirAcc':>7}"
+    typer.echo(header)
+    typer.echo("  " + "-" * (len(header) - 2))
+    for (model_name, h), m in sorted(model_metrics.items()):
+        mae_str  = f"{m.mae:.2f}"  if m.mae  is not None else "  N/A"
+        rmse_str = f"{m.rmse:.2f}" if m.rmse is not None else "  N/A"
+        mape_str = f"{m.mape:.1%}" if m.mape is not None else "  N/A"
+        dir_str  = (
+            f"{m.directional_accuracy:.1%}"
+            if m.directional_accuracy is not None else "  N/A"
+        )
+        typer.echo(
+            f"  {model_name:<22} {h:>3}  {m.n_evaluated:>6}  "
+            f"{mae_str:>8}  {rmse_str:>8}  {mape_str:>7}  {dir_str:>7}"
+        )
+
+    # ── Event vs non-event split ─────────────────────────────────────────────
+    event_metrics = slice_by_event_window(records)
+    if len(event_metrics) > 1:
+        typer.echo("")
+        typer.echo("Event vs non-event accuracy (all models combined):")
+        for window_key, m in sorted(event_metrics.items()):
+            mae_str = f"{m.mae:.2f}" if m.mae is not None else "N/A"
+            dir_str = (
+                f"{m.directional_accuracy:.1%}"
+                if m.directional_accuracy is not None else "N/A"
+            )
+            typer.echo(
+                f"  {window_key:<20} N={m.n_evaluated:>5}  MAE={mae_str}  DirAcc={dir_str}"
+            )
+
+    typer.echo("")
+    typer.echo("[OK] Report complete.")
 
 
 @app.command("build-datasets")
@@ -550,7 +824,7 @@ def build_datasets_cmd(
 
     typer.echo(
         f"build-datasets | realms={', '.join(target_realms)} | "
-        f"{start} → {end} | db={target_db}"
+        f"{start} -> {end} | db={target_db}"
     )
 
     if dry_run:
@@ -672,7 +946,7 @@ def validate_datasets_cmd(
     typer.echo("")
     typer.echo("=== Data Quality Report ===")
     typer.echo(f"  Realm:            {manifest_data.get('realm_slug', '?')}")
-    typer.echo(f"  Date range:       {manifest_data.get('date_range', {}).get('start')} → {manifest_data.get('date_range', {}).get('end')}")
+    typer.echo(f"  Date range:       {manifest_data.get('date_range', {}).get('start')} -> {manifest_data.get('date_range', {}).get('end')}")
     typer.echo(f"  Total rows:       {report.total_rows}")
     typer.echo(f"  Total archetypes: {report.total_archetypes}")
     typer.echo(f"  Total realms:     {report.total_realms}")

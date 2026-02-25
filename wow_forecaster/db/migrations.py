@@ -67,6 +67,53 @@ def migration_0001_add_schema_versions(conn: sqlite3.Connection) -> None:
     pass
 
 
+def migration_0002_add_backtest_tables(conn: sqlite3.Connection) -> None:
+    """Add backtest_runs and backtest_fold_results tables for walk-forward evaluation."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS backtest_runs (
+            backtest_run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id          INTEGER REFERENCES run_metadata(run_id),
+            realm_slug      TEXT    NOT NULL,
+            backtest_start  TEXT    NOT NULL,
+            backtest_end    TEXT    NOT NULL,
+            window_days     INTEGER NOT NULL,
+            step_days       INTEGER NOT NULL,
+            fold_count      INTEGER NOT NULL DEFAULT 0,
+            models          TEXT    NOT NULL,
+            config_snapshot TEXT    NOT NULL,
+            created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS backtest_fold_results (
+            result_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            backtest_run_id     INTEGER NOT NULL REFERENCES backtest_runs(backtest_run_id),
+            fold_index          INTEGER NOT NULL,
+            train_end           TEXT    NOT NULL,
+            test_date           TEXT    NOT NULL,
+            horizon_days        INTEGER NOT NULL,
+            archetype_id        INTEGER NOT NULL,
+            realm_slug          TEXT    NOT NULL,
+            category_tag        TEXT,
+            model_name          TEXT    NOT NULL,
+            actual_price        REAL,
+            predicted_price     REAL,
+            abs_error           REAL,
+            pct_error           REAL,
+            direction_actual    INTEGER,
+            direction_predicted INTEGER,
+            direction_correct   INTEGER,
+            is_event_window     INTEGER NOT NULL DEFAULT 0,
+            created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_bt_results_run
+            ON backtest_fold_results(backtest_run_id);
+        CREATE INDEX IF NOT EXISTS idx_bt_results_archetype
+            ON backtest_fold_results(archetype_id, model_name, horizon_days);
+    """)
+    conn.commit()
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 # Add new migrations here. They will run once, in order.
 
@@ -75,11 +122,10 @@ MIGRATIONS: dict[str, tuple[MigrationFn, str]] = {
         migration_0001_add_schema_versions,
         "Baseline: schema_versions table created",
     ),
-    # Future example:
-    # "0002_add_item_tags": (
-    #     migration_0002_add_item_tags,
-    #     "Add item_tags table for flexible item labeling",
-    # ),
+    "0002_backtest_tables": (
+        migration_0002_add_backtest_tables,
+        "Add backtest_runs and backtest_fold_results tables",
+    ),
 }
 
 

@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 VALID_PIPELINE_STAGES = frozenset({
     "ingest", "normalize", "feature_build", "train", "forecast", "recommend",
+    "backtest",
 })
 VALID_RUN_STATUSES = frozenset({"started", "success", "failed", "skipped"})
 VALID_MODEL_TYPES = frozenset({
