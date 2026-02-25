@@ -41,7 +41,7 @@ transfer_target = "midnight"
 [realms]
 # Default realm slugs to track when none specified on CLI
 # US high-pop realms covering both Alliance and Horde player bases
-defaults = ["area-52", "illidan", "stormrage"]
+defaults = ["area-52", "illidan", "stormrage", "tichondrius"]
 # AH faction: "neutral" = commodity AH (most accurate for commodities)
 default_faction = "neutral"
 
@@ -82,3 +82,17 @@ json_format = false
 window_days = 30
 # Step size between consecutive walk-forward windows
 step_days = 7
+
+# ── Feature Engineering ───────────────────────────────────────────────────────
+
+[features]
+# Lag windows (in days) to compute as lookback features
+lag_days = [1, 3, 7, 14, 28]
+# Rolling windows (in days) for mean + std features, and momentum pct-change
+rolling_windows = [7, 14, 28]
+# Archetype series with fewer observations than this are flagged is_cold_start=True
+cold_start_threshold = 30
+# Default number of calendar days to look back when building the training window
+training_lookback_days = 180
+# Forward-looking price horizons (in days) to use as training targets
+target_horizons_days = [1, 7, 28]
