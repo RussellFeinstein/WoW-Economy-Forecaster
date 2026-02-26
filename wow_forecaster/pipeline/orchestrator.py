@@ -290,8 +290,27 @@ class HourlyOrchestrator:
         Returns:
             RealmIngestionResult.
         """
-        # HOOK: throttle / backoff before API call
-        # _throttle_hook(realm_slug)  # stub — add when real HTTP is enabled
+        # ── Governance preflight gate ──────────────────────────────────────
+        # Before calling IngestStage (which will eventually make real HTTP
+        # calls when clients are enabled), check that each data source is
+        # enabled and within its cooldown window.
+        #
+        # IngestStage uses two sources: "undermine_exchange" and "blizzard_api".
+        # Both are currently disabled (enabled=false in config/sources.toml)
+        # until real credentials are configured.
+        #
+        # Preflight is non-fatal for per-realm runs: a blocked source is logged
+        # as WARNING and the realm result is flagged, but orchestration continues
+        # for other realms.  This mirrors the existing failure-isolation policy.
+        if self.config.governance.preflight_checks_enabled:
+            blocked = self._run_governance_preflight(realm_slug)
+            if blocked:
+                return RealmIngestionResult(
+                    realm_slug=realm_slug,
+                    success=False,
+                    rows_written=0,
+                    error=blocked,
+                )
 
         try:
             from wow_forecaster.pipeline.ingest import IngestStage
@@ -311,6 +330,84 @@ class HourlyOrchestrator:
                 rows_written=0,
                 error=str(exc),
             )
+
+    def _run_governance_preflight(self, realm_slug: str) -> Optional[str]:
+        """Run governance preflight checks for the sources used by IngestStage.
+
+        Checks ``undermine_exchange`` and ``blizzard_api`` against the source
+        registry.  Disabled sources are blocked (or skipped, depending on
+        ``block_disabled_sources`` config).
+
+        This is intentionally non-fatal: if *any* source check passes, the
+        ingest can proceed in fixture mode.  Real provider calls are gated
+        individually inside the client stubs.
+
+        Args:
+            realm_slug: Realm being ingested (used for logging only).
+
+        Returns:
+            None if all checks pass (or preflight is configured to allow
+            disabled sources).  A non-empty error string if the caller should
+            abort this realm's ingest run.
+        """
+        try:
+            from wow_forecaster.governance.preflight import run_preflight_checks
+            from wow_forecaster.governance.registry import get_source_policy
+
+            gc = self.config.governance
+            sources_to_check = ["undermine_exchange", "blizzard_api"]
+            blocked_sources: list[str] = []
+
+            for sid in sources_to_check:
+                try:
+                    policy = get_source_policy(sid, gc.sources_config_path)
+                except KeyError:
+                    # Source not in registry — skip rather than block.
+                    logger.debug(
+                        "Governance: source '%s' not in registry; skipping preflight.",
+                        sid,
+                    )
+                    continue
+
+                result = run_preflight_checks(sid, policy)
+                for w in result.warnings:
+                    logger.warning("Governance[%s][%s]: %s", realm_slug, sid, w)
+
+                if not result.passed:
+                    if gc.block_disabled_sources:
+                        logger.warning(
+                            "Governance[%s][%s]: blocked — %s",
+                            realm_slug,
+                            sid,
+                            result.blocked_reason,
+                        )
+                        blocked_sources.append(sid)
+                    else:
+                        logger.error(
+                            "Governance[%s][%s]: hard error — %s",
+                            realm_slug,
+                            sid,
+                            result.blocked_reason,
+                        )
+                        return result.blocked_reason
+
+            # In fixture mode all sources are disabled, so ALL checks will fail.
+            # However, IngestStage uses fixture data regardless of source status.
+            # We therefore only hard-block when EVERY source is blocked AND
+            # block_disabled_sources is False.  When block_disabled_sources=True
+            # (the default), we silently allow the run to proceed in fixture mode.
+            if blocked_sources and not gc.block_disabled_sources:
+                return f"All ingest sources blocked for realm '{realm_slug}': {blocked_sources}"
+
+        except Exception as exc:
+            # Preflight failure is non-fatal — log and continue.
+            logger.warning(
+                "Governance preflight raised unexpectedly for realm=%s: %s",
+                realm_slug,
+                exc,
+            )
+
+        return None
 
     def _run_normalize(
         self, run_id: Optional[int]

@@ -2048,6 +2048,285 @@ def report_status_cmd(
     typer.echo("[OK] report-status complete.")
 
 
+# ── Governance commands ───────────────────────────────────────────────────────
+
+
+@app.command("list-sources")
+def list_sources_cmd(
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print full detail for each source (rate limits, backoff, retention, policy notes).",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """List all registered data sources and their enabled/disabled status.
+
+    \b
+    Reads config/sources.toml (or the path set in governance.sources_config_path)
+    and prints a summary table of every declared source.
+
+    \b
+    Columns:
+      Status       -- [ENABLED] or [disabled]
+      Source ID    -- unique identifier used throughout the pipeline
+      Display Name -- human-readable name
+      Type         -- auction_data | news_event | manual_event
+      Access       -- api | export | manual
+      Auth         -- whether credentials are required
+      TTL(h)       -- hours before data is considered aging
+
+    \b
+    Use --verbose to see full policy detail per source (rate limits, backoff,
+    freshness thresholds, retention, provenance requirements, and policy notes).
+
+    \b
+    IMPORTANT: The "policy_notes" section contains researcher-authored
+    informational reminders only. It does NOT constitute legal advice.
+    """
+    from wow_forecaster.governance.registry import list_sources
+    from wow_forecaster.governance.reporter import format_source_detail, format_source_table
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    sources_path = config.governance.sources_config_path
+
+    try:
+        policies = list_sources(sources_path)
+    except FileNotFoundError as exc:
+        typer.echo(f"[ERROR] {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    n_enabled  = sum(1 for p in policies if p.enabled)
+    n_disabled = len(policies) - n_enabled
+
+    typer.echo(f"\n  Source Registry  ({len(policies)} sources, {n_enabled} enabled, {n_disabled} disabled)")
+    typer.echo(f"  Config: {sources_path}")
+    typer.echo("")
+
+    if verbose:
+        for p in policies:
+            typer.echo(format_source_detail(p))
+            typer.echo("")
+    else:
+        typer.echo(format_source_table(policies))
+        typer.echo("  Use --verbose for full rate-limit, backoff, and policy details.")
+
+    typer.echo("[OK] list-sources complete.")
+
+
+@app.command("validate-source-policies")
+def validate_source_policies_cmd(
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Validate all source policies in sources.toml.
+
+    \b
+    Parses every [sources.*] block in config/sources.toml and runs Pydantic
+    validation on each one.  Reports which sources pass and which fail.
+
+    \b
+    Validation checks include:
+      - All required fields are present
+      - Rate limit values are non-negative integers
+      - Backoff strategy is "exponential", "linear", or "fixed"
+      - Freshness thresholds are non-decreasing (ttl <= stale <= critical)
+      - source_type and access_method are recognised values
+      - PolicyNotes access_type is recognised
+
+    \b
+    Exit codes:
+      0 -- all policies valid
+      1 -- one or more policies failed validation (details printed to stdout)
+
+    \b
+    Run this after editing config/sources.toml to catch mistakes early.
+    """
+    import tomllib as _tomllib
+    from pathlib import Path as _Path
+
+    from pydantic import ValidationError
+
+    from wow_forecaster.governance.models import (
+        BackoffConfig,
+        FreshnessConfig,
+        PolicyNotes,
+        ProvenanceRequirements,
+        RateLimitConfig,
+        RetentionConfig,
+        SourcePolicy,
+    )
+    from wow_forecaster.governance.reporter import format_validation_report
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    sources_path = _Path(config.governance.sources_config_path)
+    typer.echo(f"\n  Validating source policies in: {sources_path}\n")
+
+    if not sources_path.exists():
+        typer.echo(
+            f"[ERROR] Sources config not found: {sources_path}\n"
+            "Expected at config/sources.toml.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    with open(sources_path, "rb") as f:
+        raw = _tomllib.load(f)
+
+    sources_raw = raw.get("sources", {})
+    if not sources_raw:
+        typer.echo("  [WARNING] No [sources.*] blocks found in sources.toml.\n")
+        raise typer.Exit(code=0)
+
+    errors: dict[str, list[str]] = {}
+    policies = []
+
+    for sid, block in sources_raw.items():
+        try:
+            policy = SourcePolicy(
+                source_id=block.get("source_id", sid),
+                display_name=block.get("display_name", sid),
+                source_type=block.get("source_type", "other"),
+                access_method=block.get("access_method", "manual"),
+                requires_auth=block.get("requires_auth", False),
+                enabled=block.get("enabled", False),
+                rate_limit=RateLimitConfig(**block.get("rate_limit", {})),
+                backoff=BackoffConfig(**block.get("backoff", {})),
+                freshness=FreshnessConfig(**block.get("freshness", {})),
+                provenance=ProvenanceRequirements(**block.get("provenance", {})),
+                retention=RetentionConfig(**block.get("retention", {})),
+                policy_notes=PolicyNotes(**block.get("policy_notes", {})),
+            )
+            policies.append(policy)
+        except (ValidationError, TypeError) as exc:
+            errors[sid] = [str(e) for e in (exc.errors() if isinstance(exc, ValidationError) else [exc])]
+
+    typer.echo(format_validation_report(policies, errors))
+
+    if errors:
+        typer.echo("[FAIL] validate-source-policies: one or more policies are invalid.")
+        raise typer.Exit(code=1)
+
+    typer.echo("[OK] validate-source-policies complete.")
+
+
+@app.command("check-source-freshness")
+def check_source_freshness_cmd(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Filter freshness check to one realm slug.  Omit to check across all realms.",
+    ),
+    export: Optional[str] = typer.Option(
+        None,
+        "--export",
+        help="Write a governance JSON report to this directory path.",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Check freshness of each registered data source against its TTL policy.
+
+    \b
+    Queries ingestion_snapshots to find the most recent successful snapshot
+    per source, then classifies each one against the FreshnessConfig thresholds
+    declared in config/sources.toml.
+
+    \b
+    Status codes:
+      [FRESH]    -- age < ttl_hours
+      [AGING]    -- ttl_hours <= age < stale_threshold_hours
+      [STALE]    -- stale_threshold_hours <= age < critical_threshold_hours
+      [CRITICAL] -- age >= critical_threshold_hours
+      [UNKNOWN]  -- no snapshot found, or source does not require snapshots
+
+    \b
+    Manual sources (access_method=manual, requires_snapshot=false) always
+    report [UNKNOWN] — they have no ingestion_snapshots records.
+
+    \b
+    Use --export <dir> to write a JSON governance report file.
+    Use --realm <slug> to restrict the snapshot query to one realm.
+
+    \b
+    Run 'run-hourly-refresh' to generate fresh ingestion snapshots.
+    """
+    from pathlib import Path as _Path
+
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.governance.freshness import check_all_sources_freshness
+    from wow_forecaster.governance.registry import list_sources
+    from wow_forecaster.governance.reporter import format_freshness_table, write_governance_report
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    sources_path = config.governance.sources_config_path
+    target_db    = db_path or config.database.db_path
+
+    try:
+        policies = list_sources(sources_path)
+    except FileNotFoundError as exc:
+        typer.echo(f"[ERROR] {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"\n  Source Freshness Check")
+    typer.echo(f"  Sources config : {sources_path}")
+    typer.echo(f"  DB             : {target_db}")
+    if realm:
+        typer.echo(f"  Realm filter   : {realm}")
+    typer.echo("")
+
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        results = check_all_sources_freshness(conn, policies, realm_slug=realm)
+
+    typer.echo(format_freshness_table(results, realm_slug=realm))
+
+    # Summary counts
+    from wow_forecaster.governance.freshness import FreshnessStatus
+    n_fresh    = sum(1 for r in results if r.status == FreshnessStatus.FRESH)
+    n_aging    = sum(1 for r in results if r.status == FreshnessStatus.AGING)
+    n_stale    = sum(1 for r in results if r.status == FreshnessStatus.STALE)
+    n_critical = sum(1 for r in results if r.status == FreshnessStatus.CRITICAL)
+    n_unknown  = sum(1 for r in results if r.status == FreshnessStatus.UNKNOWN)
+
+    typer.echo(
+        f"  Summary: {n_fresh} fresh, {n_aging} aging, {n_stale} stale, "
+        f"{n_critical} critical, {n_unknown} unknown"
+    )
+
+    if export:
+        out = write_governance_report(policies, results, export)
+        typer.echo(f"\n  Exported governance report to: {out}")
+
+    typer.echo("")
+    typer.echo("[OK] check-source-freshness complete.")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

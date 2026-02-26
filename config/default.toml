@@ -168,3 +168,26 @@ auto_retrain_on_critical = false
 
 # Directory for monitoring JSON output files.
 monitoring_output_dir = "data/outputs/monitoring"
+
+# ── Source Governance & Compliance Guardrails ──────────────────────────────────
+
+[governance]
+# Path to source registry TOML (relative to project root or absolute).
+# Defines per-source rate limits, TTL/freshness, backoff, auth requirements,
+# and enabled/disabled status.
+sources_config_path = "config/sources.toml"
+
+# Directory for governance JSON reports (written by check-source-freshness --export).
+governance_output_dir = "data/outputs/governance"
+
+# Run source freshness checks in the hourly orchestrator pre-flight.
+# Disable only in unit tests that stub the ingestion_snapshots table.
+freshness_check_enabled = true
+
+# Enforce enabled/cooldown preflight checks before provider calls.
+# Disable only for fixture-mode testing where no real HTTP call occurs.
+preflight_checks_enabled = true
+
+# If true, disabled sources are skipped with a WARNING log.
+# If false, disabled sources raise a hard error — useful to catch stale config.
+block_disabled_sources = true

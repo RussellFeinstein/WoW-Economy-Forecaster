@@ -166,6 +166,39 @@ class ModelConfig(BaseModel):
     top_n_per_category: int = 3
 
 
+class GovernanceConfig(BaseModel):
+    """Source governance and compliance guardrails configuration.
+
+    Controls where source policies are loaded from, where governance reports
+    are written, and whether preflight checks are enforced during pipeline runs.
+
+    Attributes:
+        sources_config_path:    Path to sources.toml (relative to project root
+                                or absolute).  Contains per-source rate limits,
+                                TTL/freshness thresholds, backoff policies, and
+                                enabled/disabled status.
+        governance_output_dir:  Directory for governance JSON reports written
+                                by `check-source-freshness --export`.
+        freshness_check_enabled: Run freshness checks in the hourly orchestrator
+                                 pre-flight step.  Disable in unit tests that
+                                 stub the DB.
+        preflight_checks_enabled: Run enabled/cooldown preflight checks before
+                                  every provider call.  Disable only for
+                                  fixture-mode testing where no real call occurs.
+        block_disabled_sources: If True, disabled sources are silently skipped
+                                (logged as WARNING).  If False, disabled sources
+                                raise a hard error — useful to catch stale config.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    sources_config_path:      str  = "config/sources.toml"
+    governance_output_dir:    str  = "data/outputs/governance"
+    freshness_check_enabled:  bool = True
+    preflight_checks_enabled: bool = True
+    block_disabled_sources:   bool = True
+
+
 class MonitoringConfig(BaseModel):
     """Drift detection and adaptive policy configuration.
 
@@ -219,17 +252,18 @@ class AppConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    database: DatabaseConfig = DatabaseConfig()
-    data: DataConfig = DataConfig()
+    database:   DatabaseConfig   = DatabaseConfig()
+    data:       DataConfig       = DataConfig()
     expansions: ExpansionsConfig = ExpansionsConfig()
-    realms: RealmsConfig = RealmsConfig()
-    pipeline: PipelineConfig = PipelineConfig()
-    forecast: ForecastConfig = ForecastConfig()
-    logging: LoggingConfig = LoggingConfig()
-    backtest: BacktestConfig = BacktestConfig()
-    features: FeatureConfig = FeatureConfig()
-    model: ModelConfig = ModelConfig()
+    realms:     RealmsConfig     = RealmsConfig()
+    pipeline:   PipelineConfig   = PipelineConfig()
+    forecast:   ForecastConfig   = ForecastConfig()
+    logging:    LoggingConfig    = LoggingConfig()
+    backtest:   BacktestConfig   = BacktestConfig()
+    features:   FeatureConfig    = FeatureConfig()
+    model:      ModelConfig      = ModelConfig()
     monitoring: MonitoringConfig = MonitoringConfig()
+    governance: GovernanceConfig = GovernanceConfig()
     debug: bool = False
 
 
@@ -344,5 +378,6 @@ def _build_app_config(raw: dict[str, Any]) -> AppConfig:
         features=FeatureConfig(**raw.get("features", {})),
         model=ModelConfig(**raw.get("model", {})),
         monitoring=MonitoringConfig(**raw.get("monitoring", {})),
+        governance=GovernanceConfig(**raw.get("governance", {})),
         debug=raw.get("debug", project.get("debug", False)),
     )
