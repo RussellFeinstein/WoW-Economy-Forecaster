@@ -1534,6 +1534,520 @@ def check_drift(
     typer.echo("[OK] Drift check complete.")
 
 
+# ── Report commands ───────────────────────────────────────────────────────────
+#
+# These commands READ already-persisted output files and display them in
+# human-readable form.  They do NOT re-run the pipeline.
+#
+# File discovery: each command looks for the most-recently-modified file
+# matching the expected pattern in the configured output directory.  If no
+# file is found it prints a "no data yet" message and exits cleanly.
+#
+# Freshness banners: every report shows [FRESH] / [STALE] with the hours
+# since the report was written so readers can judge whether to trust the
+# output without needing to check file timestamps manually.
+
+
+@app.command("report-top-items")
+def report_top_items_cmd(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Realm slug (e.g. area-52). Uses first config default if omitted.",
+    ),
+    horizon: Optional[str] = typer.Option(
+        None,
+        "--horizon",
+        help="Filter to a single horizon (e.g. 1d, 7d, 28d). Shows all if omitted.",
+    ),
+    export: Optional[str] = typer.Option(
+        None,
+        "--export",
+        help=(
+            "Write a flat CSV export to this path (for Power BI / manual analysis). "
+            "E.g. --export data/exports/top_items.csv"
+        ),
+    ),
+    freshness_hours: float = typer.Option(
+        4.0,
+        "--freshness-hours",
+        help="Reports older than this many hours are flagged as [STALE].",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Show the current top recommendations per category.
+
+    \b
+    Reads the most recent recommendations_{realm}_{date}.json from
+    data/outputs/recommendations/ and prints a ranked table grouped
+    by archetype category.
+
+    \b
+    Columns: rank, archetype, horizon, current price, predicted price,
+             ROI, composite score, recommended action.
+
+    \b
+    Freshness: reports older than --freshness-hours are flagged [STALE].
+    Run 'run-daily-forecast' to refresh the underlying data.
+
+    \b
+    Use --export PATH to write a flat CSV for Power BI or Excel.
+    Each row includes all score components as separate columns.
+    """
+    from pathlib import Path as _Path
+
+    from wow_forecaster.reporting.export import (
+        export_to_csv,
+        flatten_recommendations_for_export,
+    )
+    from wow_forecaster.reporting.formatters import format_top_items_table
+    from wow_forecaster.reporting.reader import (
+        check_freshness,
+        load_recommendations_report,
+    )
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_realm = realm or config.realms.defaults[0]
+    out_dir      = _Path(config.model.recommendation_output_dir)
+
+    recs = load_recommendations_report(target_realm, out_dir)
+    if recs is None:
+        typer.echo(
+            f"[INFO] No recommendations found for realm={target_realm} in {out_dir}"
+        )
+        typer.echo("       Run 'wow-forecaster run-daily-forecast' first.")
+        raise typer.Exit(code=0)
+
+    generated_at = recs.get("generated_at", "")
+    is_fresh, age_hours = check_freshness(generated_at, freshness_hours)
+
+    categories = recs.get("categories", {})
+
+    # Optional horizon filter: keep only items whose horizon matches.
+    if horizon:
+        categories = {
+            cat: [i for i in items if i.get("horizon") == horizon]
+            for cat, items in categories.items()
+        }
+        categories = {cat: items for cat, items in categories.items() if items}
+
+    typer.echo(
+        format_top_items_table(
+            categories=categories,
+            realm=target_realm,
+            generated_at=generated_at,
+            is_fresh=is_fresh,
+            age_hours=age_hours,
+        )
+    )
+
+    if export:
+        rows = flatten_recommendations_for_export(recs)
+        if horizon:
+            rows = [r for r in rows if r.get("horizon") == horizon]
+        p = export_to_csv(rows, _Path(export))
+        typer.echo(f"\n  Exported {len(rows)} rows to: {p}")
+
+    typer.echo("")
+    typer.echo("[OK] report-top-items complete.")
+
+
+@app.command("report-forecasts")
+def report_forecasts_cmd(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Realm slug. Uses first config default if omitted.",
+    ),
+    horizon: Optional[str] = typer.Option(
+        None,
+        "--horizon",
+        help="Filter to a single horizon (e.g. 1d, 7d, 28d).",
+    ),
+    top_n: int = typer.Option(
+        15,
+        "--top-n",
+        help="How many rows to print (sorted by score descending).",
+    ),
+    export: Optional[str] = typer.Option(
+        None,
+        "--export",
+        help="Write full forecast CSV (with ci_width_gold column) to this path.",
+    ),
+    freshness_hours: float = typer.Option(
+        4.0,
+        "--freshness-hours",
+        help="Reports older than this many hours are flagged [STALE].",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Print a forecast summary sorted by composite score.
+
+    \b
+    Reads the most recent forecast_{realm}_{date}.csv from
+    data/outputs/forecasts/ and prints the top-N rows (all horizons unless
+    --horizon is specified).
+
+    \b
+    Columns: archetype, horizon, current price, predicted price,
+             CI width (forecast uncertainty), ROI, score, action.
+
+    \b
+    The CI width column shows absolute uncertainty in gold — a wide CI
+    means the model is less certain about the prediction.
+
+    \b
+    Use --export PATH to write the full forecast set (with computed
+    ci_width_gold and ci_pct_of_price columns) to a CSV file.
+    """
+    from pathlib import Path as _Path
+
+    from wow_forecaster.reporting.export import (
+        export_to_csv,
+        flatten_forecast_records_for_export,
+    )
+    from wow_forecaster.reporting.formatters import format_forecast_summary
+    from wow_forecaster.reporting.reader import check_freshness, load_forecast_records
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_realm = realm or config.realms.defaults[0]
+    out_dir      = _Path(config.model.forecast_output_dir)
+
+    records = load_forecast_records(target_realm, out_dir)
+    if records is None:
+        typer.echo(
+            f"[INFO] No forecast CSV found for realm={target_realm} in {out_dir}"
+        )
+        typer.echo("       Run 'wow-forecaster run-daily-forecast' first.")
+        raise typer.Exit(code=0)
+
+    # Freshness: use file mtime as proxy (CSV has no embedded timestamp).
+    from wow_forecaster.reporting.reader import find_latest_file
+    csv_path = find_latest_file(out_dir, f"forecast_{target_realm}_*.csv")
+    age_hours: Optional[float] = None
+    is_fresh  = True
+    if csv_path is not None:
+        import os as _os
+        mtime     = _os.path.getmtime(csv_path)
+        import time as _time
+        age_hours = (_time.time() - mtime) / 3600.0
+        is_fresh  = age_hours <= freshness_hours
+
+    typer.echo(
+        format_forecast_summary(
+            records=records,
+            realm=target_realm,
+            top_n=top_n,
+            horizon_filter=horizon,
+            is_fresh=is_fresh,
+            age_hours=age_hours,
+        )
+    )
+
+    if export:
+        enriched = flatten_forecast_records_for_export(records)
+        if horizon:
+            enriched = [r for r in enriched if r.get("horizon") == horizon]
+        p = export_to_csv(enriched, _Path(export))
+        typer.echo(f"\n  Exported {len(enriched)} rows to: {p}")
+
+    typer.echo("")
+    typer.echo("[OK] report-forecasts complete.")
+
+
+@app.command("report-volatility")
+def report_volatility_cmd(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Realm slug. Uses first config default if omitted.",
+    ),
+    top_n: int = typer.Option(
+        20,
+        "--top-n",
+        help="How many items to show (default 20).",
+    ),
+    export: Optional[str] = typer.Option(
+        None,
+        "--export",
+        help="Write watchlist CSV to this path.",
+    ),
+    freshness_hours: float = typer.Option(
+        4.0,
+        "--freshness-hours",
+        help="Reports older than this many hours are flagged [STALE].",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Show the volatility watchlist: items with the widest forecast CI bands.
+
+    \b
+    A wide confidence interval means the model is uncertain — the actual
+    price could deviate significantly from the prediction.  These items
+    carry the most risk regardless of their predicted ROI.
+
+    \b
+    Items are ranked by absolute CI width (ci_upper - ci_lower) in gold.
+    A relative CI % column normalises by predicted price so high-value and
+    low-value items can be compared fairly.
+
+    \b
+    Reads forecast_{realm}_{date}.csv from data/outputs/forecasts/.
+    Use --export PATH to write the sorted watchlist to a CSV file.
+    """
+    from pathlib import Path as _Path
+    import os as _os
+    import time as _time
+
+    from wow_forecaster.reporting.export import export_to_csv
+    from wow_forecaster.reporting.formatters import format_volatility_watchlist
+    from wow_forecaster.reporting.reader import find_latest_file, load_forecast_records
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_realm = realm or config.realms.defaults[0]
+    out_dir      = _Path(config.model.forecast_output_dir)
+
+    records = load_forecast_records(target_realm, out_dir)
+    if records is None:
+        typer.echo(
+            f"[INFO] No forecast CSV found for realm={target_realm} in {out_dir}"
+        )
+        typer.echo("       Run 'wow-forecaster run-daily-forecast' first.")
+        raise typer.Exit(code=0)
+
+    csv_path = find_latest_file(out_dir, f"forecast_{target_realm}_*.csv")
+    age_hours_: Optional[float] = None
+    is_fresh_  = True
+    if csv_path is not None:
+        age_hours_ = (_time.time() - _os.path.getmtime(csv_path)) / 3600.0
+        is_fresh_  = age_hours_ <= freshness_hours
+
+    typer.echo(
+        format_volatility_watchlist(
+            records=records,
+            realm=target_realm,
+            top_n=top_n,
+            is_fresh=is_fresh_,
+            age_hours=age_hours_,
+        )
+    )
+
+    if export:
+        # Enrich with ci_width / ci_pct and sort before export.
+        from wow_forecaster.reporting.export import flatten_forecast_records_for_export
+        enriched = flatten_forecast_records_for_export(records)
+        try:
+            enriched.sort(
+                key=lambda r: -(float(r.get("ci_width_gold") or 0))
+            )
+        except (TypeError, ValueError):
+            pass
+        p = export_to_csv(enriched, _Path(export))
+        typer.echo(f"\n  Exported {len(enriched)} rows to: {p}")
+
+    typer.echo("")
+    typer.echo("[OK] report-volatility complete.")
+
+
+@app.command("report-drift")
+def report_drift_cmd(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Realm slug. Uses first config default if omitted.",
+    ),
+    export: Optional[str] = typer.Option(
+        None,
+        "--export",
+        help="Write a combined drift+health JSON export to this path.",
+    ),
+    freshness_hours: float = typer.Option(
+        4.0,
+        "--freshness-hours",
+        help="Reports older than this many hours are flagged [STALE].",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Show drift level, model health, and retrain recommendation.
+
+    \b
+    Reads the two most recent monitoring reports:
+      drift_status_{realm}_{date}.json   -- data/error drift, event shock
+      model_health_{realm}_{date}.json   -- live MAE vs backtest baseline
+
+    \b
+    Key columns in model health table:
+      Ratio  = live_MAE / baseline_MAE
+        < 1.5x  -> ok
+        1.5-3x  -> degraded
+        >= 3x   -> critical (retrain recommended)
+
+    \b
+    The uncertainty multiplier from the drift report is what actually widens
+    confidence intervals in live forecasts.  A x2.0 multiplier means CI bands
+    are doubled; a x3.0 means the model is highly uncertain.
+
+    \b
+    Run 'check-drift' to refresh the drift report.
+    Run 'evaluate-live-forecast' to refresh the model health report.
+    """
+    from pathlib import Path as _Path
+
+    from wow_forecaster.reporting.export import export_to_json
+    from wow_forecaster.reporting.formatters import format_drift_health_summary
+    from wow_forecaster.reporting.reader import (
+        check_freshness,
+        load_drift_report,
+        load_health_report,
+    )
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_realm = realm or config.realms.defaults[0]
+    mon_dir      = _Path(config.monitoring.monitoring_output_dir)
+
+    drift  = load_drift_report(target_realm, mon_dir)
+    health = load_health_report(target_realm, mon_dir)
+
+    is_fresh_d, age_d = check_freshness(
+        drift.get("checked_at")  if drift  else None, freshness_hours
+    )
+    is_fresh_h, age_h = check_freshness(
+        health.get("checked_at") if health else None, freshness_hours
+    )
+
+    typer.echo(
+        format_drift_health_summary(
+            drift=drift,
+            health=health,
+            realm=target_realm,
+            is_fresh_drift=is_fresh_d,
+            age_hours_drift=age_d,
+            is_fresh_health=is_fresh_h,
+            age_hours_health=age_h,
+        )
+    )
+
+    if export:
+        payload = {
+            "drift":  drift  or {},
+            "health": health or {},
+        }
+        p = export_to_json(payload, _Path(export))
+        typer.echo(f"\n  Exported drift+health to: {p}")
+
+    typer.echo("")
+    typer.echo("[OK] report-drift complete.")
+
+
+@app.command("report-status")
+def report_status_cmd(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Realm slug. Uses first config default if omitted.",
+    ),
+    export: Optional[str] = typer.Option(
+        None,
+        "--export",
+        help="Write provenance JSON export to this path.",
+    ),
+    freshness_hours: float = typer.Option(
+        4.0,
+        "--freshness-hours",
+        help="Reports older than this many hours are flagged [STALE].",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Show last-refresh timestamps and data source health.
+
+    \b
+    Reads the most recent provenance_{realm}_{date}.json from
+    data/outputs/monitoring/ and prints a per-source summary.
+
+    \b
+    IMPORTANT: Report age != data freshness.
+      A provenance file written 5 minutes ago can still report stale data
+      if the Undermine or Blizzard API did not respond during that run.
+      This command surfaces both values explicitly.
+
+    \b
+    Per-source columns:
+      Source        -- undermine / blizzard_api / blizzard_news
+      Last Snapshot -- timestamp of the most recent ingested snapshot
+      Snaps/24h     -- number of snapshots in the last 24 hours
+      Records       -- total market records ingested in the last 24 hours
+      SuccRate      -- fraction of ingestion attempts that succeeded
+      Status        -- [OK] or [STALE]
+
+    \b
+    Run 'run-hourly-refresh' to produce a fresh provenance report.
+    """
+    from pathlib import Path as _Path
+
+    from wow_forecaster.reporting.export import export_to_json
+    from wow_forecaster.reporting.formatters import format_status_summary
+    from wow_forecaster.reporting.reader import (
+        check_freshness,
+        load_provenance_report,
+    )
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_realm = realm or config.realms.defaults[0]
+    mon_dir      = _Path(config.monitoring.monitoring_output_dir)
+
+    prov = load_provenance_report(target_realm, mon_dir)
+
+    is_fresh_p, age_p = check_freshness(
+        prov.get("checked_at") if prov else None, freshness_hours
+    )
+
+    typer.echo(
+        format_status_summary(
+            provenance=prov,
+            realm=target_realm,
+            is_fresh_prov=is_fresh_p,
+            age_hours_prov=age_p,
+        )
+    )
+
+    if export and prov:
+        p = export_to_json(prov, _Path(export))
+        typer.echo(f"\n  Exported provenance to: {p}")
+
+    typer.echo("")
+    typer.echo("[OK] report-status complete.")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

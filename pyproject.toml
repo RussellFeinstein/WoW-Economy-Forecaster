@@ -25,12 +25,20 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.4",
 ]
+# Optional Streamlit dashboard.
+# Install: pip install -e ".[dashboard]"
+# Run:     streamlit run dashboard/app.py
+dashboard = [
+    "streamlit>=1.35",
+    "pandas>=2.0",
+]
 
 [project.scripts]
 wow-forecaster = "wow_forecaster.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["."]
+# dashboard/ is intentionally excluded — it is not part of the installable package.
 include = ["wow_forecaster*"]
 
 [tool.pytest.ini_options]
