@@ -58,7 +58,11 @@ class TestImplementedStages:
         return AppConfig()
 
     def test_ingest_runs_with_in_memory_db(self, minimal_config, tmp_path):
-        """IngestStage should run without error in fixture mode and return 0 rows."""
+        """IngestStage should run without error in fixture mode and return 0 rows.
+
+        The items table is empty so all observations are skipped (FK guard).
+        Snapshots and ingestion_snapshots rows are still written.
+        """
         import sqlite3
         from wow_forecaster.db.schema import apply_schema
         from wow_forecaster.config import AppConfig, DatabaseConfig, DataConfig
@@ -84,9 +88,90 @@ class TestImplementedStages:
             config_snapshot={},
             started_at=utcnow(),
         )
-        # Should succeed (fixture mode) and return 0 (no market_observations_raw written yet)
+        # Empty items table -> all observations skipped -> 0 inserted
         result = stage._execute(run=run, realm_slugs=["area-52"])
         assert result == 0
+
+    def test_ingest_inserts_raw_observations_when_items_exist(
+        self, minimal_config, tmp_path
+    ):
+        """IngestStage inserts 6 raw observations when fixture item IDs are registered.
+
+        Both the Undermine (3 records) and Blizzard API (3 records) fixture
+        clients return item IDs 191528, 204783, 206448.  With those items
+        seeded in the DB, all 6 records should be inserted and returned.
+        """
+        import sqlite3
+        from wow_forecaster.db.schema import apply_schema
+        from wow_forecaster.config import AppConfig, DatabaseConfig, DataConfig
+
+        # ── Build and seed the DB ──────────────────────────────────────────────
+        FIXTURE_ITEM_IDS = [191528, 204783, 206448]
+
+        db_file = str(tmp_path / "test.db")
+        conn = sqlite3.connect(db_file)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+        apply_schema(conn)
+
+        # Insert a minimal category row
+        conn.execute(
+            """
+            INSERT INTO item_categories (slug, display_name, archetype_tag, expansion_slug)
+            VALUES ('test.fixture', 'Fixture Category', 'consumable_stat', 'tww');
+            """
+        )
+        category_id = conn.execute("SELECT last_insert_rowid() AS id;").fetchone()["id"]
+
+        # Insert the three fixture items
+        for item_id in FIXTURE_ITEM_IDS:
+            conn.execute(
+                """
+                INSERT INTO items (item_id, name, category_id, expansion_slug, quality,
+                                   is_crafted, is_boe)
+                VALUES (?, ?, ?, 'tww', 'common', 0, 0);
+                """,
+                (item_id, f"Fixture Item {item_id}", category_id),
+            )
+        conn.commit()
+        conn.close()
+
+        # ── Run ingest ─────────────────────────────────────────────────────────
+        config = AppConfig(
+            database=DatabaseConfig(db_path=db_file),
+            data=DataConfig(raw_dir=str(tmp_path / "raw")),
+        )
+        stage = IngestStage(config=config, db_path=db_file)
+
+        from wow_forecaster.models.meta import RunMetadata
+        from wow_forecaster.utils.time_utils import utcnow
+        run = RunMetadata(
+            run_slug="test-ingest-items-slug",
+            pipeline_stage="ingest",
+            config_snapshot={},
+            started_at=utcnow(),
+        )
+        result = stage._execute(run=run, realm_slugs=["area-52"])
+
+        # 3 undermine + 3 blizzard = 6
+        assert result == 6
+
+        # Verify the DB row count matches the return value
+        verify_conn = sqlite3.connect(db_file)
+        verify_conn.row_factory = sqlite3.Row
+        row = verify_conn.execute(
+            "SELECT COUNT(*) AS n FROM market_observations_raw;"
+        ).fetchone()
+        assert row["n"] == 6
+
+        # Verify exactly the two expected sources appear
+        source_rows = verify_conn.execute(
+            "SELECT DISTINCT source FROM market_observations_raw ORDER BY source;"
+        ).fetchall()
+        sources = {r["source"] for r in source_rows}
+        assert sources == {"undermine_api", "blizzard_api"}
+
+        verify_conn.close()
 
     def test_normalize_returns_zero_for_empty_table(self, minimal_config, tmp_path):
         """NormalizeStage returns 0 when no unprocessed raw observations exist."""

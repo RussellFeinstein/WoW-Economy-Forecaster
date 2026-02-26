@@ -1,21 +1,23 @@
 """
-IngestStage — fetch raw AH data and save JSON snapshots to disk.
+IngestStage — fetch raw AH data, save JSON snapshots, and parse records into
+market_observations_raw.
 
-Current behaviour (stub / fixture mode):
-  - When no API credentials are set, all three clients return fixture data.
-  - Snapshot JSON files are written to ``data/raw/snapshots/{source}/YYYY/MM/DD/``.
-  - Snapshot metadata is recorded in the ``ingestion_snapshots`` SQLite table.
-  - NO rows are written to ``market_observations_raw`` yet — that requires
-    real item data with canonical WoW item IDs. See TODO below.
+Fixture mode (no credentials set):
+  All three clients return canned fixture records.  Snapshot JSON files are
+  written to ``data/raw/snapshots/{source}/YYYY/MM/DD/``, snapshot metadata is
+  recorded in ``ingestion_snapshots``, and any fixture items that exist in the
+  ``items`` table are inserted into ``market_observations_raw``.
+
+FK safety:
+  Observations for item IDs not present in ``items`` are silently skipped.
+  This means an empty item registry (e.g. in unit tests) results in 0 inserts
+  without any FK violation.
 
 Switching to real API data:
   Set credentials in ``.env`` (gitignored):
     UNDERMINE_API_KEY=...
     BLIZZARD_CLIENT_ID=...
     BLIZZARD_CLIENT_SECRET=...
-
-  Then implement the ``TODO: parse records`` section below to convert snapshot
-  records into ``RawMarketObservation`` objects and bulk-insert via the repo.
 
 Extension points:
   - Override ``_ingest_source()`` per source for custom error handling.
@@ -25,11 +27,17 @@ Extension points:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from datetime import datetime
+from typing import TYPE_CHECKING
 
 from wow_forecaster.models.meta import RunMetadata
 from wow_forecaster.pipeline.base import PipelineStage
+
+if TYPE_CHECKING:
+    from wow_forecaster.models.market import RawMarketObservation
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +45,11 @@ logger = logging.getLogger(__name__)
 class IngestStage(PipelineStage):
     """Fetch raw AH data from all configured providers and persist to disk.
 
-    Writes timestamped JSON snapshots and records metadata in SQLite.
-    Returns the number of snapshot files successfully written.
+    Writes timestamped JSON snapshots, records metadata in SQLite, and parses
+    each snapshot's records into ``market_observations_raw`` (skipping any
+    item IDs absent from the ``items`` registry).
+
+    Returns the number of raw observations successfully inserted.
     """
 
     stage_name = "ingest"
@@ -57,27 +68,26 @@ class IngestStage(PipelineStage):
                 ``config.realms.defaults``.
 
         Returns:
-            Number of snapshot files successfully written.
+            Number of raw market observations inserted into
+            ``market_observations_raw``.
         """
         from wow_forecaster.db.connection import get_connection
         from wow_forecaster.db.repositories.ingestion_repo import (
-            IngestionSnapshot,
             IngestionSnapshotRepository,
         )
+        from wow_forecaster.db.repositories.item_repo import ItemRepository
+        from wow_forecaster.db.repositories.market_repo import MarketObservationRepository
         from wow_forecaster.ingestion.blizzard_client import BlizzardClient
         from wow_forecaster.ingestion.blizzard_news_client import BlizzardNewsClient
-        from wow_forecaster.ingestion.snapshot import build_snapshot_path, save_snapshot
         from wow_forecaster.ingestion.undermine_client import UndermineClient
-        from wow_forecaster.utils.time_utils import utcnow
 
         # Pre-persist run to get a run_id for FK use in ingestion_snapshots.
-        # PipelineStage.run() will UPDATE (not re-insert) when called again.
         self._persist_run(run)
 
         realms = realm_slugs or list(self.config.realms.defaults)
         raw_dir = self.config.data.raw_dir
 
-        # Read credentials from env — None → fixture mode
+        # Read credentials — None → fixture mode
         undermine_key = os.environ.get("UNDERMINE_API_KEY")
         blizzard_id = os.environ.get("BLIZZARD_CLIENT_ID")
         blizzard_secret = os.environ.get("BLIZZARD_CLIENT_SECRET")
@@ -87,14 +97,23 @@ class IngestStage(PipelineStage):
         news = BlizzardNewsClient()
 
         total_snapshots = 0
+        total_inserted_raw = 0
 
         with get_connection(self.db_path) as conn:
             snap_repo = IngestionSnapshotRepository(conn)
+            market_repo = MarketObservationRepository(conn)
+            item_repo = ItemRepository(conn)
+
+            # Load known item IDs once — FK guard for all sources this run.
+            known_item_ids: set[int] = item_repo.get_all_item_ids()
+            logger.info(
+                "IngestStage: %d known items in registry", len(known_item_ids)
+            )
 
             # ── Undermine Exchange ─────────────────────────────────────────────
             for realm in realms:
                 faction = self.config.realms.default_faction
-                snap = self._fetch_undermine(
+                snap, records_data = self._fetch_undermine(
                     undermine=undermine,
                     realm=realm,
                     faction=faction,
@@ -105,10 +124,20 @@ class IngestStage(PipelineStage):
                 snap_repo.insert(snap)
                 if snap.success:
                     total_snapshots += 1
+                    observations, skipped = self._parse_undermine_records(
+                        records_data, snap.fetched_at, known_item_ids
+                    )
+                    inserted = market_repo.insert_raw_batch(observations)
+                    total_inserted_raw += inserted
+                    logger.info(
+                        "Undermine %s/%s: %d records | inserted=%d | "
+                        "skipped_missing_items=%d",
+                        realm, faction, len(records_data), inserted, skipped,
+                    )
 
             # ── Blizzard Game Data API ─────────────────────────────────────────
             for realm in realms:
-                snap = self._fetch_blizzard(
+                snap, records_data = self._fetch_blizzard(
                     blizzard=blizzard,
                     realm=realm,
                     raw_dir=raw_dir,
@@ -118,8 +147,18 @@ class IngestStage(PipelineStage):
                 snap_repo.insert(snap)
                 if snap.success:
                     total_snapshots += 1
+                    observations, skipped = self._parse_blizzard_records(
+                        records_data, snap.fetched_at, known_item_ids
+                    )
+                    inserted = market_repo.insert_raw_batch(observations)
+                    total_inserted_raw += inserted
+                    logger.info(
+                        "Blizzard API %s: %d records | inserted=%d | "
+                        "skipped_missing_items=%d",
+                        realm, len(records_data), inserted, skipped,
+                    )
 
-            # ── Blizzard News ──────────────────────────────────────────────────
+            # ── Blizzard News (content only — no market table rows) ────────────
             snap = self._fetch_news(news=news, raw_dir=raw_dir, run=run)
             snap_repo.insert(snap)
             if snap.success:
@@ -130,12 +169,125 @@ class IngestStage(PipelineStage):
         mode = "fixture" if not (undermine_key or blizzard_id) else "live"
         logger.info(
             "IngestStage complete | mode=%s | snapshots=%d | "
-            "market_observations_raw: 0 (TODO: implement record parsing)",
-            mode, total_snapshots,
+            "market_observations_raw inserted=%d",
+            mode, total_snapshots, total_inserted_raw,
         )
-        return 0  # TODO: return len(inserted raw obs) once record parsing is implemented
+        return total_inserted_raw
 
-    # ── Per-source helpers ─────────────────────────────────────────────────────
+    # ── Record parsing helpers ─────────────────────────────────────────────────
+
+    def _parse_undermine_records(
+        self,
+        records_data: list[dict],
+        observed_at: datetime,
+        known_item_ids: set[int],
+    ) -> tuple[list[RawMarketObservation], int]:
+        """Convert Undermine Exchange records to :class:`RawMarketObservation` objects.
+
+        Args:
+            records_data: List of serialised record dicts from the snapshot.
+            observed_at: UTC timestamp from the API response (``fetched_at``).
+            known_item_ids: Set of item IDs present in ``items`` table.
+                Records for absent IDs are skipped to avoid FK violations.
+
+        Returns:
+            Tuple of ``(observations, skipped_count)`` where ``skipped_count``
+            is the number of records dropped because item_id was unknown.
+        """
+        from wow_forecaster.models.market import RawMarketObservation
+
+        observations: list[RawMarketObservation] = []
+        skipped = 0
+
+        for rec in records_data:
+            item_id = rec["item_id"]
+            if item_id not in known_item_ids:
+                skipped += 1
+                continue
+
+            observations.append(
+                RawMarketObservation(
+                    item_id=item_id,
+                    realm_slug=rec["realm_slug"],
+                    faction=rec["faction"],
+                    observed_at=observed_at,
+                    source="undermine_api",
+                    min_buyout_raw=rec.get("min_buyout"),
+                    market_value_raw=rec.get("market_value"),
+                    historical_value_raw=rec.get("historical_value"),
+                    quantity_listed=rec.get("quantity"),
+                    num_auctions=rec.get("num_auctions"),
+                    raw_json=json.dumps(rec, separators=(",", ":")),
+                )
+            )
+
+        return observations, skipped
+
+    def _parse_blizzard_records(
+        self,
+        records_data: list[dict],
+        observed_at: datetime,
+        known_item_ids: set[int],
+    ) -> tuple[list[RawMarketObservation], int]:
+        """Convert Blizzard AH records to :class:`RawMarketObservation` objects.
+
+        Blizzard auction records contain per-auction listings without TSM-style
+        market values.  The min-buyout field is derived as follows:
+
+        - ``unit_price > 0`` (commodity): use ``unit_price`` as ``min_buyout_raw``
+        - ``buyout > 0`` (non-commodity with buyout): use ``buyout``
+        - Otherwise (bid-only listing): ``min_buyout_raw = None``
+
+        Faction is always ``"neutral"`` — Blizzard connected-realm auctions are
+        not faction-segregated for our modelling purposes.
+
+        Args:
+            records_data: List of serialised record dicts from the snapshot.
+            observed_at: UTC timestamp from the API response (``fetched_at``).
+            known_item_ids: Set of item IDs present in ``items`` table.
+
+        Returns:
+            Tuple of ``(observations, skipped_count)``.
+        """
+        from wow_forecaster.models.market import RawMarketObservation
+
+        observations: list[RawMarketObservation] = []
+        skipped = 0
+
+        for rec in records_data:
+            item_id = rec["item_id"]
+            if item_id not in known_item_ids:
+                skipped += 1
+                continue
+
+            unit_price = rec.get("unit_price") or 0
+            buyout = rec.get("buyout") or 0
+            if unit_price > 0:
+                min_buyout_raw: int | None = unit_price
+            elif buyout > 0:
+                min_buyout_raw = buyout
+            else:
+                min_buyout_raw = None
+
+            observations.append(
+                RawMarketObservation(
+                    item_id=item_id,
+                    realm_slug=rec["realm_slug"],
+                    faction="neutral",
+                    observed_at=observed_at,
+                    source="blizzard_api",
+                    min_buyout_raw=min_buyout_raw,
+                    market_value_raw=None,
+                    historical_value_raw=None,
+                    quantity_listed=rec.get("quantity"),
+                    num_auctions=1,
+                    raw_json=json.dumps(rec, separators=(",", ":")),
+                )
+            )
+
+        return observations, skipped
+
+    # ── Per-source fetch helpers ───────────────────────────────────────────────
 
     def _fetch_undermine(
         self,
@@ -145,7 +297,13 @@ class IngestStage(PipelineStage):
         raw_dir: str,
         run: RunMetadata,
         undermine_key: str | None,
-    ):
+    ) -> tuple[object, list[dict]]:
+        """Fetch and snapshot Undermine Exchange data for one realm/faction.
+
+        Returns:
+            Tuple of ``(IngestionSnapshot, records_data)`` where
+            ``records_data`` is empty on failure.
+        """
         from wow_forecaster.db.repositories.ingestion_repo import IngestionSnapshot
         from wow_forecaster.ingestion.snapshot import build_snapshot_path, save_snapshot
         from wow_forecaster.utils.time_utils import utcnow
@@ -192,8 +350,7 @@ class IngestStage(PipelineStage):
                 "Undermine snapshot: %s | %d records | fixture=%s",
                 path.name, record_count, response.is_fixture,
             )
-            # TODO: parse records_data → RawMarketObservation → market_observations_raw
-            return IngestionSnapshot(
+            snap = IngestionSnapshot(
                 snapshot_id=None,
                 run_id=run.run_id,
                 source="undermine",
@@ -205,10 +362,11 @@ class IngestStage(PipelineStage):
                 error_message=None,
                 fetched_at=response.fetched_at,
             )
+            return snap, records_data
 
         except Exception as exc:
             logger.error("Undermine fetch failed for %s/%s: %s", realm, faction, exc)
-            return IngestionSnapshot(
+            snap = IngestionSnapshot(
                 snapshot_id=None,
                 run_id=run.run_id,
                 source="undermine",
@@ -220,6 +378,7 @@ class IngestStage(PipelineStage):
                 error_message=str(exc),
                 fetched_at=utcnow(),
             )
+            return snap, []
 
     def _fetch_blizzard(
         self,
@@ -228,7 +387,13 @@ class IngestStage(PipelineStage):
         raw_dir: str,
         run: RunMetadata,
         blizzard_id: str | None,
-    ):
+    ) -> tuple[object, list[dict]]:
+        """Fetch and snapshot Blizzard AH data for one realm.
+
+        Returns:
+            Tuple of ``(IngestionSnapshot, records_data)`` where
+            ``records_data`` is empty on failure.
+        """
         from wow_forecaster.db.repositories.ingestion_repo import IngestionSnapshot
         from wow_forecaster.ingestion.snapshot import build_snapshot_path, save_snapshot
         from wow_forecaster.utils.time_utils import utcnow
@@ -272,8 +437,7 @@ class IngestStage(PipelineStage):
                 "Blizzard API snapshot: %s | %d records | fixture=%s",
                 path.name, record_count, response.is_fixture,
             )
-            # TODO: parse records_data → RawMarketObservation → market_observations_raw
-            return IngestionSnapshot(
+            snap = IngestionSnapshot(
                 snapshot_id=None,
                 run_id=run.run_id,
                 source="blizzard_api",
@@ -285,10 +449,11 @@ class IngestStage(PipelineStage):
                 error_message=None,
                 fetched_at=response.fetched_at,
             )
+            return snap, records_data
 
         except Exception as exc:
             logger.error("Blizzard API fetch failed for %s: %s", realm, exc)
-            return IngestionSnapshot(
+            snap = IngestionSnapshot(
                 snapshot_id=None,
                 run_id=run.run_id,
                 source="blizzard_api",
@@ -300,8 +465,16 @@ class IngestStage(PipelineStage):
                 error_message=str(exc),
                 fetched_at=utcnow(),
             )
+            return snap, []
 
     def _fetch_news(self, news, raw_dir: str, run: RunMetadata):
+        """Fetch and snapshot Blizzard news items.
+
+        News content is never written to the market observations table.
+
+        Returns:
+            An :class:`IngestionSnapshot` (no records_data needed).
+        """
         from wow_forecaster.db.repositories.ingestion_repo import IngestionSnapshot
         from wow_forecaster.ingestion.snapshot import build_snapshot_path, save_snapshot
         from wow_forecaster.utils.time_utils import utcnow

@@ -167,6 +167,18 @@ class ItemRepository(BaseRepository):
         )
         return [_row_to_item(r) for r in rows]
 
+    def get_all_item_ids(self) -> set[int]:
+        """Return the set of all item IDs currently in the registry.
+
+        Used by ingestion to guard against FK violations: observations for
+        unknown items are skipped rather than inserted.
+
+        Returns:
+            Set of integer ``item_id`` values.
+        """
+        rows = self.fetchall("SELECT item_id FROM items;")
+        return {int(row["item_id"]) for row in rows}
+
     def count(self) -> int:
         """Return total number of registered items."""
         row = self.fetchone("SELECT COUNT(*) AS n FROM items;")
