@@ -1,0 +1,14 @@
+# Dashboard-only dependencies.
+# These are NOT part of the core wow-forecaster package.
+#
+# Install:
+#   pip install -e ".[dashboard]"
+# OR (standalone, without editable install):
+#   pip install -r dashboard/requirements.txt
+#
+# Run:
+#   streamlit run dashboard/app.py
+#   streamlit run dashboard/app.py -- --realm area-52
+
+streamlit>=1.35
+pandas>=2.0
