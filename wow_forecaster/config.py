@@ -166,6 +166,50 @@ class ModelConfig(BaseModel):
     top_n_per_category: int = 3
 
 
+class MonitoringConfig(BaseModel):
+    """Drift detection and adaptive policy configuration.
+
+    Controls data drift window sizes, error drift MAE thresholds, event
+    shock detection, and the adaptive uncertainty multiplier policy.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    # Data drift: recent observation window (hours).
+    # Default 25h catches one full hourly cycle with jitter tolerance.
+    drift_window_hours: int = 25
+
+    # Data drift: historical baseline window (days).
+    drift_baseline_days: int = 30
+
+    # Z-score threshold for flagging a series as data-drifted.
+    # 2.0 = a 2-std mean shift; conservative enough to avoid noise false-alarms.
+    drift_z_threshold: float = 2.0
+
+    # Error drift: look-back window for live forecast actuals (days).
+    error_drift_window_days: int = 7
+
+    # Error drift: MAE ratio thresholds (live_mae / baseline_mae).
+    # LOW: 20-50% MAE increase — watch and wait.
+    error_drift_mae_ratio_low: float = 1.2
+    # MEDIUM: 50-100% MAE increase — retrain recommended.
+    error_drift_mae_ratio_medium: float = 1.5
+    # HIGH: 100-200% MAE increase — model stale.
+    error_drift_mae_ratio_high: float = 2.0
+    # CRITICAL: > 200% MAE increase — model broken.
+    error_drift_mae_ratio_critical: float = 3.0
+
+    # Event shock: days ahead to look for upcoming major events.
+    event_shock_window_days: int = 7
+
+    # Adaptive policy: auto-retrain when CRITICAL drift detected.
+    # Off by default — a human should review before retraining.
+    auto_retrain_on_critical: bool = False
+
+    # Output directory for monitoring JSON files.
+    monitoring_output_dir: str = "data/outputs/monitoring"
+
+
 class AppConfig(BaseModel):
     """Complete application configuration — the single source of truth.
 
@@ -185,6 +229,7 @@ class AppConfig(BaseModel):
     backtest: BacktestConfig = BacktestConfig()
     features: FeatureConfig = FeatureConfig()
     model: ModelConfig = ModelConfig()
+    monitoring: MonitoringConfig = MonitoringConfig()
     debug: bool = False
 
 
@@ -298,5 +343,6 @@ def _build_app_config(raw: dict[str, Any]) -> AppConfig:
         backtest=BacktestConfig(**raw.get("backtest", {})),
         features=FeatureConfig(**raw.get("features", {})),
         model=ModelConfig(**raw.get("model", {})),
+        monitoring=MonitoringConfig(**raw.get("monitoring", {})),
         debug=raw.get("debug", project.get("debug", False)),
     )

@@ -327,6 +327,53 @@ CREATE INDEX IF NOT EXISTS idx_bt_results_archetype
     ON backtest_fold_results(archetype_id, model_name, horizon_days);
 """
 
+_DDL_DRIFT_CHECK_RESULTS = """
+CREATE TABLE IF NOT EXISTS drift_check_results (
+    drift_id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id              INTEGER REFERENCES run_metadata(run_id),
+    realm_slug          TEXT    NOT NULL,
+    checked_at          TEXT    NOT NULL,
+    data_drift_level    TEXT    NOT NULL DEFAULT 'none',
+    error_drift_level   TEXT    NOT NULL DEFAULT 'none',
+    event_shock_active  INTEGER NOT NULL DEFAULT 0,
+    drift_details       TEXT,
+    uncertainty_mult    REAL    NOT NULL DEFAULT 1.0,
+    retrain_recommended INTEGER NOT NULL DEFAULT 0,
+    created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+"""
+
+_DDL_DRIFT_CHECK_RESULTS_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_drift_realm_time
+    ON drift_check_results(realm_slug, checked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_drift_run
+    ON drift_check_results(run_id)
+    WHERE run_id IS NOT NULL;
+"""
+
+_DDL_MODEL_HEALTH_SNAPSHOTS = """
+CREATE TABLE IF NOT EXISTS model_health_snapshots (
+    health_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id           INTEGER REFERENCES run_metadata(run_id),
+    realm_slug       TEXT    NOT NULL,
+    horizon_days     INTEGER NOT NULL,
+    n_evaluated      INTEGER NOT NULL DEFAULT 0,
+    live_mae         REAL,
+    baseline_mae     REAL,
+    mae_ratio        REAL,
+    live_dir_acc     REAL,
+    baseline_dir_acc REAL,
+    health_status    TEXT    NOT NULL DEFAULT 'unknown',
+    checked_at       TEXT    NOT NULL,
+    created_at       TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+"""
+
+_DDL_MODEL_HEALTH_SNAPSHOTS_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_health_realm_horizon
+    ON model_health_snapshots(realm_slug, horizon_days, checked_at DESC);
+"""
+
 # ── Ordered list of all DDL to apply ──────────────────────────────────────────
 
 _ALL_DDL: list[str] = [
@@ -351,6 +398,10 @@ _ALL_DDL: list[str] = [
     _DDL_BACKTEST_RUNS,
     _DDL_BACKTEST_FOLD_RESULTS,
     _DDL_BACKTEST_FOLD_RESULTS_INDEXES,
+    _DDL_DRIFT_CHECK_RESULTS,
+    _DDL_DRIFT_CHECK_RESULTS_INDEXES,
+    _DDL_MODEL_HEALTH_SNAPSHOTS,
+    _DDL_MODEL_HEALTH_SNAPSHOTS_INDEXES,
 ]
 
 # Table names for introspection / tests
@@ -370,6 +421,8 @@ ALL_TABLE_NAMES = [
     "ingestion_snapshots",
     "backtest_runs",
     "backtest_fold_results",
+    "drift_check_results",
+    "model_health_snapshots",
 ]
 
 

@@ -135,6 +135,52 @@ def migration_0003_add_recommendation_score(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def migration_0004_add_monitoring_tables(conn: sqlite3.Connection) -> None:
+    """Add drift_check_results and model_health_snapshots tables for monitoring."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS drift_check_results (
+            drift_id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id              INTEGER REFERENCES run_metadata(run_id),
+            realm_slug          TEXT    NOT NULL,
+            checked_at          TEXT    NOT NULL,
+            data_drift_level    TEXT    NOT NULL DEFAULT 'none',
+            error_drift_level   TEXT    NOT NULL DEFAULT 'none',
+            event_shock_active  INTEGER NOT NULL DEFAULT 0,
+            drift_details       TEXT,
+            uncertainty_mult    REAL    NOT NULL DEFAULT 1.0,
+            retrain_recommended INTEGER NOT NULL DEFAULT 0,
+            created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_drift_realm_time
+            ON drift_check_results(realm_slug, checked_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_drift_run
+            ON drift_check_results(run_id)
+            WHERE run_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS model_health_snapshots (
+            health_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id           INTEGER REFERENCES run_metadata(run_id),
+            realm_slug       TEXT    NOT NULL,
+            horizon_days     INTEGER NOT NULL,
+            n_evaluated      INTEGER NOT NULL DEFAULT 0,
+            live_mae         REAL,
+            baseline_mae     REAL,
+            mae_ratio        REAL,
+            live_dir_acc     REAL,
+            baseline_dir_acc REAL,
+            health_status    TEXT    NOT NULL DEFAULT 'unknown',
+            checked_at       TEXT    NOT NULL,
+            created_at       TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_health_realm_horizon
+            ON model_health_snapshots(realm_slug, horizon_days, checked_at DESC);
+    """)
+    conn.commit()
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 # Add new migrations here. They will run once, in order.
 
@@ -150,6 +196,10 @@ MIGRATIONS: dict[str, tuple[MigrationFn, str]] = {
     "0003_recommendation_score": (
         migration_0003_add_recommendation_score,
         "Add score, score_components, category_tag to recommendation_outputs",
+    ),
+    "0004_monitoring_tables": (
+        migration_0004_add_monitoring_tables,
+        "Add drift_check_results and model_health_snapshots tables",
     ),
 }
 
