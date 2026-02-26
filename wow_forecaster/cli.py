@@ -261,7 +261,7 @@ def run_hourly_refresh(
     realm: Optional[str] = typer.Option(
         None,
         "--realm",
-        help="Realm slug to refresh (e.g. area-52). Repeatable; uses config defaults if omitted.",
+        help="Realm slug to refresh (e.g. area-52). Uses config defaults if omitted.",
     ),
     db_path: Optional[str] = typer.Option(
         None,
@@ -273,91 +273,131 @@ def run_hourly_refresh(
         "--dry-run",
         help="Print what would run without executing.",
     ),
+    check_drift: bool = typer.Option(
+        True,
+        "--check-drift/--no-check-drift",
+        help="Run drift detection after normalize (default: on).",
+    ),
     config_path: Optional[str] = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
     ),
 ) -> None:
-    """Run ingest + normalize pipeline for one or more realms.
+    """Run the full hourly refresh: ingest, normalize, drift check.
 
     \b
     Steps:
-      1. IngestStage  — fetch AH snapshots (fixture mode until API keys are set).
-                        Writes JSON to data/raw/snapshots/ and records metadata
-                        in the ingestion_snapshots SQLite table.
-      2. NormalizeStage — convert copper→gold, flag outliers, write normalized obs.
+      1. IngestStage     — fetch AH snapshots (fixture mode until API keys set).
+                           Per-realm failures are isolated; other realms continue.
+      2. NormalizeStage  — convert copper->gold, z-score, flag outliers.
+      3. Drift Check     — data drift + error drift + event shock detection.
+      4. Adaptive policy — compute uncertainty multiplier from drift severity.
+      5. Provenance      — record source freshness and attribution.
+
+    \b
+    Outputs:
+      data/outputs/monitoring/drift_status_{realm}_{date}.json
+      data/outputs/monitoring/provenance_{realm}_{date}.json
+
+    \b
+    Drift levels and effects:
+      none     -> uncertainty x1.0 (no change)
+      low      -> uncertainty x1.25
+      medium   -> uncertainty x1.5  + retrain recommended
+      high     -> uncertainty x2.0  + retrain recommended
+      critical -> uncertainty x3.0  + retrain recommended
 
     \b
     Credential setup (.env, gitignored):
-      UNDERMINE_API_KEY=...          → enables real Undermine data
-      BLIZZARD_CLIENT_ID=...         → enables real Blizzard AH data
+      UNDERMINE_API_KEY=...          -> enables real Undermine data
+      BLIZZARD_CLIENT_ID=...         -> enables real Blizzard AH data
       BLIZZARD_CLIENT_SECRET=...
 
     Without credentials the pipeline runs in fixture mode (synthetic sample data).
     """
-    from wow_forecaster.db.connection import get_connection
-    from wow_forecaster.db.schema import apply_schema
-    from wow_forecaster.pipeline.ingest import IngestStage
-    from wow_forecaster.pipeline.normalize import NormalizeStage
+    from wow_forecaster.pipeline.orchestrator import HourlyOrchestrator
 
     config = _load_config_or_exit(config_path)
     _configure_logging(config)
 
-    target_db = db_path or config.database.db_path
+    target_db     = db_path or config.database.db_path
     target_realms = [realm] if realm else list(config.realms.defaults)
 
     typer.echo(
-        f"run-hourly-refresh | realms={', '.join(target_realms)} | db={target_db}"
+        f"run-hourly-refresh | realms={', '.join(target_realms)} | "
+        f"check_drift={check_drift} | db={target_db}"
     )
 
     if dry_run:
         typer.echo("[DRY RUN] Would run:")
-        typer.echo(f"  IngestStage   → realms={target_realms}")
-        typer.echo("  NormalizeStage → all unprocessed raw observations")
+        typer.echo(f"  [1] IngestStage    -> realms={target_realms}")
+        typer.echo("  [2] NormalizeStage -> all unprocessed raw observations")
+        if check_drift:
+            typer.echo("  [3] DriftChecker   -> data drift + error drift + event shock")
+            typer.echo("  [4] AdaptivePolicy -> uncertainty multiplier")
+            typer.echo("  [5] Provenance     -> source freshness summary")
         return
 
-    # Ensure schema exists (idempotent)
-    with get_connection(
-        target_db,
-        wal_mode=config.database.wal_mode,
-        busy_timeout_ms=config.database.busy_timeout_ms,
-    ) as conn:
-        apply_schema(conn)
+    orchestrator = HourlyOrchestrator(config=config, db_path=target_db)
+    result = orchestrator.run(
+        realm_slugs=target_realms,
+        check_drift=check_drift,
+        apply_adaptive=check_drift,
+    )
 
-    # ── IngestStage ───────────────────────────────────────────────────────────
-    typer.echo("  [1/2] IngestStage ...")
-    ingest_ok = False
-    try:
-        ingest = IngestStage(config=config, db_path=target_db)
-        ingest_run = ingest.run(realm_slugs=target_realms)
-        typer.echo(
-            f"        status={ingest_run.status} | "
-            f"snapshots written (market_obs_raw: {ingest_run.rows_processed} rows)"
-        )
-        ingest_ok = ingest_run.status == "success"
-    except Exception as exc:
-        typer.echo(f"        FAILED: {exc}", err=True)
+    # ── Print summary ─────────────────────────────────────────────────────────
+    typer.echo("")
+    for rr in result.realm_results:
+        status_str = "ok" if rr.success else "FAIL"
+        msg = f"  Ingest [{rr.realm_slug}] {status_str} | rows={rr.rows_written}"
+        if rr.error:
+            msg += f" | err={rr.error}"
+        typer.echo(msg)
 
-    # ── NormalizeStage ────────────────────────────────────────────────────────
-    typer.echo("  [2/2] NormalizeStage ...")
-    try:
-        norm = NormalizeStage(config=config, db_path=target_db)
-        norm_run = norm.run()
-        typer.echo(
-            f"        status={norm_run.status} | "
-            f"normalized={norm_run.rows_processed} rows"
-        )
-    except Exception as exc:
-        typer.echo(f"        FAILED: {exc}", err=True)
+    norm_status = "ok" if result.normalize_success else "FAIL"
+    typer.echo(f"  Normalize       {norm_status} | rows={result.normalize_rows}")
+
+    if result.drift_results:
+        typer.echo("")
+        typer.echo("  Drift check results:")
+        for realm_slug, dr in result.drift_results.items():
+            retrain_flag = " [RETRAIN RECOMMENDED]" if dr.retrain_recommended else ""
+            shock_flag   = " [EVENT SHOCK]" if dr.event_shock.shock_active else ""
+            typer.echo(
+                f"    {realm_slug:<20} drift={dr.overall_drift_level.value:<8} "
+                f"mult=x{dr.uncertainty_multiplier:.2f}{retrain_flag}{shock_flag}"
+            )
+            typer.echo(
+                f"      data: {dr.data_drift.drift_level.value} "
+                f"({dr.data_drift.n_series_drifted}/{dr.data_drift.n_series_checked} series) | "
+                f"error: {dr.error_drift.drift_level.value} "
+                f"(mae_ratio={dr.error_drift.mae_ratio or 'N/A'})"
+            )
+
+    if result.monitoring_files:
+        typer.echo("")
+        typer.echo("  Monitoring outputs:")
+        for f in result.monitoring_files:
+            typer.echo(f"    {f}")
+
+    if result.errors:
+        typer.echo("")
+        for e in result.errors:
+            typer.echo(f"  [WARN] {e}", err=True)
 
     typer.echo("")
-    if ingest_ok:
-        typer.echo("[OK] Hourly refresh complete.")
-    else:
-        typer.echo(
-            "[OK] Hourly refresh complete (fixture mode — set API keys in .env for live data)."
-        )
+    status_tag = (
+        "[OK]"      if result.status == "success" else
+        "[PARTIAL]" if result.status == "partial"  else
+        "[FAIL]"
+    )
+    fixture_note = ""
+    if result.status in ("success", "partial") and not any(
+        rr.success for rr in result.realm_results
+    ):
+        fixture_note = " (fixture mode — set API keys in .env for live data)"
+    typer.echo(f"{status_tag} Hourly refresh {result.status}.{fixture_note}")
 
 
 @app.command("train-model")
@@ -1234,6 +1274,264 @@ def validate_datasets_cmd(
         raise typer.Exit(code=1)
     else:
         typer.echo("[OK] Dataset quality check passed.")
+
+
+@app.command("evaluate-live-forecast")
+def evaluate_live_forecast(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Realm slug (e.g. area-52). Uses first config default if omitted.",
+    ),
+    window_days: int = typer.Option(
+        14,
+        "--window-days",
+        help="How many recent days of forecast target dates to evaluate.",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
+    ),
+    output_json: bool = typer.Option(
+        True,
+        "--output-json/--no-output-json",
+        help="Write model_health_{realm}_{date}.json (default: on).",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Evaluate live forecast accuracy against actual prices.
+
+    \b
+    For each configured horizon (1d, 7d, 28d), finds forecasts whose
+    target_date has already passed, looks up actual prices in
+    market_observations_normalized, and computes live MAE.
+
+    \b
+    Compares live MAE to baseline MAE from the most recent backtest run:
+      ok        : mae_ratio < 1.5
+      degraded  : 1.5 <= mae_ratio < 3.0
+      critical  : mae_ratio >= 3.0
+      unknown   : no baseline or no actuals available yet
+
+    \b
+    Output:
+      Prints a per-horizon health table.
+      Optionally writes data/outputs/monitoring/model_health_{realm}_{date}.json.
+    """
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.monitoring.health import compute_health_summary
+    from wow_forecaster.monitoring.reporter import (
+        persist_health_to_db,
+        write_health_report,
+    )
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_db    = db_path or config.database.db_path
+    target_realm = realm or config.realms.defaults[0]
+    horizons     = config.features.target_horizons_days
+
+    typer.echo(
+        f"evaluate-live-forecast | realm={target_realm} | "
+        f"horizons={horizons} | window={window_days}d"
+    )
+
+    summaries = []
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        for h in horizons:
+            s = compute_health_summary(
+                conn=conn,
+                realm_slug=target_realm,
+                horizon_days=h,
+                window_days=window_days,
+            )
+            summaries.append(s)
+            persist_health_to_db(conn, run_id=0, summary=s)
+
+    # ── Print table ───────────────────────────────────────────────────────────
+    typer.echo("")
+    typer.echo("=== Live Forecast Health ===")
+    typer.echo(f"  Realm: {target_realm}")
+    typer.echo("")
+    header = f"  {'Horizon':>8}  {'Status':>10}  {'N':>5}  {'LiveMAE':>9}  {'BaseMAE':>9}  {'Ratio':>7}  {'DirAcc':>7}"
+    typer.echo(header)
+    typer.echo("  " + "-" * (len(header) - 2))
+    for s in summaries:
+        live_mae_s  = f"{s.live_mae:.2f}g"  if s.live_mae  else "N/A"
+        base_mae_s  = f"{s.baseline_mae:.2f}g" if s.baseline_mae else "N/A"
+        ratio_s     = f"{s.mae_ratio:.2f}x"  if s.mae_ratio else "N/A"
+        dir_acc_s   = f"{s.live_dir_acc:.1%}" if s.live_dir_acc else "N/A"
+        typer.echo(
+            f"  {s.horizon_days:>6}d  {s.health_status:>10}  {s.n_evaluated:>5}  "
+            f"{live_mae_s:>9}  {base_mae_s:>9}  {ratio_s:>7}  {dir_acc_s:>7}"
+        )
+
+    if output_json and summaries:
+        from pathlib import Path
+        out_dir = Path(config.monitoring.monitoring_output_dir)
+        p = write_health_report(summaries, out_dir, target_realm)
+        typer.echo("")
+        typer.echo(f"  Health report written: {p}")
+
+    typer.echo("")
+    typer.echo("[OK] Live forecast evaluation complete.")
+
+
+@app.command("check-drift")
+def check_drift(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Realm slug (e.g. area-52). Uses first config default if omitted.",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
+    ),
+    output_json: bool = typer.Option(
+        True,
+        "--output-json/--no-output-json",
+        help="Write drift_status_{realm}_{date}.json (default: on).",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Check for market drift and model degradation.
+
+    \b
+    Runs three drift checks and prints a summary table:
+
+    \b
+      DATA DRIFT — Compares price_gold distribution (last 25h) vs 30-day
+                   baseline per archetype series.  Flags series where mean
+                   shifted by more than 2 standard deviations.
+
+    \b
+      ERROR DRIFT — Compares live forecast MAE (last 7 days) vs baseline
+                    MAE from the most recent backtest run.
+
+    \b
+      EVENT SHOCK — Detects active or upcoming major WoW events from the
+                    database (detection hook, not price attribution).
+
+    \b
+    Drift levels and uncertainty multipliers:
+      none     -> x1.0  (no adjustment)
+      low      -> x1.25
+      medium   -> x1.5  + retrain recommended
+      high     -> x2.0  + retrain recommended
+      critical -> x3.0  + retrain recommended
+
+    \b
+    The latest uncertainty_mult is read by RecommendStage to widen CIs.
+    """
+    from pathlib import Path
+
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.monitoring.drift import DriftChecker
+    from wow_forecaster.monitoring.reporter import (
+        persist_drift_to_db,
+        write_drift_report,
+    )
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_db    = db_path or config.database.db_path
+    target_realm = realm or config.realms.defaults[0]
+    mc           = config.monitoring
+
+    typer.echo(f"check-drift | realm={target_realm} | db={target_db}")
+
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        checker = DriftChecker(
+            conn=conn,
+            drift_window_hours=mc.drift_window_hours,
+            baseline_days=mc.drift_baseline_days,
+            z_threshold=mc.drift_z_threshold,
+            error_window_days=mc.error_drift_window_days,
+            mae_thresholds=(
+                mc.error_drift_mae_ratio_low,
+                mc.error_drift_mae_ratio_medium,
+                mc.error_drift_mae_ratio_high,
+                mc.error_drift_mae_ratio_critical,
+            ),
+            shock_window_days=mc.event_shock_window_days,
+        )
+        result = checker.run_all(target_realm)
+        persist_drift_to_db(conn, run_id=0, result=result)
+
+    # ── Print table ───────────────────────────────────────────────────────────
+    typer.echo("")
+    typer.echo("=== Drift Check Report ===")
+    typer.echo(f"  Realm:         {target_realm}")
+    typer.echo(f"  Checked at:    {result.checked_at}")
+    typer.echo("")
+    typer.echo("  Data drift:")
+    typer.echo(f"    Level:       {result.data_drift.drift_level.value}")
+    typer.echo(
+        f"    Series:      {result.data_drift.n_series_drifted} / "
+        f"{result.data_drift.n_series_checked} drifted "
+        f"({result.data_drift.drift_fraction:.0%})"
+    )
+    typer.echo(
+        f"    Window:      recent {result.data_drift.window_hours}h vs "
+        f"baseline {result.data_drift.baseline_days}d"
+    )
+    typer.echo("")
+    typer.echo("  Error drift (horizon=1d):")
+    typer.echo(f"    Level:       {result.error_drift.drift_level.value}")
+    typer.echo(f"    Evaluated:   {result.error_drift.n_evaluated} forecast-vs-actual pairs")
+    if result.error_drift.live_mae is not None:
+        typer.echo(f"    Live MAE:    {result.error_drift.live_mae:.2f}g")
+    if result.error_drift.baseline_mae is not None:
+        typer.echo(f"    Baseline MAE:{result.error_drift.baseline_mae:.2f}g")
+    if result.error_drift.mae_ratio is not None:
+        typer.echo(f"    MAE ratio:   {result.error_drift.mae_ratio:.2f}x baseline")
+    typer.echo("")
+    typer.echo("  Event shock:")
+    typer.echo(
+        f"    Active:      {len(result.event_shock.active_events)} event(s)"
+    )
+    typer.echo(
+        f"    Upcoming:    {len(result.event_shock.upcoming_events)} event(s) "
+        f"within {mc.event_shock_window_days}d"
+    )
+    typer.echo(f"    Shock flag:  {'YES' if result.event_shock.shock_active else 'no'}")
+    typer.echo("")
+    typer.echo("  Overall:")
+    typer.echo(f"    Drift level:         {result.overall_drift_level.value}")
+    typer.echo(f"    Uncertainty mult:    x{result.uncertainty_multiplier:.2f}")
+    typer.echo(
+        f"    Retrain recommended: {'YES' if result.retrain_recommended else 'no'}"
+    )
+
+    if output_json:
+        out_dir = Path(mc.monitoring_output_dir)
+        p = write_drift_report(result, out_dir)
+        typer.echo("")
+        typer.echo(f"  Drift report written: {p}")
+
+    typer.echo("")
+    typer.echo("[OK] Drift check complete.")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

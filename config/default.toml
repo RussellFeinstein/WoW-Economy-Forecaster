@@ -132,3 +132,39 @@ forecast_output_dir = "data/outputs/forecasts"
 recommendation_output_dir = "data/outputs/recommendations"
 # Maximum recommendations returned per archetype category
 top_n_per_category = 3
+
+# ── Monitoring & Drift Detection ───────────────────────────────────────────────
+
+[monitoring]
+# Recent observation window for data drift detection (hours).
+# 25h = one hourly cycle with jitter tolerance.
+drift_window_hours = 25
+
+# Historical baseline window for data drift (days).
+drift_baseline_days = 30
+
+# Z-score threshold for flagging an individual series as drifted.
+# 2.0 = mean must shift by 2 std from 30-day baseline to be flagged.
+drift_z_threshold = 2.0
+
+# Error drift: how many recent days of live forecasts to evaluate.
+error_drift_window_days = 7
+
+# Error drift MAE ratio thresholds (live_mae / baseline_mae).
+# LOW:      20-50% increase — watch and wait
+error_drift_mae_ratio_low = 1.2
+# MEDIUM:   50-100% increase — retrain recommended
+error_drift_mae_ratio_medium = 1.5
+# HIGH:     100-200% increase — model stale
+error_drift_mae_ratio_high = 2.0
+# CRITICAL: >200% increase — model broken
+error_drift_mae_ratio_critical = 3.0
+
+# Event shock: look-ahead window for upcoming major events (days).
+event_shock_window_days = 7
+
+# Auto-retrain on CRITICAL drift (off by default — manual review preferred).
+auto_retrain_on_critical = false
+
+# Directory for monitoring JSON output files.
+monitoring_output_dir = "data/outputs/monitoring"
