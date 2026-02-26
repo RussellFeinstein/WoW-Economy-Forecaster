@@ -1,0 +1,260 @@
+# WoW Economy Forecaster — Source Registry Configuration
+#
+# This file declares the known data sources used by the pipeline, together
+# with technical guardrails for each one (rate limits, TTL/freshness, backoff
+# policy, authentication requirements, retention notes, and enabled status).
+#
+# IMPORTANT — what this file IS and IS NOT:
+# -----------------------------------------------------------------------
+# This file provides *configurable technical guardrails* for safe pipeline
+# operation. It records operational constraints (how often to call a source,
+# how long data is valid, how to back off on failures) and attribution
+# metadata (provenance requirements, access method, auth type).
+#
+# This file does NOT:
+#   - Interpret platform terms of service or copyright law.
+#   - Grant or restrict any legal rights.
+#   - Replace independent legal/compliance review.
+#
+# Each [sources.<id>.policy_notes] block contains brief human-readable
+# notes about the intended use of that source. These notes are informational
+# reminders only, not legal determinations.
+#
+# To add a new source:
+#   1. Add a [sources.<your_source_id>] block below.
+#   2. Fill in all required fields (see governance/models.py for the schema).
+#   3. Run `wow-forecaster validate-source-policies` to check your config.
+#   4. Set enabled = true when you have confirmed access.
+#
+# ── Sources ───────────────────────────────────────────────────────────────────
+
+# ---------------------------------------------------------------------------
+# Blizzard Game Data API
+# ---------------------------------------------------------------------------
+# Public developer API for connected-realm auction house data and commodities.
+# Requires a registered Battle.net developer account (client_id + client_secret).
+# OAuth2 client-credentials grant (no user login needed).
+#
+# Endpoint reference (for when real HTTP is implemented):
+#   Auctions:    GET /data/wow/connected-realm/{realmId}/auctions
+#   Commodities: GET /data/wow/auctions/commodities
+#   Token:       POST https://<region>.battle.net/oauth/token
+
+[sources.blizzard_api]
+source_id    = "blizzard_api"
+display_name = "Blizzard Game Data API"
+source_type  = "auction_data"
+# "api"    = programmatic HTTP endpoint
+# "export" = file download / bulk export
+# "manual" = human-entered data
+access_method   = "api"
+requires_auth   = true
+enabled         = false   # Set true after configuring BLIZZARD_CLIENT_ID/SECRET in .env
+
+[sources.blizzard_api.rate_limit]
+# Blizzard API published limit is 100 req/s per client (36,000/h).
+# We intentionally stay well below this for conservative local-first use.
+requests_per_minute = 20
+requests_per_hour   = 500
+burst_limit         = 5
+cooldown_seconds    = 3.0    # Minimum seconds between calls for this source
+
+[sources.blizzard_api.backoff]
+strategy       = "exponential"   # "exponential" | "linear" | "fixed"
+base_seconds   = 1.0             # First retry delay
+max_seconds    = 120.0           # Cap on retry delay
+jitter         = true            # Add ±25% random jitter to prevent thundering herd
+max_retries    = 4               # After this many retries, mark call as failed
+
+[sources.blizzard_api.freshness]
+# AH data snapshots age quickly — new auctions appear/expire every few hours.
+ttl_hours              = 1.0    # Data older than 1h is "aging"
+refresh_cadence_hours  = 1.0    # Intended call frequency (matches hourly orchestrator)
+stale_threshold_hours  = 3.0    # Beyond 3h with no new snapshot: [STALE]
+critical_threshold_hours = 25.0 # Beyond 25h: data cannot be trusted for forecasting
+
+[sources.blizzard_api.provenance]
+requires_snapshot      = true   # Every call must write a snapshot JSON file to disk
+snapshot_format        = "json"
+content_hash_required  = true   # Snapshot must record sha256 hash of response body
+
+[sources.blizzard_api.retention]
+raw_snapshot_days = 30          # Keep raw JSON snapshots for 30 days
+notes = "Raw auction JSON retained 30 days for backfill and debugging."
+
+[sources.blizzard_api.policy_notes]
+access_type                = "authorized_api"
+requires_registered_account = true
+personal_research_only     = true
+notes = """
+Blizzard Game Data API access requires a registered developer account at
+https://develop.battle.net. Usage must comply with Blizzard's API Terms of
+Service. This system is for personal research only and does not redistribute
+data publicly. Rate limits above are intentionally conservative.
+"""
+
+# ---------------------------------------------------------------------------
+# Undermine Exchange (Nexus Hub)
+# ---------------------------------------------------------------------------
+# Third-party AH analytics platform (undermine.exchange / nexushub.co).
+# Provides market_value (Nexus Hub algorithm) and historical_value fields
+# alongside raw min_buyout. Requires a personal API key.
+#
+# Endpoint reference (for when real HTTP is implemented):
+#   Realm data: GET https://undermine.exchange/api/v2/{region}/{realm}/{faction}
+
+[sources.undermine_exchange]
+source_id    = "undermine_exchange"
+display_name = "Undermine Exchange / Nexus Hub"
+source_type  = "auction_data"
+access_method   = "api"
+requires_auth   = true
+enabled         = false   # Set true after configuring UNDERMINE_API_KEY in .env
+
+[sources.undermine_exchange.rate_limit]
+# Nexus Hub rate limits are not publicly documented; conservative defaults applied.
+requests_per_minute = 10
+requests_per_hour   = 200
+burst_limit         = 3
+cooldown_seconds    = 6.0
+
+[sources.undermine_exchange.backoff]
+strategy     = "exponential"
+base_seconds = 2.0
+max_seconds  = 180.0
+jitter       = true
+max_retries  = 3
+
+[sources.undermine_exchange.freshness]
+ttl_hours              = 1.0
+refresh_cadence_hours  = 1.0
+stale_threshold_hours  = 4.0    # Slightly more lenient than Blizzard (different update cadence)
+critical_threshold_hours = 25.0
+
+[sources.undermine_exchange.provenance]
+requires_snapshot     = true
+snapshot_format       = "json"
+content_hash_required = true
+
+[sources.undermine_exchange.retention]
+raw_snapshot_days = 30
+notes = "Raw Nexus Hub JSON retained 30 days."
+
+[sources.undermine_exchange.policy_notes]
+access_type                = "authorized_api"
+requires_registered_account = true
+personal_research_only     = true
+notes = """
+Undermine Exchange / Nexus Hub provides a personal-use API key on request.
+Usage should comply with their posted terms. Rate limits here are conservative
+estimates — adjust based on any limits communicated in your API key agreement.
+"""
+
+# ---------------------------------------------------------------------------
+# Blizzard Official News (Manual Collection)
+# ---------------------------------------------------------------------------
+# Patch notes, hotfix posts, and season announcements from official Blizzard
+# sources (e.g. worldofwarcraft.com/en-us/news). These are manually collected
+# and imported via the import-events command (JSON or CSV).
+#
+# There is no programmatic HTTP client for this source — it is captured
+# manually by the researcher and then imported. The blizzard_news_client.py
+# stub exists for potential future automation.
+
+[sources.blizzard_news_manual]
+source_id    = "blizzard_news_manual"
+display_name = "Blizzard Official News (Manual)"
+source_type  = "news_event"
+access_method   = "manual"
+requires_auth   = false
+enabled         = true    # Always available — no credentials needed
+
+[sources.blizzard_news_manual.rate_limit]
+# Manual source — no programmatic rate limits apply.
+requests_per_minute = 0    # 0 = no limit enforced
+requests_per_hour   = 0
+burst_limit         = 0
+cooldown_seconds    = 0.0
+
+[sources.blizzard_news_manual.backoff]
+strategy     = "fixed"
+base_seconds = 0.0
+max_seconds  = 0.0
+jitter       = false
+max_retries  = 0
+
+[sources.blizzard_news_manual.freshness]
+# News events don't expire the same way market data does, but stale event
+# imports (e.g., weeks without updating) are still worth flagging.
+ttl_hours              = 168.0   # 7 days — patch cycle is approximately weekly
+refresh_cadence_hours  = 168.0
+stale_threshold_hours  = 336.0   # 14 days without new import: [STALE]
+critical_threshold_hours = 720.0 # 30 days: likely out of date for active season
+
+[sources.blizzard_news_manual.provenance]
+requires_snapshot     = false    # Manual imports don't write raw snapshot files
+snapshot_format       = "csv_or_json"
+content_hash_required = false
+
+[sources.blizzard_news_manual.retention]
+raw_snapshot_days = 0     # 0 = retain indefinitely (CSV imports are small)
+notes = "Manual event imports are small; retain indefinitely in DB."
+
+[sources.blizzard_news_manual.policy_notes]
+access_type                = "manual"
+requires_registered_account = false
+personal_research_only     = true
+notes = """
+Blizzard official news and patch notes are publicly available. Manual
+collection and use for personal research purposes. Does not involve
+programmatic scraping.
+"""
+
+# ---------------------------------------------------------------------------
+# Manual Event CSV
+# ---------------------------------------------------------------------------
+# User-entered WoW events imported via `import-events --file events.csv`.
+# This is the simplest source: no authentication, no rate limits, no HTTP.
+# Freshness tracks how recently the researcher has reviewed and imported events.
+
+[sources.manual_event_csv]
+source_id    = "manual_event_csv"
+display_name = "Manual Event Import (CSV/JSON)"
+source_type  = "manual_event"
+access_method   = "manual"
+requires_auth   = false
+enabled         = true
+
+[sources.manual_event_csv.rate_limit]
+requests_per_minute = 0
+requests_per_hour   = 0
+burst_limit         = 0
+cooldown_seconds    = 0.0
+
+[sources.manual_event_csv.backoff]
+strategy     = "fixed"
+base_seconds = 0.0
+max_seconds  = 0.0
+jitter       = false
+max_retries  = 0
+
+[sources.manual_event_csv.freshness]
+ttl_hours              = 720.0    # 30 days — infrequent maintenance expected
+refresh_cadence_hours  = 720.0
+stale_threshold_hours  = 1440.0   # 60 days without import: [STALE]
+critical_threshold_hours = 2160.0 # 90 days: events probably missing/outdated
+
+[sources.manual_event_csv.provenance]
+requires_snapshot     = false
+snapshot_format       = "csv_or_json"
+content_hash_required = false
+
+[sources.manual_event_csv.retention]
+raw_snapshot_days = 0
+notes = "Event CSV files are small; retain indefinitely alongside project."
+
+[sources.manual_event_csv.policy_notes]
+access_type                = "manual"
+requires_registered_account = false
+personal_research_only     = true
+notes = "User-authored event data. No external access restrictions."
