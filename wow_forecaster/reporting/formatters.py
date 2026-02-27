@@ -63,23 +63,37 @@ def format_freshness_banner(
 
 
 def format_top_items_table(
-    categories: dict[str, list[dict]],
-    realm: str,
-    generated_at: str,
-    is_fresh: bool,
-    age_hours: float | None,
+    categories:     dict[str, list[dict]],
+    realm:          str,
+    generated_at:   str,
+    is_fresh:       bool,
+    age_hours:      float | None,
+    item_discounts: dict[int, list[dict]] | None = None,
 ) -> str:
     """Format top-N recommendations per category as an ASCII table.
 
     One block per category, sorted alphabetically.  Within each block items
     appear in rank order (already ordered by the ranker).
 
+    When ``item_discounts`` is provided, each recommendation row is followed
+    by a sub-table showing individual items within that archetype ranked by
+    their price deviation from the archetype mean::
+
+        Rank  Archetype     Horizon  Current  Predicted   ROI  Score  Action
+        -------------------------------------------------------------------
+           1  herb              28d   601.3g   1377.0g  +129%   52.2     buy
+               Item                      Price   vs. Mean
+               Luredal Kelp             210.5g    +65.0%
+               Mycobloom                195.0g    +67.5%
+
     Args:
-        categories:   ``recommendations_{realm}_{date}.json["categories"]`` dict.
-        realm:        Realm slug (header).
-        generated_at: ISO string from the JSON (provenance display).
-        is_fresh:     Freshness flag.
-        age_hours:    Hours since generation.
+        categories:     ``recommendations_{realm}_{date}.json["categories"]`` dict.
+        realm:          Realm slug (header).
+        generated_at:   ISO string from the JSON (provenance display).
+        is_fresh:       Freshness flag.
+        age_hours:      Hours since generation.
+        item_discounts: Optional dict keyed by archetype_id -> list of item dicts,
+                        each with keys ``name``, ``item_price_gold``, ``discount_pct``.
 
     Returns:
         Multi-line string.
@@ -97,7 +111,7 @@ def format_top_items_table(
         return "\n".join(lines)
 
     for cat in sorted(categories):
-        items = categories[cat]
+        recs = categories[cat]
         lines.append("")
         lines.append(f"  [{cat.upper()}]")
         header = (
@@ -107,7 +121,7 @@ def format_top_items_table(
         )
         lines.append(header)
         lines.append("    " + "-" * (len(header) - 4))
-        for item in items:
+        for item in recs:
             roi     = item.get("roi_pct", 0.0)
             curr    = item.get("current_price", 0.0)
             pred    = item.get("predicted_price", 0.0)
@@ -116,13 +130,30 @@ def format_top_items_table(
             curr_str  = f"{curr:.1f}g"   if isinstance(curr,  (int, float)) else str(curr)
             pred_str  = f"{pred:.1f}g"   if isinstance(pred,  (int, float)) else str(pred)
             score_str = f"{score:.1f}"   if isinstance(score, (int, float)) else str(score)
-            sub_tag = item.get("archetype_sub_tag") or str(item.get("archetype_id", ""))
+            sub_tag   = item.get("archetype_sub_tag") or str(item.get("archetype_id", ""))
             archetype = sub_tag[:30]
             lines.append(
                 f"    {item.get('rank', ''):>4}  {archetype:<30}  "
                 f"{item.get('horizon', ''):>7}  {curr_str:>9}  {pred_str:>9}  "
                 f"{roi_str:>8}  {score_str:>6}  {item.get('action', ''):>6}"
             )
+
+            # Per-item discount sub-rows
+            arch_id = item.get("archetype_id")
+            disc_rows = (item_discounts or {}).get(arch_id, [])
+            if disc_rows:
+                lines.append(
+                    f"          {'Item':<32}  {'Price':>9}  {'vs. Mean':>9}"
+                )
+                for dr in disc_rows:
+                    name      = str(dr.get("name", ""))[:32]
+                    price     = dr.get("item_price_gold", 0.0)
+                    discount  = dr.get("discount_pct", 0.0)
+                    price_str = f"{price:.1f}g"   if isinstance(price,   (int, float)) else "?"
+                    disc_str  = f"{discount:+.1%}" if isinstance(discount, (int, float)) else "?"
+                    lines.append(
+                        f"          {name:<32}  {price_str:>9}  {disc_str:>9}"
+                    )
 
     return "\n".join(lines)
 

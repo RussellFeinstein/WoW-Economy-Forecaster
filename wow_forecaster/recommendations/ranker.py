@@ -14,15 +14,12 @@ Usage flow
 3. build_recommendation_outputs(top_by_category)
    -> list[RecommendationOutput]  (ready for DB insertion)
 
-V1 limitations / planned improvements to top_n_per_category
-------------------------------------------------------------
-- Currently ranks purely by composite score (single-objective).
-- V2 should support Pareto-frontier ranking (score AND liquidity).
-- V2 should de-duplicate overlapping archetypes across horizons (same
-  archetype appearing as top-3 in 1d AND 7d is redundant for a user).
-- V2 should weight category importance differently per user profile
-  (e.g. a crafter cares more about "mat" than "gear").
-- Consider persisting scoring parameters to enable A/B testing.
+Planned improvements to top_n_per_category
+-------------------------------------------
+- V2: Pareto-frontier ranking (score AND liquidity as dual objectives).
+- V2: User-profile weighting (configurable per-category importance).
+- V2: "Do not recommend" blocklist (user-defined archetype exclusions).
+- V2: A/B test support (persist scoring parameters alongside recommendations).
 """
 
 from __future__ import annotations
@@ -169,21 +166,17 @@ def build_scored_forecasts(
     return scored
 
 
-# TODO (V2 refinements for top_n_per_category):
-# - Pareto-frontier ranking: score AND liquidity as dual objectives.
-# - De-duplicate archetypes that appear top-N across multiple horizons.
-# - User-profile weighting: configurable per-category importance multipliers.
-# - Support for "do not recommend" blocklist (user-defined archetype exclusions).
-# - A/B test support: persist scoring parameters alongside recommendations.
 def top_n_per_category(
     scored:  list[ScoredForecast],
     n:       int = 3,
     actions: list[str] | None = None,
 ) -> dict[str, list[ScoredForecast]]:
-    """Return top-N scored forecasts per archetype category (V1 implementation).
+    """Return top-N scored forecasts per archetype category.
 
-    Forecasts are ranked by composite score descending.
-    Ties are broken by archetype_id (deterministic).
+    Each archetype appears at most once per category — the horizon with the
+    highest score is kept.  When two horizons tie on score the shorter horizon
+    wins (more immediately actionable).  After de-duplication, archetypes are
+    sorted by score descending; ties broken by archetype_id ascending.
 
     Args:
         scored:   All ScoredForecast objects.
@@ -203,10 +196,21 @@ def top_n_per_category(
 
     result: dict[str, list[ScoredForecast]] = {}
     for cat, items in by_cat.items():
+        # De-duplicate: keep only the best-scoring horizon per archetype.
+        # Tie-break within same archetype: prefer shorter horizon (more actionable).
+        best_by_archetype: dict[int, ScoredForecast] = {}
+        for sf in items:
+            existing = best_by_archetype.get(sf.archetype_id)
+            if existing is None:
+                best_by_archetype[sf.archetype_id] = sf
+            elif sf.score > existing.score:
+                best_by_archetype[sf.archetype_id] = sf
+            elif sf.score == existing.score and sf.horizon_days < existing.horizon_days:
+                best_by_archetype[sf.archetype_id] = sf
+
+        deduped = list(best_by_archetype.values())
         # Primary sort: score descending. Secondary: archetype_id ascending (stable).
-        sorted_items = sorted(
-            items, key=lambda x: (-x.score, x.archetype_id)
-        )
+        sorted_items = sorted(deduped, key=lambda x: (-x.score, x.archetype_id))
         result[cat] = sorted_items[:n]
 
     return result
