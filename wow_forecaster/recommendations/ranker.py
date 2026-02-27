@@ -68,11 +68,12 @@ class ScoredForecast:
     components:    ScoreComponents
     action:        str
     reasoning:     str
-    category_tag:  str
-    archetype_id:  int
-    realm_slug:    str
-    current_price: float | None
-    horizon_days:  int
+    category_tag:       str
+    archetype_sub_tag:  str | None
+    archetype_id:       int
+    realm_slug:         str
+    current_price:      float | None
+    horizon_days:       int
 
 
 def build_scored_forecasts(
@@ -146,7 +147,8 @@ def build_scored_forecasts(
             horizon_days=horizon_days,
         )
 
-        category_tag = str(inf_row.get("archetype_category") or "unknown")
+        category_tag      = str(inf_row.get("archetype_category") or "unknown")
+        archetype_sub_tag = inf_row.get("archetype_sub_tag")
 
         scored.append(
             ScoredForecast(
@@ -156,6 +158,7 @@ def build_scored_forecasts(
                 action=action,
                 reasoning=reasoning,
                 category_tag=category_tag,
+                archetype_sub_tag=archetype_sub_tag,
                 archetype_id=arch_id,
                 realm_slug=fc.realm_slug,
                 current_price=inf_row.get("price_mean"),

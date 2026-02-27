@@ -40,8 +40,9 @@ transfer_target = "midnight"
 
 [realms]
 # Default realm slugs to track when none specified on CLI
-# US high-pop realms covering both Alliance and Horde player bases
-defaults = ["area-52", "illidan", "stormrage", "tichondrius"]
+# "us" = region-wide commodity AH (covers all US realms since patch 9.2.7).
+# Per-realm slugs (area-52, illidan, etc.) are reserved for future BoE auction support.
+defaults = ["us"]
 # AH faction: "neutral" = commodity AH (most accurate for commodities)
 default_faction = "neutral"
 

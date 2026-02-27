@@ -49,7 +49,7 @@ source_type  = "auction_data"
 # "manual" = human-entered data
 access_method   = "api"
 requires_auth   = true
-enabled         = false   # Set true after configuring BLIZZARD_CLIENT_ID/SECRET in .env
+enabled         = true    # Enabled — set BLIZZARD_CLIENT_ID/SECRET in .env before running
 
 [sources.blizzard_api.rate_limit]
 # Blizzard API published limit is 100 req/s per client (36,000/h).

@@ -103,40 +103,101 @@ class BlizzardNewsClient:
         },
     ]
 
-    # ── Real methods (not yet implemented) ────────────────────────────────────
+    # ── Real methods ───────────────────────────────────────────────────────────
 
     def fetch_recent_news(self, limit: int = 20) -> NewsResponse:
-        """Fetch recent WoW news articles via RSS feed.
+        """Fetch recent WoW news articles via the official RSS feed.
 
-        TODO: Implement with feedparser:
-          1. Add ``feedparser>=6.0`` to pyproject.toml.
-          2. import feedparser; feed = feedparser.parse(self.RSS_URL)
-          3. Map feed.entries → NewsItem list.
+        Parses ``https://news.blizzard.com/en-us/rss/world-of-warcraft`` using
+        feedparser and classifies each entry by title keywords.
 
         Args:
-            limit: Maximum number of articles to return.
+            limit: Maximum number of articles to return (most recent first).
+
+        Returns:
+            NewsResponse with real articles (is_fixture=False).
 
         Raises:
-            NotImplementedError: Until feedparser integration is implemented.
+            Exception: If the RSS feed is unreachable or malformed.
         """
-        # TODO: implement:
-        # import feedparser
-        # feed = feedparser.parse(self.RSS_URL)
-        # items = [self._entry_to_news_item(e) for e in feed.entries[:limit]]
-        # return NewsResponse(endpoint=self.RSS_URL, fetched_at=utcnow(), items=items, is_fixture=False)
-        raise NotImplementedError(
-            "Blizzard news fetch not yet implemented. "
-            "Add httpx + feedparser to pyproject.toml and implement RSS parsing."
+        import re
+        import time
+
+        import feedparser
+
+        feed = feedparser.parse(self.RSS_URL)
+        items: list[NewsItem] = []
+
+        for entry in feed.entries[:limit]:
+            # Publication timestamp
+            if hasattr(entry, "published_parsed") and entry.published_parsed:
+                ts = time.mktime(entry.published_parsed)
+                published_at = datetime.fromtimestamp(ts, tz=timezone.utc)
+            else:
+                published_at = datetime.now(timezone.utc)
+
+            title   = getattr(entry, "title", "")
+            summary = getattr(entry, "summary", "")[:500]
+            link    = getattr(entry, "link", "")
+
+            title_lower = title.lower()
+
+            # Detect patch notes
+            is_patch_notes = any(
+                kw in title_lower
+                for kw in ("hotfix", "patch notes", "ptr development", "maintenance", "update notes")
+            )
+
+            # Extract patch version like "11.2.7" or "11.1" from title
+            patch_version: str | None = None
+            m = re.search(r"\b(\d+\.\d+(?:\.\d+)?)\b", title)
+            if m and is_patch_notes:
+                patch_version = m.group(1)
+
+            # Classify category
+            if "patch" in title_lower or "hotfix" in title_lower or "ptr" in title_lower:
+                category = "patch-notes"
+            elif any(kw in title_lower for kw in ("announce", "reveal", "launch", "goes live")):
+                category = "announcement"
+            elif any(kw in title_lower for kw in ("developer", "dev", "blog", "inside")):
+                category = "developer-update"
+            else:
+                category = "announcement"
+
+            items.append(
+                NewsItem(
+                    title=title,
+                    url=link,
+                    published_at=published_at,
+                    category=category,
+                    summary=summary,
+                    is_patch_notes=is_patch_notes,
+                    patch_version=patch_version,
+                )
+            )
+
+        return NewsResponse(
+            source="blizzard_news",
+            endpoint=self.RSS_URL,
+            fetched_at=datetime.now(timezone.utc),
+            items=items,
+            is_fixture=False,
         )
 
     def fetch_patch_notes(self) -> NewsResponse:
-        """Fetch only patch note articles.
+        """Fetch only patch note articles from the RSS feed.
 
-        Raises:
-            NotImplementedError: Until fetch_recent_news() is implemented.
+        Returns:
+            NewsResponse filtered to patch-notes category.
         """
-        raise NotImplementedError(
-            "Patch notes fetch not yet implemented. See fetch_recent_news()."
+        full = self.fetch_recent_news(limit=50)
+        patch_items = [i for i in full.items if i.is_patch_notes]
+        return NewsResponse(
+            source=full.source,
+            endpoint=full.endpoint,
+            fetched_at=full.fetched_at,
+            items=patch_items,
+            is_fixture=False,
         )
 
     # ── Fixture / stub mode ────────────────────────────────────────────────────

@@ -116,7 +116,8 @@ def format_top_items_table(
             curr_str  = f"{curr:.1f}g"   if isinstance(curr,  (int, float)) else str(curr)
             pred_str  = f"{pred:.1f}g"   if isinstance(pred,  (int, float)) else str(pred)
             score_str = f"{score:.1f}"   if isinstance(score, (int, float)) else str(score)
-            archetype = str(item.get("archetype_id", ""))[:30]
+            sub_tag = item.get("archetype_sub_tag") or str(item.get("archetype_id", ""))
+            archetype = sub_tag[:30]
             lines.append(
                 f"    {item.get('rank', ''):>4}  {archetype:<30}  "
                 f"{item.get('horizon', ''):>7}  {curr_str:>9}  {pred_str:>9}  "
@@ -225,7 +226,8 @@ def format_forecast_summary(
         except (TypeError, ValueError):
             score_str = "N/A"
 
-        archetype = str(r.get("archetype_id", ""))[:30]
+        sub_tag = r.get("archetype_sub_tag") or str(r.get("archetype_id", ""))
+        archetype = sub_tag[:30]
         lines.append(
             f"  {archetype:<30}  {r.get('horizon', ''):>6}  {curr_str:>9}  {pred_str:>9}  "
             f"{ci_str:>9}  {roi_str:>8}  {score_str:>6}  {r.get('action', ''):>6}"
@@ -314,7 +316,8 @@ def format_volatility_watchlist(
             score_str = f"{float(r.get('score') or 0):.1f}"
         except (TypeError, ValueError):
             score_str = "N/A"
-        archetype = str(r.get("archetype_id", ""))[:30]
+        sub_tag = r.get("archetype_sub_tag") or str(r.get("archetype_id", ""))
+        archetype = sub_tag[:30]
         lines.append(
             f"  {archetype:<30}  {r.get('horizon', ''):>6}  {pred_str:>9}  "
             f"{ci_str:>9}  {ci_pct_str:>7}  {score_str:>6}  {r.get('action', ''):>6}"

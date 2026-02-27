@@ -13,7 +13,8 @@ Table creation order respects foreign key dependencies:
   6. archetype_mappings  (→ economic_archetypes × 2)
   7. wow_events          (no FKs)
   8. event_archetype_impacts (→ wow_events, economic_archetypes)
-  9. model_metadata      (no FKs)
+  9. event_category_impacts  (→ wow_events; no archetype FK — uses category string)
+  10. model_metadata     (no FKs)
   10. run_metadata        (→ model_metadata)
   11. forecast_outputs    (→ run_metadata, economic_archetypes, items)
   12. recommendation_outputs (→ forecast_outputs)
@@ -182,6 +183,28 @@ CREATE TABLE IF NOT EXISTS event_archetype_impacts (
     notes              TEXT,
     UNIQUE(event_id, archetype_id)
 );
+"""
+
+_DDL_EVENT_CATEGORY_IMPACTS = """
+CREATE TABLE IF NOT EXISTS event_category_impacts (
+    cat_impact_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id           INTEGER NOT NULL REFERENCES wow_events(event_id),
+    archetype_category TEXT    NOT NULL,
+    impact_direction   TEXT    NOT NULL,
+    typical_magnitude  REAL,
+    lag_days           INTEGER NOT NULL DEFAULT 0,
+    duration_days      INTEGER,
+    source             TEXT    NOT NULL DEFAULT 'seed',
+    notes              TEXT,
+    UNIQUE(event_id, archetype_category)
+);
+"""
+
+_DDL_EVENT_CATEGORY_IMPACTS_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_cat_impacts_event
+    ON event_category_impacts(event_id);
+CREATE INDEX IF NOT EXISTS idx_cat_impacts_category
+    ON event_category_impacts(archetype_category);
 """
 
 _DDL_MODEL_METADATA = """
@@ -388,6 +411,8 @@ _ALL_DDL: list[str] = [
     _DDL_WOW_EVENTS,
     _DDL_WOW_EVENTS_INDEXES,
     _DDL_EVENT_ARCHETYPE_IMPACTS,
+    _DDL_EVENT_CATEGORY_IMPACTS,
+    _DDL_EVENT_CATEGORY_IMPACTS_INDEXES,
     _DDL_MODEL_METADATA,
     _DDL_RUN_METADATA,
     _DDL_FORECAST_OUTPUTS,
@@ -414,6 +439,7 @@ ALL_TABLE_NAMES = [
     "archetype_mappings",
     "wow_events",
     "event_archetype_impacts",
+    "event_category_impacts",
     "model_metadata",
     "run_metadata",
     "forecast_outputs",

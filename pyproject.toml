@@ -17,6 +17,8 @@ dependencies = [
     "lightgbm>=4.3",
     "scikit-learn>=1.4",
     "joblib>=1.3",
+    "httpx>=0.27",
+    "feedparser>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +37,7 @@ dashboard = [
 
 [project.scripts]
 wow-forecaster = "wow_forecaster.cli:app"
+wowfc = "wow_forecaster.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["."]

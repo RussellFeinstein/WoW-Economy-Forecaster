@@ -207,7 +207,12 @@ def _register_model(
             slug, display_name, model_type, version, hyperparameters,
             training_data_start, training_data_end,
             validation_mae, validation_rmse, artifact_path, is_active
-        ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, 1);
+        ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, 1)
+        ON CONFLICT(slug) DO UPDATE SET
+            validation_mae   = excluded.validation_mae,
+            validation_rmse  = excluded.validation_rmse,
+            artifact_path    = excluded.artifact_path,
+            is_active        = 1;
         """,
         (
             new_slug,

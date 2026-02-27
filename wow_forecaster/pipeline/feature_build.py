@@ -72,7 +72,10 @@ class FeatureBuildStage(PipelineStage):
         from wow_forecaster.features.dataset_builder import build_datasets
 
         realms: list[str] = realm_slugs or list(self.config.realms.defaults)
-        end: date = end_date or date.today()
+        # Use today + 1 day so observations stored with a UTC timestamp that
+        # crosses midnight (e.g. 00:22 UTC = evening prior day locally) are
+        # always included in the window.
+        end: date = end_date or (date.today() + timedelta(days=1))
         start: date = start_date or (
             end - timedelta(days=self.config.features.training_lookback_days)
         )

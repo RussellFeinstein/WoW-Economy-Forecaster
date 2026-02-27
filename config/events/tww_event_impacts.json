@@ -1,0 +1,705 @@
+[
+  {
+    "_comment": "── EXPANSION LAUNCH (tww-launch) ──────────────────────────────────────────",
+    "event_slug": "tww-launch",
+    "archetype_category": "consumable",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.50,
+    "lag_days": 0,
+    "duration_days": 21,
+    "notes": "Massive consumable demand for all new content; flask/potion/food usage peaks for 3 weeks."
+  },
+  {
+    "event_slug": "tww-launch",
+    "archetype_category": "gear",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.60,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "BOE endgame market extremely active first 2 weeks; crafted leveling gear sells out quickly."
+  },
+  {
+    "event_slug": "tww-launch",
+    "archetype_category": "mat",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.40,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "All crafting mats in high demand; herbs/ore/leather for rush-crafting consumables and gear."
+  },
+  {
+    "event_slug": "tww-launch",
+    "archetype_category": "enchant",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.35,
+    "lag_days": 2,
+    "duration_days": 14,
+    "notes": "Enchant demand spikes as players finish leveling and begin equipping endgame gear."
+  },
+  {
+    "event_slug": "tww-launch",
+    "archetype_category": "gem",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.35,
+    "lag_days": 2,
+    "duration_days": 14,
+    "notes": "Gems socketed into new endgame gear; demand follows enchant demand with 2-day lag."
+  },
+  {
+    "event_slug": "tww-launch",
+    "archetype_category": "reagent",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.30,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "Universal reagents in high demand across all professions during launch crafting rush."
+  },
+  {
+    "_comment": "── EXPANSION PREPATCH (tww-prepatch-110) ─────────────────────────────────",
+    "event_slug": "tww-prepatch-110",
+    "archetype_category": "consumable",
+    "impact_direction": "crash",
+    "typical_magnitude": -0.30,
+    "lag_days": 0,
+    "duration_days": 33,
+    "notes": "Old Dragonflight consumables lose value as players stop raiding in anticipation of TWW."
+  },
+  {
+    "event_slug": "tww-prepatch-110",
+    "archetype_category": "mat",
+    "impact_direction": "crash",
+    "typical_magnitude": -0.40,
+    "lag_days": 0,
+    "duration_days": 33,
+    "notes": "Dragonflight gathering mats crash; early TWW mat speculation barely offsets the loss."
+  },
+  {
+    "event_slug": "tww-prepatch-110",
+    "archetype_category": "gear",
+    "impact_direction": "mixed",
+    "typical_magnitude": -0.20,
+    "lag_days": 0,
+    "duration_days": 33,
+    "notes": "Old gear crashes; new spec changes may trigger some re-gearing but overall negative."
+  },
+  {
+    "_comment": "── RTWF S1: NERUB-AR PALACE (tww-rtwf-nerubar-s1) ───────────────────────",
+    "event_slug": "tww-rtwf-nerubar-s1",
+    "archetype_category": "consumable",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.40,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "Flask/potion/food/augment rune demand peaks days 1–4 of RTWF, stays elevated ~2 weeks."
+  },
+  {
+    "event_slug": "tww-rtwf-nerubar-s1",
+    "archetype_category": "mat",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.20,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "Herb/fish/elemental mats spike as alchemists and cooks restock to meet prog-night demand."
+  },
+  {
+    "event_slug": "tww-rtwf-nerubar-s1",
+    "archetype_category": "enchant",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.25,
+    "lag_days": -3,
+    "duration_days": 7,
+    "notes": "Top guilds min-max enchants before Mythic day; demand peaks in the 3 days prior."
+  },
+  {
+    "event_slug": "tww-rtwf-nerubar-s1",
+    "archetype_category": "gem",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.30,
+    "lag_days": -3,
+    "duration_days": 7,
+    "notes": "Top guilds re-gem for BiS stats before Mythic day; similar pre-event spike to enchants."
+  },
+  {
+    "event_slug": "tww-rtwf-nerubar-s1",
+    "archetype_category": "gear",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.35,
+    "lag_days": -7,
+    "duration_days": 21,
+    "notes": "High-ilvl BOEs purchased by RTWF guilds and their server rivals; pre-event spike begins 7 days prior."
+  },
+  {
+    "event_slug": "tww-rtwf-nerubar-s1",
+    "archetype_category": "reagent",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.15,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "Craft-order reagents in demand as guilds commission best-in-slot crafted pieces."
+  },
+  {
+    "_comment": "── SEASON 1 START (tww-s1-start) ─────────────────────────────────────────",
+    "event_slug": "tww-s1-start",
+    "archetype_category": "consumable",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.25,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "M+ and PvP season start drives broad consumable demand across the player base."
+  },
+  {
+    "event_slug": "tww-s1-start",
+    "archetype_category": "enchant",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.30,
+    "lag_days": 0,
+    "duration_days": 10,
+    "notes": "Season start triggers mass re-enchanting of new season gear."
+  },
+  {
+    "event_slug": "tww-s1-start",
+    "archetype_category": "gem",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.30,
+    "lag_days": 0,
+    "duration_days": 10,
+    "notes": "Season start triggers re-gemming of new season gear."
+  },
+  {
+    "event_slug": "tww-s1-start",
+    "archetype_category": "gear",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.35,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "Crafted embellishment gear and BOE endgame demand peaks in first 2 weeks of the season."
+  },
+  {
+    "event_slug": "tww-s1-start",
+    "archetype_category": "mat",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.15,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "Base mats needed for crafting enchants, gems, consumables at season start."
+  },
+  {
+    "event_slug": "tww-s1-start",
+    "archetype_category": "reagent",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.20,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "Craft orders spike; optional reagents and missives in high demand."
+  },
+  {
+    "_comment": "── MINOR PATCH 11.0.5 (tww-patch-1105) ──────────────────────────────────",
+    "event_slug": "tww-patch-1105",
+    "archetype_category": "consumable",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.10,
+    "lag_days": 0,
+    "duration_days": 7,
+    "notes": "Balance tuning changes BiS lists slightly; minor re-consumable spike."
+  },
+  {
+    "event_slug": "tww-patch-1105",
+    "archetype_category": "gear",
+    "impact_direction": "mixed",
+    "typical_magnitude": 0.05,
+    "lag_days": 0,
+    "duration_days": 7,
+    "notes": "Class tuning may shift some BiS gear; marginal effect on gear market."
+  },
+  {
+    "event_slug": "tww-patch-1105",
+    "archetype_category": "mat",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.05,
+    "lag_days": 0,
+    "duration_days": 7,
+    "notes": "Minor mat demand uptick from patch-day crafting activity."
+  },
+  {
+    "_comment": "── MAJOR PATCH 11.1 (tww-patch-111) ─────────────────────────────────────",
+    "event_slug": "tww-patch-111",
+    "archetype_category": "consumable",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.20,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "New content tier opens; consumable demand rises with returning player activity."
+  },
+  {
+    "event_slug": "tww-patch-111",
+    "archetype_category": "enchant",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.20,
+    "lag_days": 0,
+    "duration_days": 10,
+    "notes": "New gear tier prompts re-enchanting across the player base."
+  },
+  {
+    "event_slug": "tww-patch-111",
+    "archetype_category": "gem",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.20,
+    "lag_days": 0,
+    "duration_days": 10,
+    "notes": "New gear tier prompts re-gemming; secondary stat meta may shift from tuning."
+  },
+  {
+    "event_slug": "tww-patch-111",
+    "archetype_category": "gear",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.25,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "New crafted gear recipes and new BOE tier; strong gear market spike at patch day."
+  },
+  {
+    "event_slug": "tww-patch-111",
+    "archetype_category": "mat",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.10,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "New crafting recipes require base mats; moderate demand spike."
+  },
+  {
+    "event_slug": "tww-patch-111",
+    "archetype_category": "reagent",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.15,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "New crafting recipes and craft orders; universal reagents in higher demand."
+  },
+  {
+    "_comment": "── SEASON 2 START (tww-s2-start) ─────────────────────────────────────────",
+    "event_slug": "tww-s2-start",
+    "archetype_category": "consumable",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.25,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "New consumable tier introduced; old tier crashes, new tier spikes sharply."
+  },
+  {
+    "event_slug": "tww-s2-start",
+    "archetype_category": "enchant",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.30,
+    "lag_days": 0,
+    "duration_days": 10,
+    "notes": "New season gear requires new enchants."
+  },
+  {
+    "event_slug": "tww-s2-start",
+    "archetype_category": "gem",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.30,
+    "lag_days": 0,
+    "duration_days": 10,
+    "notes": "New season gear requires new gems."
+  },
+  {
+    "event_slug": "tww-s2-start",
+    "archetype_category": "gear",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.40,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "Embellishment demand resets; new crafted gear tier and BOE market very active."
+  },
+  {
+    "event_slug": "tww-s2-start",
+    "archetype_category": "mat",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.15,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "Base mat demand for new season crafting."
+  },
+  {
+    "event_slug": "tww-s2-start",
+    "archetype_category": "reagent",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.20,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "Craft orders for new season gear drive optional reagent demand."
+  },
+  {
+    "_comment": "── RTWF S2: LIBERATION OF UNDERMINE (tww-rtwf-liberation-s2) ───────────",
+    "event_slug": "tww-rtwf-liberation-s2",
+    "archetype_category": "consumable",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.40,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "S2 RTWF consumable pattern expected similar to S1; new consumable tier prices spike."
+  },
+  {
+    "event_slug": "tww-rtwf-liberation-s2",
+    "archetype_category": "mat",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.20,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "Herb and fish mats spike as consumable restocking occurs at high volume."
+  },
+  {
+    "event_slug": "tww-rtwf-liberation-s2",
+    "archetype_category": "enchant",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.25,
+    "lag_days": -3,
+    "duration_days": 7,
+    "notes": "Top guilds re-enchant in the 3 days before Mythic day."
+  },
+  {
+    "event_slug": "tww-rtwf-liberation-s2",
+    "archetype_category": "gem",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.30,
+    "lag_days": -3,
+    "duration_days": 7,
+    "notes": "Top guilds re-gem in the 3 days before Mythic day."
+  },
+  {
+    "event_slug": "tww-rtwf-liberation-s2",
+    "archetype_category": "gear",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.35,
+    "lag_days": -7,
+    "duration_days": 21,
+    "notes": "High-ilvl BOEs purchased by RTWF guilds; pre-event spike begins 7 days prior."
+  },
+  {
+    "event_slug": "tww-rtwf-liberation-s2",
+    "archetype_category": "reagent",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.15,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "Craft orders for BiS pieces spike during RTWF."
+  },
+  {
+    "_comment": "── SEASON 1 END (tww-s1-end) ─────────────────────────────────────────────",
+    "event_slug": "tww-s1-end",
+    "archetype_category": "consumable",
+    "impact_direction": "crash",
+    "typical_magnitude": -0.50,
+    "lag_days": 0,
+    "duration_days": 1,
+    "notes": "Consumable demand crashes to near-zero on season-end day; nobody raids before reset."
+  },
+  {
+    "event_slug": "tww-s1-end",
+    "archetype_category": "gear",
+    "impact_direction": "crash",
+    "typical_magnitude": -0.40,
+    "lag_days": 0,
+    "duration_days": 1,
+    "notes": "Old season gear BOE market stalls; sellers panic-list before reset."
+  },
+  {
+    "event_slug": "tww-s1-end",
+    "archetype_category": "mat",
+    "impact_direction": "crash",
+    "typical_magnitude": -0.20,
+    "lag_days": 0,
+    "duration_days": 3,
+    "notes": "Crafting mat demand falls sharply as consumption stops."
+  },
+  {
+    "event_slug": "tww-s1-end",
+    "archetype_category": "enchant",
+    "impact_direction": "crash",
+    "typical_magnitude": -0.30,
+    "lag_days": 0,
+    "duration_days": 3,
+    "notes": "No new gear being purchased means no enchant demand."
+  },
+  {
+    "event_slug": "tww-s1-end",
+    "archetype_category": "gem",
+    "impact_direction": "crash",
+    "typical_magnitude": -0.25,
+    "lag_days": 0,
+    "duration_days": 3,
+    "notes": "No new gear being purchased means no gem demand."
+  },
+  {
+    "_comment": "── CONTENT DROUGHT (tww-content-drought-s1-end) ─────────────────────────",
+    "event_slug": "tww-content-drought-s1-end",
+    "archetype_category": "consumable",
+    "impact_direction": "crash",
+    "typical_magnitude": -0.20,
+    "lag_days": 0,
+    "duration_days": null,
+    "notes": "Reduced raiding activity; consumable volume and price compress gradually."
+  },
+  {
+    "event_slug": "tww-content-drought-s1-end",
+    "archetype_category": "mat",
+    "impact_direction": "crash",
+    "typical_magnitude": -0.15,
+    "lag_days": 0,
+    "duration_days": null,
+    "notes": "Less crafting incentive; gathering mat prices decline slowly."
+  },
+  {
+    "event_slug": "tww-content-drought-s1-end",
+    "archetype_category": "gear",
+    "impact_direction": "crash",
+    "typical_magnitude": -0.25,
+    "lag_days": 0,
+    "duration_days": null,
+    "notes": "BOE and crafted gear market stagnates; buyers waiting for next season."
+  },
+  {
+    "_comment": "── BLIZZCON 2024 (tww-blizzcon-2024) ────────────────────────────────────",
+    "event_slug": "tww-blizzcon-2024",
+    "archetype_category": "mat",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.10,
+    "lag_days": 0,
+    "duration_days": 7,
+    "notes": "Midnight expansion announcement triggers speculative buying of mats expected to carry over."
+  },
+  {
+    "event_slug": "tww-blizzcon-2024",
+    "archetype_category": "collection",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.20,
+    "lag_days": 0,
+    "duration_days": 7,
+    "notes": "Cosmetic speculation: pets/mounts/tmog related to announced content spike briefly."
+  },
+  {
+    "_comment": "── DARKMOON FAIRE RECURRING (tww-darkmoon-faire-recurring) ──────────────",
+    "event_slug": "tww-darkmoon-faire-recurring",
+    "archetype_category": "reagent",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.05,
+    "lag_days": 0,
+    "duration_days": 7,
+    "notes": "Inscription demand uptick during DMF for Darkmoon cards and off-hand tomes."
+  },
+  {
+    "event_slug": "tww-darkmoon-faire-recurring",
+    "archetype_category": "consumable",
+    "impact_direction": "mixed",
+    "typical_magnitude": -0.05,
+    "lag_days": 0,
+    "duration_days": 7,
+    "notes": "DMF reduces active raiding slightly; marginal negative on consumable volume."
+  },
+  {
+    "_comment": "── WINTER VEIL 2024 (tww-winter-veil-2024) ──────────────────────────────",
+    "event_slug": "tww-winter-veil-2024",
+    "archetype_category": "consumable",
+    "impact_direction": "crash",
+    "typical_magnitude": -0.15,
+    "lag_days": 0,
+    "duration_days": 17,
+    "notes": "Holiday period; reduced raiding activity leads to sustained consumable demand dip."
+  },
+  {
+    "_comment": "── BREWFEST 2024 (tww-brewfest-2024) ────────────────────────────────────",
+    "event_slug": "tww-brewfest-2024",
+    "archetype_category": "mat",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.03,
+    "lag_days": 0,
+    "duration_days": 16,
+    "notes": "Marginal herb demand for Brewfest consumable crafting."
+  },
+  {
+    "_comment": "── MAJOR PATCH 11.2: GHOSTS OF K'ARESH (tww-patch-112) ────────────────",
+    "event_slug": "tww-patch-112",
+    "archetype_category": "consumable",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.25,
+    "lag_days": 0,
+    "duration_days": 21,
+    "notes": "New consumable tier on patch day; raiders stock up for new content."
+  },
+  {
+    "event_slug": "tww-patch-112",
+    "archetype_category": "mat",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.35,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "New crafting mat tier releases; gathering rush on patch day."
+  },
+  {
+    "event_slug": "tww-patch-112",
+    "archetype_category": "gear",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.45,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "New crafted gear tier active from patch day; embellishments reset."
+  },
+  {
+    "event_slug": "tww-patch-112",
+    "archetype_category": "enchant",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.30,
+    "lag_days": 2,
+    "duration_days": 14,
+    "notes": "Re-enchant demand follows gear upgrades with 2-day lag."
+  },
+  {
+    "event_slug": "tww-patch-112",
+    "archetype_category": "gem",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.30,
+    "lag_days": 2,
+    "duration_days": 14,
+    "notes": "Re-gem demand follows gear upgrades."
+  },
+  {
+    "_comment": "── TWW SEASON 3 START (tww-s3-start) ───────────────────────────────────",
+    "event_slug": "tww-s3-start",
+    "archetype_category": "consumable",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.35,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "RTWF consumable demand; flasks, potions, food for progressing raiders."
+  },
+  {
+    "event_slug": "tww-s3-start",
+    "archetype_category": "reagent",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.25,
+    "lag_days": 0,
+    "duration_days": 10,
+    "notes": "Universal reagents in demand across all professions."
+  },
+  {
+    "_comment": "── MIDNIGHT PRE-PATCH: TWILIGHT ASCENSION (midnight-prepatch) ──────────",
+    "event_slug": "midnight-prepatch",
+    "archetype_category": "consumable",
+    "impact_direction": "crash",
+    "typical_magnitude": -0.50,
+    "lag_days": 0,
+    "duration_days": 40,
+    "notes": "TWW consumables become largely irrelevant. Catch-up gear from Twilight Ascension replaces raid gear for most players. Demand collapses."
+  },
+  {
+    "event_slug": "midnight-prepatch",
+    "archetype_category": "mat",
+    "impact_direction": "crash",
+    "typical_magnitude": -0.55,
+    "lag_days": 0,
+    "duration_days": 40,
+    "notes": "TWW crafting mats crash. Players stop raiding/crafting at old tier. Only housing mats retain some demand."
+  },
+  {
+    "event_slug": "midnight-prepatch",
+    "archetype_category": "gear",
+    "impact_direction": "crash",
+    "typical_magnitude": -0.60,
+    "lag_days": 0,
+    "duration_days": 40,
+    "notes": "Crafted and BOE gear market collapses. Twilight Ascension catch-up gear replaces most crafted items."
+  },
+  {
+    "event_slug": "midnight-prepatch",
+    "archetype_category": "enchant",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.20,
+    "lag_days": 1,
+    "duration_days": 10,
+    "notes": "Short enchant spike as players equip Twilight Ascension catch-up gear (new specs, new gear slots)."
+  },
+  {
+    "_comment": "── MIDNIGHT EARLY ACCESS (midnight-early-access) ───────────────────────",
+    "event_slug": "midnight-early-access",
+    "archetype_category": "consumable",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.40,
+    "lag_days": 0,
+    "duration_days": 4,
+    "notes": "Epic Edition early access players rush leveling; first Midnight consumable demand wave before worldwide launch."
+  },
+  {
+    "event_slug": "midnight-early-access",
+    "archetype_category": "mat",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.50,
+    "lag_days": 0,
+    "duration_days": 4,
+    "notes": "First Midnight mats hit AH from early access gatherers; prices start high with thin supply."
+  },
+  {
+    "event_slug": "midnight-early-access",
+    "archetype_category": "gear",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.35,
+    "lag_days": 0,
+    "duration_days": 4,
+    "notes": "First Midnight crafted leveling gear appears; early access players buy for leveling speed."
+  },
+  {
+    "_comment": "── MIDNIGHT EXPANSION LAUNCH (midnight-launch) ─────────────────────────",
+    "event_slug": "midnight-launch",
+    "archetype_category": "consumable",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.55,
+    "lag_days": 0,
+    "duration_days": 21,
+    "notes": "Massive consumable demand on worldwide launch. Flasks, potions, food for new raid/M+ season. Demand peaks day 1-7, tapers over 3 weeks."
+  },
+  {
+    "event_slug": "midnight-launch",
+    "archetype_category": "mat",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.60,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "Midnight crafting mats in extreme demand; supply thin first week. Classic launch-day price spike pattern expected."
+  },
+  {
+    "event_slug": "midnight-launch",
+    "archetype_category": "gear",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.65,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "BOE and crafted gear market extremely active first 2 weeks. Early raiders pay premium for pre-raid BiS."
+  },
+  {
+    "event_slug": "midnight-launch",
+    "archetype_category": "enchant",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.40,
+    "lag_days": 2,
+    "duration_days": 14,
+    "notes": "Enchant demand follows leveling completion and gear acquisition; 2-day lag."
+  },
+  {
+    "event_slug": "midnight-launch",
+    "archetype_category": "gem",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.40,
+    "lag_days": 2,
+    "duration_days": 14,
+    "notes": "Gem demand follows gear acquisition."
+  },
+  {
+    "event_slug": "midnight-launch",
+    "archetype_category": "reagent",
+    "impact_direction": "spike",
+    "typical_magnitude": 0.35,
+    "lag_days": 0,
+    "duration_days": 14,
+    "notes": "Universal reagents in high demand across all professions during launch crafting rush."
+  }
+]
