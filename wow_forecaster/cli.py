@@ -2776,6 +2776,90 @@ def check_source_freshness_cmd(
     typer.echo("[OK] check-source-freshness complete.")
 
 
+@app.command("start-scheduler")
+def start_scheduler_cmd(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Realm slug to run pipelines against.  Defaults to the first realm in config.",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
+    ),
+    daily_time: str = typer.Option(
+        "07:00",
+        "--daily-time",
+        help="Local 24-hour HH:MM time to run the daily forecast pipeline.",
+    ),
+    skip_initial: bool = typer.Option(
+        False,
+        "--skip-initial",
+        help="Skip the immediate hourly refresh on start; wait for the next scheduled slot.",
+    ),
+    log_dir: Optional[str] = typer.Option(
+        None,
+        "--log-dir",
+        help="Directory for scheduler log files.  Defaults to 'logs/' in the working directory.",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Start the automated scheduler daemon (hourly + daily pipelines).
+
+    \b
+    Runs two recurring pipelines:
+      1. Hourly  -- run-hourly-refresh (ingest -> normalize -> drift -> provenance)
+      2. Daily   -- build-datasets, then run-daily-forecast (train -> forecast -> recommend)
+                   Fires at --daily-time (local HH:MM, default 07:00).
+
+    \b
+    On startup the daemon immediately runs an hourly refresh unless
+    --skip-initial is set.  Each pipeline step is a CLI sub-process with its
+    own logging and exit code.  Failures are logged but do not stop the daemon.
+
+    \b
+    Press Ctrl-C to stop gracefully.
+
+    \b
+    Alternative: register Windows Task Scheduler tasks instead of running
+    this daemon.  See scripts/setup_tasks.bat for one-command setup.
+    """
+    from pathlib import Path as _Path
+
+    from wow_forecaster.scheduler import SchedulerDaemon
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_realm = realm or (list(config.realms.defaults)[0] if config.realms.defaults else "us")
+    target_db = db_path or config.database.db_path
+    target_log_dir = _Path(log_dir) if log_dir else _Path("logs")
+
+    typer.echo("Starting scheduler daemon...")
+    typer.echo(f"  Realm      : {target_realm}")
+    typer.echo(f"  DB         : {target_db}")
+    typer.echo(f"  Daily time : {daily_time}")
+    typer.echo(f"  Log dir    : {target_log_dir}")
+    typer.echo(f"  Initial run: {'skipped' if skip_initial else 'immediate'}")
+    typer.echo("")
+    typer.echo("Press Ctrl-C to stop.")
+    typer.echo("")
+
+    daemon = SchedulerDaemon(
+        realm=target_realm,
+        db_path=str(target_db),
+        daily_time=daily_time,
+        skip_initial_hourly=skip_initial,
+        log_dir=target_log_dir,
+    )
+    daemon.start()
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

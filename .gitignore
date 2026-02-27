@@ -36,6 +36,7 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 data/logs/*.log
+logs/
 
 # IDE
 .vscode/settings.json
