@@ -1957,6 +1957,21 @@ def report_top_items_cmd(
         "--freshness-hours",
         help="Reports older than this many hours are flagged as [STALE].",
     ),
+    item_lookback_days: int = typer.Option(
+        3,
+        "--item-lookback-days",
+        help="Days of normalized observations to average for per-item prices.",
+    ),
+    top_items_per_arch: int = typer.Option(
+        5,
+        "--top-items",
+        help="Max specific items to show under each archetype recommendation.",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Path to SQLite DB (for per-item discount overlay). Uses config default.",
+    ),
     config_path: Optional[str] = typer.Option(
         None,
         "--config",
@@ -1975,6 +1990,12 @@ def report_top_items_cmd(
              ROI, composite score, recommended action.
 
     \b
+    Per-item overlay: below each archetype row the most actionable specific
+    items within that archetype are listed with their current price and
+    discount vs. the archetype mean.  Requires normalized market observations
+    in the DB (run 'run-hourly-refresh' or 'import-auctionator' first).
+
+    \b
     Freshness: reports older than --freshness-hours are flagged [STALE].
     Run 'run-daily-forecast' to refresh the underlying data.
 
@@ -1984,6 +2005,8 @@ def report_top_items_cmd(
     """
     from pathlib import Path as _Path
 
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.recommendations.item_overlay import fetch_item_discounts
     from wow_forecaster.reporting.export import (
         export_to_csv,
         flatten_recommendations_for_export,
@@ -2021,6 +2044,47 @@ def report_top_items_cmd(
         }
         categories = {cat: items for cat, items in categories.items() if items}
 
+    # Per-item discount overlay — keyed by archetype_id -> list of item dicts.
+    item_discounts: dict[int, list[dict]] = {}
+    target_db = db_path or config.database.db_path
+    try:
+        with get_connection(
+            target_db,
+            wal_mode=config.database.wal_mode,
+            busy_timeout_ms=config.database.busy_timeout_ms,
+        ) as conn:
+            for cat_items in categories.values():
+                for rec in cat_items:
+                    arch_id      = rec.get("archetype_id")
+                    arch_mean    = rec.get("current_price") or 0.0
+                    action       = rec.get("action", "buy")
+                    if arch_id is None:
+                        continue
+                    rows = fetch_item_discounts(
+                        conn                = conn,
+                        archetype_id        = arch_id,
+                        realm_slug          = target_realm,
+                        archetype_mean_gold = arch_mean,
+                        action              = action,
+                        lookback_days       = item_lookback_days,
+                        top_n               = top_items_per_arch,
+                    )
+                    if rows:
+                        item_discounts[arch_id] = [
+                            {
+                                "name":            r.name,
+                                "item_price_gold": r.item_price_gold,
+                                "discount_pct":    r.discount_pct,
+                            }
+                            for r in rows
+                        ]
+    except Exception as exc:  # noqa: BLE001
+        # Overlay is non-fatal — report still renders without item detail.
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "Per-item discount overlay failed (no item data shown): %s", exc
+        )
+
     typer.echo(
         format_top_items_table(
             categories=categories,
@@ -2028,6 +2092,7 @@ def report_top_items_cmd(
             generated_at=generated_at,
             is_fresh=is_fresh,
             age_hours=age_hours,
+            item_discounts=item_discounts or None,
         )
     )
 

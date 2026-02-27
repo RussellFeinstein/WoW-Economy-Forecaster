@@ -100,6 +100,7 @@ def _scored_forecast(
     category: str = "consumable",
     action: str = "buy",
     forecast_id: int | None = 1,
+    horizon_days: int = 7,
 ) -> ScoredForecast:
     fc = _forecast(archetype_id=archetype_id, forecast_id=forecast_id)
     components = ScoreComponents(
@@ -123,7 +124,7 @@ def _scored_forecast(
         archetype_id=archetype_id,
         realm_slug="area-52",
         current_price=100.0,
-        horizon_days=7,
+        horizon_days=horizon_days,
     )
 
 
@@ -266,6 +267,81 @@ class TestTopNPerCategory:
         ]
         result = top_n_per_category(scored, n=3, actions=None)
         assert len(result["consumable"]) == 2
+
+
+class TestTopNPerCategoryDeduplication:
+    """Verify that each archetype appears at most once per category."""
+
+    def test_same_archetype_three_horizons_collapses_to_one(self):
+        # archetype_id=1 has 1d/7d/28d forecasts — only best score kept.
+        scored = [
+            _scored_forecast(score=17.2, archetype_id=1, horizon_days=1),
+            _scored_forecast(score=17.2, archetype_id=1, horizon_days=7),
+            _scored_forecast(score=17.2, archetype_id=1, horizon_days=28),
+        ]
+        result = top_n_per_category(scored, n=3)
+        assert len(result["consumable"]) == 1
+
+    def test_best_scoring_horizon_kept(self):
+        scored = [
+            _scored_forecast(score=10.0, archetype_id=1, horizon_days=1),
+            _scored_forecast(score=50.0, archetype_id=1, horizon_days=7),
+            _scored_forecast(score=30.0, archetype_id=1, horizon_days=28),
+        ]
+        result = top_n_per_category(scored, n=3)
+        assert result["consumable"][0].score == 50.0
+        assert result["consumable"][0].horizon_days == 7
+
+    def test_equal_score_prefers_shorter_horizon(self):
+        scored = [
+            _scored_forecast(score=40.0, archetype_id=1, horizon_days=28),
+            _scored_forecast(score=40.0, archetype_id=1, horizon_days=7),
+            _scored_forecast(score=40.0, archetype_id=1, horizon_days=1),
+        ]
+        result = top_n_per_category(scored, n=3)
+        assert result["consumable"][0].horizon_days == 1
+
+    def test_dedup_then_top_n_distinct_archetypes(self):
+        # archetypes 1,2,3 each appear at 1d+7d+28d → after dedup, 3 distinct
+        scored = []
+        for arch_id, base_score in [(1, 50.0), (2, 40.0), (3, 30.0)]:
+            for horizon in [1, 7, 28]:
+                scored.append(
+                    _scored_forecast(score=base_score, archetype_id=arch_id, horizon_days=horizon)
+                )
+        result = top_n_per_category(scored, n=3)
+        items = result["consumable"]
+        assert len(items) == 3
+        assert [sf.archetype_id for sf in items] == [1, 2, 3]
+
+    def test_dedup_n_limits_distinct_archetypes(self):
+        # 4 archetypes × 3 horizons each → after dedup 4 distinct, n=2 trims to 2
+        scored = []
+        for arch_id in [1, 2, 3, 4]:
+            for horizon in [1, 7, 28]:
+                scored.append(
+                    _scored_forecast(score=float(arch_id) * 10, archetype_id=arch_id, horizon_days=horizon)
+                )
+        result = top_n_per_category(scored, n=2)
+        assert len(result["consumable"]) == 2
+        # Top 2 by score should be archetype 4 (40) and 3 (30)
+        assert {sf.archetype_id for sf in result["consumable"]} == {4, 3}
+
+    def test_mixed_same_and_different_archetypes(self):
+        # archetype 1 appears at 1d+7d, archetype 2 appears once at 28d
+        scored = [
+            _scored_forecast(score=20.0, archetype_id=1, horizon_days=1),
+            _scored_forecast(score=35.0, archetype_id=1, horizon_days=7),
+            _scored_forecast(score=45.0, archetype_id=2, horizon_days=28),
+        ]
+        result = top_n_per_category(scored, n=3)
+        items = result["consumable"]
+        assert len(items) == 2
+        arch_ids = [sf.archetype_id for sf in items]
+        assert arch_ids == [2, 1]   # arch 2 (45.0) beats arch 1 (35.0)
+        # arch 1's surviving horizon is 7d (35.0 > 20.0)
+        arch1 = next(sf for sf in items if sf.archetype_id == 1)
+        assert arch1.horizon_days == 7
 
 
 # ── build_recommendation_outputs ─────────────────────────────────────────────
