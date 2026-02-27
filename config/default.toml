@@ -55,6 +55,8 @@ normalize_batch_size = 1000
 outlier_z_threshold = 3.0
 # Minimum observations required to build a usable feature vector
 min_obs_for_feature = 30
+# Lookback window (days) for rolling mean/std used in z-score normalization
+normalize_rolling_days = 30
 
 # ── Forecast ──────────────────────────────────────────────────────────────────
 

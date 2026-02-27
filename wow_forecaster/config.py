@@ -76,6 +76,7 @@ class PipelineConfig(BaseModel):
     normalize_batch_size: int = 1000
     outlier_z_threshold: float = 3.0
     min_obs_for_feature: int = 30
+    normalize_rolling_days: int = 30
 
 
 class ForecastConfig(BaseModel):
