@@ -171,6 +171,8 @@ def train_models(
             realm_slug=realm_slug,
             artifact_path=str(artifact_path),
             val_metrics=val_metrics,
+            training_data_start=date_strs[0] if date_strs else None,
+            training_data_end=date_strs[-1] if date_strs else None,
         )
 
         trained[horizon_days] = forecaster
@@ -191,6 +193,8 @@ def _register_model(
     realm_slug: str,
     artifact_path: str,
     val_metrics: dict[str, float],
+    training_data_start: str | None = None,
+    training_data_end: str | None = None,
 ) -> None:
     """Deactivate previous models for this horizon+realm, insert new record."""
     slug_prefix = f"lgbm_{horizon_days}d"
@@ -207,12 +211,14 @@ def _register_model(
             slug, display_name, model_type, version, hyperparameters,
             training_data_start, training_data_end,
             validation_mae, validation_rmse, artifact_path, is_active
-        ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, 1)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         ON CONFLICT(slug) DO UPDATE SET
-            validation_mae   = excluded.validation_mae,
-            validation_rmse  = excluded.validation_rmse,
-            artifact_path    = excluded.artifact_path,
-            is_active        = 1;
+            training_data_start = excluded.training_data_start,
+            training_data_end   = excluded.training_data_end,
+            validation_mae      = excluded.validation_mae,
+            validation_rmse     = excluded.validation_rmse,
+            artifact_path       = excluded.artifact_path,
+            is_active           = 1;
         """,
         (
             new_slug,
@@ -220,6 +226,8 @@ def _register_model(
             "lightgbm",
             LightGBMForecaster.MODEL_VERSION,
             json.dumps({"horizon_days": horizon_days}),
+            training_data_start,
+            training_data_end,
             val_metrics.get("mae"),
             val_metrics.get("rmse"),
             artifact_path,
