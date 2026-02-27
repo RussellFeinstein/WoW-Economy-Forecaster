@@ -85,11 +85,11 @@ def _score(
 
 class TestComputeScoreRanges:
     def test_all_components_are_nonnegative(self):
+        # event_boost can be negative (negative event impact penalty)
         c = _score()
         assert c.opportunity_score   >= 0.0
         assert c.liquidity_score     >= 0.0
         assert c.volatility_penalty  >= 0.0
-        assert c.event_boost         >= 0.0
         assert c.uncertainty_penalty >= 0.0
 
     def test_all_components_at_most_100(self):
@@ -192,8 +192,8 @@ class TestEventBoost:
             event_severity_max="major",
             event_archetype_impact="negative",
         )
-        # penalty = -base * 0.5 = -15, clamped to 0
-        assert c.event_boost == pytest.approx(0.0)
+        # penalty = -base * 0.5 = -30 * 0.5 = -15 (negative, reduces total score)
+        assert c.event_boost == pytest.approx(-15.0)
 
     def test_anticipation_boost_within_7_days(self):
         c = _score(event_active=False, event_days_to_next=0.0)

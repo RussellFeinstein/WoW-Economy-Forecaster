@@ -172,7 +172,7 @@ def compute_score(
     elif event_days_to_next is not None and event_days_to_next <= 7:
         # Anticipation boost decays linearly from 15 to 0 over 7 days
         event_boost = 15.0 * (1.0 - event_days_to_next / 7.0)
-    event_boost = _clamp(event_boost, 0.0, 100.0)
+    event_boost = _clamp(event_boost, -100.0, 100.0)
 
     # ── Uncertainty penalty ───────────────────────────────────────────────────
     if forecast_price > 0:
