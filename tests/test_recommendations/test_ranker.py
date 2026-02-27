@@ -119,6 +119,7 @@ def _scored_forecast(
         action=action,
         reasoning="Moderate upward forecast: +10.0% expected 7d return",
         category_tag=category,
+        archetype_sub_tag=None,
         archetype_id=archetype_id,
         realm_slug="area-52",
         current_price=100.0,

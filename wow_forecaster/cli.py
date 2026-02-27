@@ -15,6 +15,8 @@ Install and run::
     wow-forecaster init-db
     wow-forecaster validate-config
     wow-forecaster import-events
+    wow-forecaster build-events          # seed events + impacts -> DB + Parquet
+    wow-forecaster build-datasets        # requires build-events first
     wow-forecaster run-hourly-refresh
     wow-forecaster run-daily-forecast
     wow-forecaster backtest --start-date 2024-09-10 --end-date 2024-12-01
@@ -254,6 +256,213 @@ def import_events(
 
     typer.echo(f"  Upserted {len(validated)} event(s) into database.")
     typer.echo("[OK] Events imported.")
+
+
+@app.command("import-auctionator")
+def import_auctionator(
+    path: Optional[str] = typer.Option(
+        None,
+        "--path",
+        "-p",
+        help=(
+            "Path to Auctionator.lua SavedVariables file. "
+            "Defaults to the standard retail WoW install location."
+        ),
+    ),
+    realm: str = typer.Option(
+        "us",
+        "--realm",
+        help=(
+            "Realm slug to tag observations with. "
+            "Use 'us' for region-wide commodity AH data (default)."
+        ),
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Import Auctionator posting history into market_observations_raw.
+
+    Parses AUCTIONATOR_POSTING_HISTORY from your Auctionator.lua
+    SavedVariables file and inserts historical price records into the
+    database as raw market observations.
+
+    \b
+    Why use this?
+      Auctionator records every item you have posted to the AH with
+      price, quantity, and Unix timestamp. A typical active account
+      accumulates 6-12 months of TWW commodity price history, which
+      is invaluable for model training before the Blizzard API
+      starts providing snapshot data.
+
+    \b
+    Data characteristics:
+      - source tag: "auctionator_posting"
+      - realm_slug: "us" (region-wide commodity AH since patch 9.2.7)
+      - faction:    "neutral"
+      - price field: min_buyout_raw (copper)
+      - quantity:    quantity_listed
+
+    \b
+    Default Lua path (retail WoW on Windows):
+      C:/Program Files (x86)/World of Warcraft/_retail_/WTF/Account/
+          {account}/SavedVariables/Auctionator.lua
+
+    \b
+    Requirements:
+      - WoW must be closed (SavedVariables are written on exit).
+      - Items must exist in the items table (init-db first).
+      - Unknown item IDs are silently skipped (counted as 'skipped').
+
+    \b
+    Typical usage:
+      wow-forecaster init-db
+      wow-forecaster import-auctionator
+      wow-forecaster build-events
+      wow-forecaster build-datasets
+    """
+    from wow_forecaster.ingestion.auctionator_importer import (
+        DEFAULT_LUA_PATH,
+        import_auctionator_data,
+    )
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_db  = db_path or config.database.db_path
+    lua_path   = Path(path) if path else DEFAULT_LUA_PATH
+
+    typer.echo(f"import-auctionator | path={lua_path} | realm={realm} | db={target_db}")
+
+    if not lua_path.exists():
+        typer.echo(
+            f"[ERROR] Auctionator.lua not found: {lua_path}\n"
+            "  Make sure WoW is closed and use --path to specify the file location.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        inserted, skipped = import_auctionator_data(
+            lua_path=lua_path,
+            db_path=target_db,
+            realm_slug=realm,
+        )
+    except Exception as exc:
+        typer.echo(f"[ERROR] Auctionator import failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"  Inserted: {inserted:,} observations")
+    typer.echo(f"  Skipped:  {skipped:,} (unknown item IDs — run init-db to populate items table)")
+    typer.echo("[OK] Auctionator import complete.")
+
+
+@app.command("bootstrap-items")
+def bootstrap_items_cmd(
+    concurrency: int = typer.Option(
+        50,
+        "--concurrency",
+        "-c",
+        help="Max simultaneous Blizzard Item API requests (default 50).",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Seed item_categories, economic_archetypes, and items from Blizzard API.
+
+    Run this ONCE after init-db and run-hourly-refresh (which fetches the
+    commodity snapshot). This is required before build-datasets can produce
+    any training rows — the ingestion FK guard drops all records for
+    item IDs not registered in the items table.
+
+    \b
+    What it does:
+      1. Seeds item_categories from the archetype taxonomy (10 rows).
+      2. Seeds economic_archetypes from the archetype taxonomy (~37 rows).
+      3. Reads unique item IDs from the latest commodity snapshot on disk.
+      4. Calls the Blizzard Item API for each item to get name + class.
+      5. Maps Blizzard item class/subclass to our archetype system.
+      6. Inserts all items (ON CONFLICT IGNORE — safe to re-run).
+
+    \b
+    Requires:
+      BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET in .env
+      A commodity snapshot on disk (run 'run-hourly-refresh' first)
+
+    \b
+    Typical setup sequence:
+      wowfc init-db
+      wowfc run-hourly-refresh       # fetches commodity snapshot
+      wowfc bootstrap-items          # seeds item registry (~2-5 min)
+      wowfc run-hourly-refresh       # now inserts market observations
+      wowfc import-auctionator       # backfill 12 months of posting history
+      wowfc build-events
+      wowfc build-datasets
+    """
+    import os
+
+    from wow_forecaster.ingestion.item_bootstrapper import bootstrap_items
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    client_id     = os.environ.get("BLIZZARD_CLIENT_ID")
+    client_secret = os.environ.get("BLIZZARD_CLIENT_SECRET")
+
+    if not client_id or not client_secret:
+        typer.echo(
+            "[ERROR] BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET must be set in .env",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    target_db = db_path or config.database.db_path
+    raw_dir   = __import__("pathlib").Path(config.data.raw_dir)
+
+    typer.echo(
+        f"bootstrap-items | concurrency={concurrency} | db={target_db}"
+    )
+    typer.echo("  Step 1/3: Seeding item_categories + economic_archetypes...")
+    typer.echo("  Step 2/3: Fetching item metadata from Blizzard Item API...")
+    typer.echo("            (this takes 2-5 minutes for ~9,000+ commodity items)")
+
+    try:
+        cats, archs, items = bootstrap_items(
+            db_path=target_db,
+            client_id=client_id,
+            client_secret=client_secret,
+            raw_dir=raw_dir,
+            concurrency=concurrency,
+        )
+    except FileNotFoundError as exc:
+        typer.echo(f"[ERROR] {exc}", err=True)
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        typer.echo(f"[ERROR] Bootstrap failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo("")
+    typer.echo(f"  item_categories:    {cats:>5}")
+    typer.echo(f"  economic_archetypes:{archs:>5}")
+    typer.echo(f"  items inserted:     {items:>5,}")
+    typer.echo("")
+    typer.echo("[OK] Item bootstrap complete.")
+    typer.echo("     Run 'wowfc run-hourly-refresh' again to ingest market observations.")
 
 
 @app.command("run-hourly-refresh")
@@ -1028,6 +1237,179 @@ def report_backtest(
     typer.echo("[OK] Report complete.")
 
 
+@app.command("build-events")
+def build_events_cmd(
+    events_file: Optional[str] = typer.Option(
+        None,
+        "--events-file",
+        help="Path to events JSON seed file. Defaults to config/events/tww_events.json.",
+    ),
+    impacts_file: Optional[str] = typer.Option(
+        None,
+        "--impacts-file",
+        help="Path to category impacts JSON seed file. Defaults to config/events/tww_event_impacts.json.",
+    ),
+    output_dir: Optional[str] = typer.Option(
+        None,
+        "--output-dir",
+        help="Directory for Parquet output. Defaults to data/processed/events.",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Seed events and category impacts from JSON files, then export to Parquet.
+
+    \b
+    This command must be run before build-datasets so that event features
+    (event_archetype_impact, event_impact_magnitude, days_until_major_event,
+    is_pre_event_window) can be computed with real economic context.
+
+    \b
+    Steps:
+      1. Validates and upserts events into the wow_events table.
+      2. Validates and upserts category impacts into event_category_impacts.
+      3. Exports both tables to Parquet for downstream analysis.
+
+    \b
+    Output paths (default):
+      data/processed/events/events.parquet
+      data/processed/events/event_category_impacts.parquet
+
+    \b
+    Typical usage (new developer setup):
+      wow-forecaster init-db
+      wow-forecaster build-events
+      wow-forecaster build-datasets
+    """
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.db.schema import apply_schema
+    from wow_forecaster.events.seed_loader import build_events_table
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_db = db_path or config.database.db_path
+
+    resolved_events  = Path(events_file)  if events_file  else Path("config/events/tww_events.json")
+    resolved_impacts = Path(impacts_file) if impacts_file else Path("config/events/tww_event_impacts.json")
+    resolved_out     = Path(output_dir)   if output_dir   else Path("data/processed/events")
+
+    if not resolved_events.exists():
+        typer.echo(f"[ERROR] Events file not found: {resolved_events}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"build-events | events={resolved_events} | impacts={resolved_impacts} | db={target_db}")
+
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        apply_schema(conn)
+        events_n, impacts_n = build_events_table(
+            conn=conn,
+            events_path=resolved_events,
+            impacts_path=resolved_impacts if resolved_impacts.exists() else None,
+            output_dir=resolved_out,
+        )
+
+    typer.echo(f"[OK] Upserted {events_n} events, {impacts_n} category impacts.")
+    typer.echo(f"[OK] Parquet exported to {resolved_out}/")
+
+
+@app.command("list-events")
+def list_events_cmd(
+    expansion: Optional[str] = typer.Option(
+        None,
+        "--expansion",
+        "-e",
+        help="Filter by expansion slug (e.g. 'tww', 'midnight').",
+    ),
+    upcoming: bool = typer.Option(
+        False,
+        "--upcoming",
+        help="Show only events that start on or after today.",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override DB path from config.",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """List WoW events in the database.
+
+    \b
+    Examples:
+      wow-forecaster list-events
+      wow-forecaster list-events --expansion midnight
+      wow-forecaster list-events --upcoming
+    """
+    from wow_forecaster.db.connection import get_connection
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_db = db_path or config.database.db_path
+
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        conn.row_factory = __import__("sqlite3").Row
+        cur = conn.cursor()
+
+        sql  = "SELECT slug, expansion_slug, event_type, severity, start_date, end_date, display_name FROM wow_events"
+        args: list = []
+        where: list[str] = []
+
+        if expansion:
+            where.append("expansion_slug = ?")
+            args.append(expansion)
+        if upcoming:
+            where.append("start_date >= ?")
+            args.append(str(date.today()))
+
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY start_date"
+
+        rows = cur.execute(sql, args).fetchall()
+
+    if not rows:
+        typer.echo("No events found.")
+        return
+
+    # Header
+    typer.echo(
+        f"{'slug':<35} {'exp':<9} {'type':<22} {'sev':<11} {'start':<12} {'end':<12}  name"
+    )
+    typer.echo("-" * 130)
+
+    for r in rows:
+        end_str = r["end_date"] or "—"
+        typer.echo(
+            f"{r['slug']:<35} {r['expansion_slug']:<9} {r['event_type']:<22} "
+            f"{r['severity']:<11} {r['start_date']:<12} {end_str:<12}  {r['display_name']}"
+        )
+
+    typer.echo("")
+    typer.echo(f"[OK] {len(rows)} event(s) listed.")
+
+
 @app.command("build-datasets")
 def build_datasets_cmd(
     realm: Optional[list[str]] = typer.Option(
@@ -1098,8 +1480,10 @@ def build_datasets_cmd(
     target_realms: list[str] = list(realm) if realm else list(config.realms.defaults)
 
     # Parse / default dates.
+    # Use today + 1 so observations with a UTC timestamp that crosses midnight
+    # (e.g. 00:22 UTC = evening prior day locally) are always included.
     try:
-        end = date.fromisoformat(end_date) if end_date else date.today()
+        end = date.fromisoformat(end_date) if end_date else date.today() + timedelta(days=1)
         start = (
             date.fromisoformat(start_date)
             if start_date

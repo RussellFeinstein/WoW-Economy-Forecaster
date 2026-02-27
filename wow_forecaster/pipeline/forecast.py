@@ -77,6 +77,7 @@ class ForecastStage(PipelineStage):
             run_inference,
         )
         from wow_forecaster.ml.trainer import find_latest_model_artifact
+        from wow_forecaster.monitoring.reporter import get_latest_uncertainty_multiplier
 
         # Pre-persist to get run_id before run_inference() needs it
         self._persist_run(run)
@@ -125,6 +126,21 @@ class ForecastStage(PipelineStage):
                 realm, list(forecasters.keys()), inf_path,
             )
 
+            # Read drift-based uncertainty multiplier from last drift check.
+            # Returns 1.0 if no drift data exists yet (no adjustment).
+            with get_connection(
+                self.db_path,
+                wal_mode=self.config.database.wal_mode,
+                busy_timeout_ms=self.config.database.busy_timeout_ms,
+            ) as conn:
+                uncertainty_mult = get_latest_uncertainty_multiplier(conn, realm)
+
+            if uncertainty_mult != 1.0:
+                logger.info(
+                    "realm=%s: applying drift CI multiplier=%.2f",
+                    realm, uncertainty_mult,
+                )
+
             try:
                 outputs = run_inference(
                     config=self.config,
@@ -132,6 +148,7 @@ class ForecastStage(PipelineStage):
                     forecasters=forecasters,
                     inference_parquet_path=inf_path,
                     realm_slug=realm,
+                    uncertainty_multiplier=uncertainty_mult,
                 )
             except Exception as exc:
                 logger.error("Inference failed for realm=%s: %s", realm, exc)

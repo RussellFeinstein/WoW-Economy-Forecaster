@@ -155,6 +155,19 @@ FEATURE_REGISTRY: list[FeatureSpec] = [
                 "Impact direction for this archetype from event_archetype_impacts "
                 "for the most recently started active event. "
                 "Null if no impact record exists."),
+    FeatureSpec("event_impact_magnitude", "float32", "event",
+                "Expected price-change magnitude (as a fraction, e.g. 0.40 = +40%) "
+                "from event_category_impacts for this archetype's category. "
+                "Negative values indicate a crash. Null if no category impact record."),
+    FeatureSpec("days_until_major_event", "float32", "event",
+                "Calendar days until the start of the next known MAJOR or CRITICAL "
+                "event that was announced on or before obs_date (leakage-safe). "
+                "Null if no such future event is known."),
+    FeatureSpec("is_pre_event_window",    "bool",    "event",
+                "True if days_until_major_event is between 1 and 7 inclusive, "
+                "signalling the 7-day demand run-up window before a major event. "
+                "Always False when no major future event is known.",
+                is_nullable=False),
 
     # ── Archetype / category encoding ──────────────────────────────────────
     FeatureSpec("archetype_category",      "utf8",    "archetype",

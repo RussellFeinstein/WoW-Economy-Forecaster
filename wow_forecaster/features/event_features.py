@@ -35,6 +35,16 @@ Assumptions & simplifications
   using the most recently *started* active event that has a record for this
   archetype.  If multiple active events have impact records, the one with the
   latest ``start_date`` wins.
+- ``event_category_impact`` is populated from ``event_category_impacts``,
+  using the same selection logic as above but matching on ``archetype_category``
+  instead of ``archetype_id``.  This is used as a fallback when no specific
+  archetype impact record exists.
+- ``event_impact_magnitude``: taken from the category impact record of the most
+  recently started active event for this archetype's category.
+- ``days_until_major_event``: days until the next MAJOR or CRITICAL event that
+  is known as of obs_date (leakage-safe).  Null if no such event is known.
+- ``is_pre_event_window``: True if ``days_until_major_event <= 7``, signalling
+  the 7-day pre-event demand run-up window.
 - If no events were announced before obs_date, all event features are returned
   in their null/False state.
 
@@ -64,6 +74,15 @@ _SEVERITY_ORDINAL: dict[str, int] = {
     EventSeverity.CRITICAL:   4,
 }
 _ORDINAL_SEVERITY: dict[int, str] = {v: k for k, v in _SEVERITY_ORDINAL.items()}
+
+# Severities considered "major" for days_until_major_event / is_pre_event_window.
+_MAJOR_SEVERITIES: frozenset[str] = frozenset({
+    EventSeverity.MAJOR.value,
+    EventSeverity.CRITICAL.value,
+})
+
+# Number of calendar days that defines the "pre-event window".
+_PRE_EVENT_WINDOW_DAYS: int = 7
 
 
 # ── DB helpers ─────────────────────────────────────────────────────────────────
@@ -144,6 +163,37 @@ def load_archetype_impacts(
     return dict(impacts)
 
 
+def load_category_impacts(
+    conn: sqlite3.Connection,
+) -> dict[int, list[dict[str, Any]]]:
+    """Load category-level event impact records keyed by event_id.
+
+    Returns:
+        Dict mapping ``event_id → list[{archetype_category, impact_direction,
+        lag_days, duration_days, typical_magnitude}]``.
+    """
+    rows = conn.execute(
+        """
+        SELECT event_id, archetype_category, impact_direction,
+               lag_days, duration_days, typical_magnitude
+        FROM event_category_impacts
+        """
+    ).fetchall()
+
+    impacts: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for r in rows:
+        impacts[r["event_id"]].append(
+            {
+                "archetype_category": r["archetype_category"],
+                "impact_direction":   r["impact_direction"],
+                "lag_days":           r["lag_days"],
+                "duration_days":      r["duration_days"],
+                "typical_magnitude":  r["typical_magnitude"],
+            }
+        )
+    return dict(impacts)
+
+
 # ── Feature computation ────────────────────────────────────────────────────────
 
 def compute_event_features(
@@ -151,25 +201,45 @@ def compute_event_features(
     events: list[WoWEvent],
     impacts: dict[int, list[dict[str, Any]]],
     archetype_id: int,
+    category_impacts: dict[int, list[dict[str, Any]]] | None = None,
+    archetype_category: str | None = None,
 ) -> list[dict[str, Any]]:
     """Add event features to a list of rows for one (archetype_id, realm_slug) series.
 
     For each row, filters ``events`` to those known at ``obs_date`` using
     ``WoWEvent.is_known_at()`` (layer 2 leakage guard), then computes:
 
+    Original 5 columns:
     - ``event_active``: bool — any known event active on obs_date.
     - ``event_days_to_next``: float | None — days to next known future event.
     - ``event_days_since_last``: float | None — days since last completed event.
     - ``event_severity_max``: str | None — max severity of active events.
-    - ``event_archetype_impact``: str | None — impact direction for this archetype.
+    - ``event_archetype_impact``: str | None — impact direction from
+      ``event_archetype_impacts`` for this archetype (most-recently-started
+      active event wins).
+
+    New 3 columns:
+    - ``event_impact_magnitude``: float | None — typical_magnitude from the
+      category impact record of the most recently started active event for
+      this archetype's category.  Falls back to None if no category impact
+      record exists.
+    - ``days_until_major_event``: float | None — days until the start of the
+      next known MAJOR or CRITICAL event.  Leakage-safe: only counts events
+      where ``announced_at <= obs_date``.  Null if no such event is known.
+    - ``is_pre_event_window``: bool — True if ``days_until_major_event <= 7``.
 
     Args:
-        rows:         Rows from ``compute_lag_rolling_features()``.  Must share
-                      the same archetype_id and realm_slug.
-        events:       Pre-loaded events from ``load_known_events()``; already
-                      filtered to ``announced_at IS NOT NULL``.
-        impacts:      Pre-loaded impacts from ``load_archetype_impacts()``.
-        archetype_id: Archetype being processed (for impact lookup).
+        rows:               Rows from ``compute_lag_rolling_features()``.  Must
+                            share the same archetype_id and realm_slug.
+        events:             Pre-loaded events from ``load_known_events()``; already
+                            filtered to ``announced_at IS NOT NULL``.
+        impacts:            Pre-loaded impacts from ``load_archetype_impacts()``.
+        archetype_id:       Archetype being processed (for impact lookup).
+        category_impacts:   Pre-loaded category impacts from
+                            ``load_category_impacts()``.  Optional; when None,
+                            ``event_impact_magnitude`` is always None.
+        archetype_category: Category slug for this archetype (e.g. "consumable").
+                            Required for category impact lookup.
 
     Returns:
         The same rows with event feature keys added in-place (new dict copy).
@@ -189,10 +259,10 @@ def compute_event_features(
         past_events    = [e for e in known if _is_past(e, obs_date)]
         future_events  = [e for e in known if _is_future(e, obs_date)]
 
-        # event_active
+        # ── event_active ──────────────────────────────────────────────────────
         event_active = len(active_events) > 0
 
-        # event_days_to_next
+        # ── event_days_to_next ────────────────────────────────────────────────
         if future_events:
             days_to_next: float | None = float(
                 (min(e.start_date for e in future_events) - obs_date).days
@@ -200,7 +270,7 @@ def compute_event_features(
         else:
             days_to_next = None
 
-        # event_days_since_last
+        # ── event_days_since_last ─────────────────────────────────────────────
         if past_events:
             # Use end_date of the most recently ended event; default to start_date if no end.
             last_end = max(
@@ -211,14 +281,15 @@ def compute_event_features(
         else:
             days_since_last = None
 
-        # event_severity_max
+        # ── event_severity_max ────────────────────────────────────────────────
         if active_events:
             max_ord = max(_SEVERITY_ORDINAL.get(e.severity.value, 0) for e in active_events)
             severity_max: str | None = _ORDINAL_SEVERITY[max_ord]
         else:
             severity_max = None
 
-        # event_archetype_impact — most recently started active event with an impact record.
+        # ── event_archetype_impact — most recently started active event with a
+        #    specific archetype impact record. ─────────────────────────────────
         archetype_impact: str | None = None
         if active_events:
             for e in sorted(active_events, key=lambda x: x.start_date, reverse=True):
@@ -232,6 +303,40 @@ def compute_event_features(
                 if archetype_impact is not None:
                     break
 
+        # ── event_impact_magnitude — from category impact record ──────────────
+        impact_magnitude: float | None = None
+        if active_events and category_impacts and archetype_category:
+            for e in sorted(active_events, key=lambda x: x.start_date, reverse=True):
+                if e.event_id is None:
+                    continue
+                cat_imps = category_impacts.get(e.event_id, [])
+                for cimp in cat_imps:
+                    if cimp["archetype_category"] == archetype_category:
+                        mag = cimp.get("typical_magnitude")
+                        if mag is not None:
+                            impact_magnitude = float(mag)
+                        break
+                if impact_magnitude is not None:
+                    break
+
+        # ── days_until_major_event — next MAJOR/CRITICAL known future event ───
+        major_future = [
+            e for e in future_events
+            if e.severity.value in _MAJOR_SEVERITIES
+        ]
+        if major_future:
+            days_until_major: float | None = float(
+                (min(e.start_date for e in major_future) - obs_date).days
+            )
+        else:
+            days_until_major = None
+
+        # ── is_pre_event_window ───────────────────────────────────────────────
+        is_pre_window: bool = (
+            days_until_major is not None
+            and 0 < days_until_major <= _PRE_EVENT_WINDOW_DAYS
+        )
+
         result.append({
             **row,
             "event_active":           event_active,
@@ -239,6 +344,9 @@ def compute_event_features(
             "event_days_since_last":  days_since_last,
             "event_severity_max":     severity_max,
             "event_archetype_impact": archetype_impact,
+            "event_impact_magnitude": impact_magnitude,
+            "days_until_major_event": days_until_major,
+            "is_pre_event_window":    is_pre_window,
         })
     return result
 

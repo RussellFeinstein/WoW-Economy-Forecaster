@@ -21,7 +21,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from wow_forecaster.recommendations.ranker import ScoredForecast
@@ -176,7 +176,7 @@ def write_recommendation_json(
     payload: dict = {
         "schema_version": "v0.5.0",
         "realm_slug":     realm_slug,
-        "generated_at":   run_date.isoformat(),
+        "generated_at":   datetime.now(tz=timezone.utc).isoformat(),
         "run_slug":       run_slug,
         "categories":     {},
     }
@@ -185,9 +185,10 @@ def write_recommendation_json(
         items = top_by_category[cat]
         payload["categories"][cat] = [
             {
-                "rank":            rank,
-                "archetype_id":    sf.archetype_id,
-                "realm_slug":      sf.realm_slug,
+                "rank":               rank,
+                "archetype_id":       sf.archetype_id,
+                "archetype_sub_tag":  sf.archetype_sub_tag,
+                "realm_slug":         sf.realm_slug,
                 "horizon":         sf.forecast.forecast_horizon,
                 "target_date":     sf.forecast.target_date.isoformat(),
                 "current_price":   sf.current_price,

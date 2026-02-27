@@ -136,13 +136,14 @@ class IngestStage(PipelineStage):
                     )
 
             # ── Blizzard Game Data API ─────────────────────────────────────────
-            for realm in realms:
-                snap, records_data = self._fetch_blizzard(
+            # Live mode: fetch commodities ONCE for the whole US region.
+            # Commodities are region-wide since patch 9.2.7 — one call covers all realms.
+            # Fixture mode keeps the old per-realm loop so existing tests still pass.
+            if blizzard_id:
+                snap, records_data = self._fetch_blizzard_commodities(
                     blizzard=blizzard,
-                    realm=realm,
                     raw_dir=raw_dir,
                     run=run,
-                    blizzard_id=blizzard_id,
                 )
                 snap_repo.insert(snap)
                 if snap.success:
@@ -153,10 +154,32 @@ class IngestStage(PipelineStage):
                     inserted = market_repo.insert_raw_batch(observations)
                     total_inserted_raw += inserted
                     logger.info(
-                        "Blizzard API %s: %d records | inserted=%d | "
-                        "skipped_missing_items=%d",
-                        realm, len(records_data), inserted, skipped,
+                        "Blizzard commodities (US region-wide): %d records | "
+                        "inserted=%d | skipped_missing_items=%d",
+                        len(records_data), inserted, skipped,
                     )
+            else:
+                for realm in realms:
+                    snap, records_data = self._fetch_blizzard(
+                        blizzard=blizzard,
+                        realm=realm,
+                        raw_dir=raw_dir,
+                        run=run,
+                        blizzard_id=blizzard_id,
+                    )
+                    snap_repo.insert(snap)
+                    if snap.success:
+                        total_snapshots += 1
+                        observations, skipped = self._parse_blizzard_records(
+                            records_data, snap.fetched_at, known_item_ids
+                        )
+                        inserted = market_repo.insert_raw_batch(observations)
+                        total_inserted_raw += inserted
+                        logger.info(
+                            "Blizzard API %s: %d records | inserted=%d | "
+                            "skipped_missing_items=%d",
+                            realm, len(records_data), inserted, skipped,
+                        )
 
             # ── Blizzard News (content only — no market table rows) ────────────
             snap = self._fetch_news(news=news, raw_dir=raw_dir, run=run)
@@ -458,6 +481,90 @@ class IngestStage(PipelineStage):
                 run_id=run.run_id,
                 source="blizzard_api",
                 endpoint=f"connected-realm/{realm}/auctions",
+                snapshot_path="",
+                content_hash=None,
+                record_count=0,
+                success=False,
+                error_message=str(exc),
+                fetched_at=utcnow(),
+            )
+            return snap, []
+
+    def _fetch_blizzard_commodities(
+        self,
+        blizzard,
+        raw_dir: str,
+        run: RunMetadata,
+    ) -> tuple[object, list[dict]]:
+        """Fetch and snapshot Blizzard US-region commodity AH data (one call).
+
+        Commodities are region-wide since patch 9.2.7.  Records are tagged
+        ``realm_slug=blizzard.region`` ("us") and ``faction="neutral"``.
+
+        Returns:
+            Tuple of ``(IngestionSnapshot, records_data)`` where
+            ``records_data`` is empty on failure.
+        """
+        from wow_forecaster.db.repositories.ingestion_repo import IngestionSnapshot
+        from wow_forecaster.ingestion.snapshot import build_snapshot_path, save_snapshot
+        from wow_forecaster.utils.time_utils import utcnow
+
+        try:
+            response = blizzard.fetch_commodities()
+
+            records_data = [
+                {
+                    "item_id": r.item_id,
+                    "realm_slug": r.realm_slug,
+                    "buyout": r.buyout,
+                    "bid": r.bid,
+                    "unit_price": r.unit_price,
+                    "quantity": r.quantity,
+                    "time_left": r.time_left,
+                }
+                for r in response.records
+            ]
+
+            path = build_snapshot_path(
+                raw_dir, "blizzard_api", f"commodities_{blizzard.region}",
+                response.fetched_at,
+            )
+            content_hash, record_count = save_snapshot(
+                path,
+                records_data,
+                metadata={
+                    "source": "blizzard_api",
+                    "type": "commodities",
+                    "region": blizzard.region,
+                    "is_fixture": response.is_fixture,
+                    "run_slug": run.run_slug,
+                },
+            )
+            logger.info(
+                "Blizzard commodities snapshot: %s | %d records",
+                path.name, record_count,
+            )
+            snap = IngestionSnapshot(
+                snapshot_id=None,
+                run_id=run.run_id,
+                source="blizzard_api",
+                endpoint=response.endpoint,
+                snapshot_path=str(path),
+                content_hash=content_hash,
+                record_count=record_count,
+                success=True,
+                error_message=None,
+                fetched_at=response.fetched_at,
+            )
+            return snap, records_data
+
+        except Exception as exc:
+            logger.error("Blizzard commodities fetch failed: %s", exc)
+            snap = IngestionSnapshot(
+                snapshot_id=None,
+                run_id=run.run_id,
+                source="blizzard_api",
+                endpoint="data/wow/auctions/commodities",
                 snapshot_path="",
                 content_hash=None,
                 record_count=0,

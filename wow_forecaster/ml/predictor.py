@@ -47,6 +47,7 @@ def run_inference(
     inference_parquet_path: Path,
     realm_slug: str,
     target_date: date | None = None,
+    uncertainty_multiplier: float = 1.0,
 ) -> list[ForecastOutput]:
     """Generate ForecastOutput for all archetypes in the inference Parquet.
 
@@ -58,6 +59,9 @@ def run_inference(
         realm_slug:              Realm for this inference run.
         target_date:             Base date; forecast_date = target_date + horizon.
                                  Defaults to today.
+        uncertainty_multiplier:  Drift-based CI widening factor from
+                                 ``get_latest_uncertainty_multiplier()``.
+                                 1.0 = no adjustment; >1.0 widens CI symmetrically.
 
     Returns:
         List of ForecastOutput objects (one per archetype × horizon).
@@ -120,6 +124,15 @@ def run_inference(
                 transfer_confidence=float(xfer_conf) if xfer_conf is not None else None,
                 confidence_pct=confidence_pct,
             )
+
+            # Apply drift-based uncertainty widening from adaptive monitoring layer.
+            # Widens CI symmetrically around the central prediction.
+            if uncertainty_multiplier != 1.0:
+                ci_half = (ci_upper - ci_lower) / 2.0
+                center   = (ci_upper + ci_lower) / 2.0
+                new_half = ci_half * uncertainty_multiplier
+                ci_lower = max(0.0, center - new_half)
+                ci_upper = center + new_half
 
             base_slug  = f"lgbm_{horizon_days}d_{LightGBMForecaster.MODEL_VERSION}"
             model_slug = cold_start_model_slug(base_slug, is_cold_start, has_transfer)

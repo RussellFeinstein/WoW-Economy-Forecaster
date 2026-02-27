@@ -24,12 +24,14 @@ Feature assembly pipeline (step-by-step)
               target_price_*d (forward-looking labels)
 
 3.  ``event_features.load_known_events()`` + ``load_archetype_impacts()``
+        + ``load_category_impacts()``
         Loaded once per call (not per row).
 
 4.  For each (archetype_id, realm_slug) group:
         ``event_features.compute_event_features()``
         Adds: event_active, event_days_to_next/since_last, event_severity_max,
-              event_archetype_impact
+              event_archetype_impact, event_impact_magnitude,
+              days_until_major_event, is_pre_event_window
 
 5.  ``archetype_features.load_archetype_metadata()`` + ``count_obs_per_archetype_realm()``
         Loaded once per call.
@@ -51,8 +53,8 @@ Feature assembly pipeline (step-by-step)
 
 Parquet schema
 --------------
-Derived from ``registry.FEATURE_REGISTRY``.  Training Parquet: 45 columns.
-Inference Parquet: 42 columns (``target`` group excluded).
+Derived from ``registry.FEATURE_REGISTRY``.  Training Parquet: 48 columns.
+Inference Parquet: 45 columns (``target`` group excluded).
 Both use Snappy compression.  The schema uses float32 for price/stat columns
 (sufficient for gold prices; reduces file size).
 
@@ -92,6 +94,7 @@ from wow_forecaster.features.daily_agg import fetch_daily_agg
 from wow_forecaster.features.event_features import (
     compute_event_features,
     load_archetype_impacts,
+    load_category_impacts,
     load_known_events,
 )
 from wow_forecaster.features.lag_rolling import compute_lag_rolling_features
@@ -386,16 +389,17 @@ def build_datasets(
     cfg_exp  = config.expansions
 
     # ── Load shared data once (not per realm, not per row) ────────────────────
-    events  = load_known_events(conn)
-    impacts = load_archetype_impacts(conn)
-    arch_meta = load_archetype_metadata(conn, cfg_exp.active, cfg_exp.transfer_target)
+    events          = load_known_events(conn)
+    impacts         = load_archetype_impacts(conn)
+    cat_impacts     = load_category_impacts(conn)
+    arch_meta       = load_archetype_metadata(conn, cfg_exp.active, cfg_exp.transfer_target)
     items_excluded = count_items_without_archetype(conn)
     expansion_launch = _find_expansion_launch(events)
 
     total_rows = 0
 
     for realm_slug in realm_slugs:
-        log.info("Building features for realm=%s  window=%s → %s", realm_slug, start_date, end_date)
+        log.info("Building features for realm=%s  window=%s -> %s", realm_slug, start_date, end_date)
 
         # Step 1: Daily aggregation.
         agg_rows = fetch_daily_agg(conn, realm_slug, start_date, end_date)
@@ -413,8 +417,14 @@ def build_datasets(
 
         event_rows: list[dict[str, Any]] = []
         for arch_id, arch_rows in groups_by_arch.items():
+            arch_info = arch_meta.get(arch_id)
+            arch_cat  = arch_info.category_tag if arch_info else None
             event_rows.extend(
-                compute_event_features(arch_rows, events, impacts, arch_id)
+                compute_event_features(
+                    arch_rows, events, impacts, arch_id,
+                    category_impacts=cat_impacts,
+                    archetype_category=arch_cat,
+                )
             )
 
         # Step 5–6: Archetype / transfer features.

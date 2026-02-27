@@ -19,7 +19,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, field_validator
 
 # Valid source identifiers for raw observations
-VALID_SOURCES = frozenset({"tsm_export", "ah_scan", "manual", "undermine_api", "blizzard_api"})
+VALID_SOURCES = frozenset({"tsm_export", "ah_scan", "manual", "undermine_api", "blizzard_api", "auctionator_posting"})
 VALID_FACTIONS = frozenset({"alliance", "horde", "neutral"})
 
 
