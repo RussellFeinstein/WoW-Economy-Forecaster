@@ -32,6 +32,9 @@ data/outputs/**/*.json
 data/db/*.db
 data/db/*.db-wal
 data/db/*.db-shm
+data/*.db
+data/*.db-wal
+data/*.db-shm
 data/logs/*.log
 
 # IDE
