@@ -8,17 +8,21 @@ Uses historical data from **The War Within (TWW)** to learn economy patterns, th
 
 ## Project Status
 
-**v0.7.0 — Reporting + Dashboard Layer**
+**v1.3.8 — Production-ready pipeline**
 
-| Layer | Status |
-|---|---|
-| v0.1.0 — Scaffold | Models, taxonomy, schema, CLI interfaces |
-| v0.2.0 — Ingestion | IngestStage (fixture mode), NormalizeStage, snapshot writer |
-| v0.3.0 — Features | 45-column feature Parquet, lag/rolling/event/archetype features |
-| v0.4.0 — Backtesting | Walk-forward backtest, baseline models, CSV/DB results |
-| v0.5.0 — ML + Recommendations | LightGBM forecaster, scoring formula, buy/sell/hold ranking |
-| v0.6.0 — Monitoring | Drift detection, adaptive CI, provenance, hourly orchestration |
-| **v0.7.0 — Reporting** | **CLI report commands, export layer, optional Streamlit dashboard** |
+| Layer | Version | Status |
+|---|---|---|
+| v0.1.0 — Scaffold | Models, taxonomy, schema, CLI interfaces | Complete |
+| v0.2.0 — Ingestion | BlizzardClient (live OAuth2), snapshot writer, item bootstrapper | Complete |
+| v0.3.0 — Features | 48-column training Parquet, lag/rolling/event/archetype features | Complete |
+| v0.4.0 — Backtesting | Walk-forward backtest, 4 baseline models, CSV/DB results | Complete |
+| v0.5.0 — ML + Recommendations | LightGBM forecaster, 5-component scoring, buy/sell/hold ranking | Complete |
+| v0.6.0 — Monitoring | Drift detection, adaptive CI, provenance, hourly orchestration | Complete |
+| v0.7.0 — Reporting | CLI report commands, export layer, optional Streamlit dashboard | Complete |
+| v0.8.0 — Source Governance | Source policies, preflight checks, freshness validation | Complete |
+| v0.9.0 — Seed Events | 28 TWW seed events, category-level impact records | Complete |
+| v1.0.0 — Automation | Scheduler daemon, Windows Task Scheduler integration | Complete |
+| v1.1.0 — Normalization | Rolling z-score normalization with cold-start fallback | Complete |
 
 ---
 
@@ -28,27 +32,34 @@ Uses historical data from **The War Within (TWW)** to learn economy patterns, th
 wow_forecaster/
 ├── taxonomy/        # Pure enums: EventType, ArchetypeCategory, ArchetypeTag
 ├── models/          # Pydantic v2 domain models (frozen/immutable value objects)
-├── db/              # SQLite: connection, schema DDL (17 tables), migrations, repos
+├── db/              # SQLite: connection, schema DDL (18 tables), migrations, repos
 ├── pipeline/        # 7 stages: ingest, normalize, feature_build, train,
 │                    #           forecast, recommend, orchestrator (backtest separate)
-├── ingestion/       # Undermine / Blizzard / news clients + snapshot writer
+├── ingestion/       # Blizzard live client, snapshot writer, item bootstrapper,
+│                    # auctionator importer (historical backfill)
 ├── features/        # Daily agg, lag/rolling, event features, archetype features,
-│                    # dataset builder → 45-col training Parquet
+│                    # dataset builder → 48-col training / 45-col inference Parquet
 ├── backtest/        # Walk-forward splits, baseline models, metrics, reporter
-├── ml/              # LightGBM: feature selector, trainer, predictor, cold-start CI
+├── ml/              # LightGBM: feature selector (37 cols), trainer, predictor
 ├── recommendations/ # Scorer (5-component formula), ranker, reporter (CSV/JSON)
 ├── monitoring/      # Drift detection, adaptive policy, health, provenance, reporter
 ├── reporting/       # Reader (file discovery + freshness), formatters (ASCII tables),
 │                    # export (flat CSV/JSON for Power BI)
-└── cli.py           # Typer CLI: 21 commands
+├── governance/      # Source policy registry, preflight checks, freshness validation
+├── scheduler.py     # SchedulerDaemon (stdlib only) — hourly + daily automation
+└── cli.py           # Typer CLI: 26 commands
 
 config/
 ├── default.toml             # Static defaults (committed)
-└── events/tww_events.json   # 15 TWW seed events
+├── sources.toml             # 3 active source policies (blizzard_api, blizzard_news, auctionator)
+└── events/
+    ├── tww_events.json      # 28 TWW seed events
+    └── tww_event_impacts.json  # 56 category-level impact records
 
 data/
 ├── raw/snapshots/            # Hourly ingestion snapshots (JSON, gitignored)
-├── raw/events/               # Manual event CSVs
+│   ├── blizzard_api/YYYY/MM/DD/realm_{realm}_{ts}Z.json
+│   ├── blizzard_news/YYYY/MM/DD/news_{ts}Z.json
 ├── processed/features/       # Training + inference Parquet + manifests
 ├── outputs/forecasts/        # forecast_{realm}_{date}.csv
 ├── outputs/recommendations/  # recommendations_{realm}_{date}.csv/.json
@@ -63,20 +74,25 @@ dashboard/                    # Optional Streamlit analysis UI
 ├── data_loader.py            # Cached file loaders + DB queries
 └── requirements.txt          # streamlit + pandas
 
+scripts/
+└── setup_tasks.bat           # One-shot Windows Task Scheduler registration
+
 tests/
-├── test_models/       # Pydantic validation (60 tests)
-├── test_taxonomy/     # Taxonomy integrity (30 tests)
-├── test_db/           # Schema + repositories (26 tests)
-├── test_pipeline/     # Pipeline interfaces (28 tests)
-├── test_ingestion/    # Snapshots, event CSV, persistence (73 tests)
-├── test_events/       # Seed loader, event imports (24 tests)
-├── test_features/     # Feature engineering, no-leakage (68 tests)
-├── test_backtest/     # Splits, models, metrics (60 tests)
-├── test_ml/           # Feature selector, LightGBM (44 tests)
-├── test_recommendations/ # Scorer, ranker (92 tests)
-├── test_monitoring/   # Drift, adaptive, orchestrator (73 tests)
-├── test_governance/   # Source policies, preflight, freshness (84 tests)
-└── test_reporting/    # Reader, formatters, export (79 tests)
+├── test_backtest/        # Splits, models, metrics (60 tests)
+├── test_cli/             # CLI smoke tests (46 tests)
+├── test_db/              # Schema + repositories (26 tests)
+├── test_events/          # Seed loader, event imports (24 tests)
+├── test_features/        # Feature engineering, no-leakage (72 tests)
+├── test_governance/      # Source policies, preflight, freshness (84 tests)
+├── test_ingestion/       # Snapshots, event CSV, persistence (73 tests)
+├── test_ml/              # Feature selector, LightGBM (44 tests)
+├── test_models/          # Pydantic validation (61 tests)
+├── test_monitoring/      # Drift, adaptive, orchestrator (73 tests)
+├── test_pipeline/        # Pipeline interfaces, normalize (36 tests)
+├── test_recommendations/ # Scorer, ranker, item overlay (106 tests)
+├── test_reporting/       # Reader, formatters, export (79 tests)
+├── test_scheduler/       # Scheduler daemon (26 tests)
+└── test_taxonomy/        # Taxonomy integrity (30 tests)
 ```
 
 ### Key Design Decisions
@@ -88,15 +104,16 @@ tests/
 | CLI | **Typer** | Type-annotation driven, auto-help, built on Click |
 | Config | **tomllib + python-dotenv** | TOML for static config, .env for secrets |
 | ML | **LightGBM** | Fast training, handles mixed types, interpretable feature importances |
+| HTTP | **httpx** | Async-capable, used for Blizzard OAuth2 + API calls |
 | Reporting | **CLI-first + optional Streamlit** | Terminal reports work headlessly; Streamlit is zero-cost when not needed |
-| Tests | **pytest** | Standard; 741 tests across 13 groups |
+| Tests | **pytest** | Standard; 840 tests across 15 groups |
 
 ### Transfer Learning Architecture
 
 The system does **not** do naive TWW-item → Midnight-item mapping. Instead:
 
 1. **Archetype taxonomy** (`wow_forecaster/taxonomy/archetype_taxonomy.py`) defines 36 economic behavior tags (e.g. `consumable.flask.stat`, `mat.ore.common`).
-2. **TWW items** are mapped to these archetypes.
+2. **TWW items** are mapped to these archetypes via the item bootstrapper.
 3. **Models train** on archetype-level time series from TWW.
 4. **Archetype mappings** (`archetype_mappings` table) formally map each TWW archetype to its Midnight equivalent with a confidence score and required rationale.
 5. As **Midnight data accumulates**, item-level models are trained and the archetype fallback gradually phases out.
@@ -116,6 +133,7 @@ The system does **not** do naive TWW-item → Midnight-item mapping. Instead:
 
 - Python 3.11+
 - Git
+- Blizzard API credentials (Client ID + Client Secret)
 
 ### Install
 
@@ -123,29 +141,43 @@ The system does **not** do naive TWW-item → Midnight-item mapping. Instead:
 git clone https://github.com/yourusername/WoW-Economy-Forecaster.git
 cd WoW-Economy-Forecaster
 
-# Create a virtual environment (recommended)
 python -m venv .venv
 .venv\Scripts\activate          # Windows
 # source .venv/bin/activate     # macOS / Linux
 
-# Install core + dev dependencies
 pip install -e ".[dev]"
 ```
 
-### Initialize
+### Initial Setup Sequence
 
 ```bash
-# Copy and optionally edit the env template
+# 1. Copy the env template and add your Blizzard API credentials
 cp .env.example .env
 
-# Initialize the database (creates data/db/wow_forecaster.db)
+# 2. Initialize the database (creates data/db/wow_forecaster.db)
 wow-forecaster init-db
 
-# Validate your config
+# 3. Validate your config
 wow-forecaster validate-config
 
-# Import the TWW seed events (15 events)
+# 4. Fetch first commodity snapshot (required before item bootstrap)
+wow-forecaster run-hourly-refresh
+
+# 5. Seed item registry from Blizzard API (~2-5 min, ~9,950 items)
+wow-forecaster bootstrap-items
+
+# 6. Second refresh now inserts market observations (items table is populated)
+wow-forecaster run-hourly-refresh
+
+# 7. (Optional) Backfill 6-12 months of price history from Auctionator
+wow-forecaster import-auctionator
+
+# 8. Import TWW seed events (28 events) and build event features
 wow-forecaster import-events
+wow-forecaster build-events
+
+# 9. Build feature datasets (requires build-events first)
+wow-forecaster build-datasets
 ```
 
 ---
@@ -154,6 +186,7 @@ wow-forecaster import-events
 
 ```
 wow-forecaster --help
+wowfc --help      # alias
 ```
 
 ### Database & Config
@@ -161,30 +194,51 @@ wow-forecaster --help
 ```bash
 wow-forecaster init-db             [--db-path PATH] [--config PATH]
 wow-forecaster validate-config     [--config PATH] [--full]
-wow-forecaster import-events       [--file PATH] [--dry-run]
 ```
 
-### Pipeline
+### Data Ingestion
 
 ```bash
-# Hourly: ingest AH snapshots, normalize, drift check
+# Fetch live commodity AH snapshot from Blizzard API
 wow-forecaster run-hourly-refresh  [--realm SLUG] [--check-drift/--no-check-drift]
 
-# Daily: train -> forecast -> recommend
+# Seed item registry from Blizzard Item API (~9,950 items; run once after first snapshot)
+wow-forecaster bootstrap-items     [--concurrency N] [--db-path PATH]
+
+# Import TWW seed events into wow_events table
+wow-forecaster import-events       [--file PATH] [--dry-run]
+
+# Backfill historical price history from Auctionator.lua SavedVariables
+wow-forecaster import-auctionator  [--path PATH] [--realm SLUG]
+```
+
+### Events & Feature Datasets
+
+```bash
+# Build event features: seeds events + impacts -> DB + Parquet (run before build-datasets)
+wow-forecaster build-events        [--realm SLUG ...] [--start-date DATE] [--end-date DATE]
+
+# List events currently in the database
+wow-forecaster list-events         [--limit N] [--expansion SLUG]
+
+# Build training + inference Parquet datasets (requires build-events first)
+wow-forecaster build-datasets      [--realm SLUG ...] [--start-date DATE] [--end-date DATE]
+
+# Validate a dataset manifest
+wow-forecaster validate-datasets   --manifest PATH [--strict]
+```
+
+### Forecasting Pipeline
+
+```bash
+# Full daily pipeline: train -> forecast -> recommend
 wow-forecaster run-daily-forecast  [--realm SLUG] [--skip-train] [--skip-recommend]
 
 # Train only
 wow-forecaster train-model         [--realm SLUG ...]
 
-# Forecast + recommend separately
+# Forecast + recommend only (requires trained model)
 wow-forecaster recommend-top-items [--realm SLUG] [--top-n N] [--forecast-run-id ID]
-```
-
-### Feature Datasets
-
-```bash
-wow-forecaster build-datasets      [--realm SLUG ...] [--start-date DATE] [--end-date DATE]
-wow-forecaster validate-datasets   --manifest PATH [--strict]
 ```
 
 ### Backtesting
@@ -202,7 +256,7 @@ wow-forecaster check-drift         [--realm SLUG] [--output-json/--no-output-jso
 wow-forecaster evaluate-live-forecast [--realm SLUG] [--window-days N]
 ```
 
-### Reporting (v0.7.0)
+### Reporting
 
 All report commands read already-written output files — they never re-run the pipeline.
 Every report prints a `[FRESH]` or `[STALE]` banner so you can judge data currency at a glance.
@@ -228,6 +282,41 @@ wow-forecaster report-status       [--realm SLUG] [--export PATH]
 - `--freshness-hours N` — threshold for `[STALE]` banner (default 4 h).
 - `--export PATH` — write a flat CSV or JSON to *PATH* for Power BI / Excel.
 
+### Source Governance
+
+```bash
+# List configured data sources and their enabled/disabled status
+wow-forecaster list-sources
+
+# Validate all source policies are internally consistent
+wow-forecaster validate-source-policies
+
+# Check freshness of each source's last successful snapshot
+wow-forecaster check-source-freshness  [--realm SLUG] [--export PATH]
+```
+
+### Automation
+
+```bash
+# Start foreground scheduler daemon (hourly refresh + daily forecast)
+wow-forecaster start-scheduler     [--config PATH]
+
+# Register Windows Task Scheduler tasks for unattended operation
+scripts/setup_tasks.bat
+```
+
+---
+
+## Primary Workflow
+
+```
+run-hourly-refresh    # Blizzard API ingest -> normalize -> drift -> provenance
+build-datasets        # feature engineering -> Parquet (requires build-events first)
+run-daily-forecast    # train -> forecast -> recommend
+```
+
+`import-auctionator` = historical backfill only, not needed for ongoing hourly operation.
+
 ---
 
 ## Reporting Layer
@@ -240,7 +329,7 @@ The `wow_forecaster/reporting/` module has three components:
 |---|---|
 | `reader.py` | File discovery (`find_latest_file`), freshness checks (`check_freshness`), loaders for each report type |
 | `formatters.py` | ASCII terminal table formatters — no third-party deps |
-| `export.py` | Flat CSV/JSON export helpers; `flatten_recommendations_for_export()` expands nested score components into columns |
+| `export.py` | Flat CSV/JSON export helpers; `flatten_recommendations_for_export()` expands nested score components into `sc_*` columns |
 
 File discovery finds the **most recently modified** file matching the expected naming pattern, so reports from previous days are never silently used when a newer file exists.
 
@@ -254,37 +343,13 @@ Every formatter prints a provenance banner:
   [AGE UNKNOWN] generated_at not available
 ```
 
-The `report-status` command also distinguishes **report age** (how old the provenance file is) from **data freshness** (how old the underlying market snapshots are). A recently written provenance file can still report stale data if the Undermine API didn't respond during the last run.
-
 ### Export Format
 
 `--export PATH.csv` writes flat rows with no nested dicts, ready for Power BI or pandas:
 
-- Recommendations: `realm_slug, generated_at, run_slug, category, rank, archetype_id, horizon, target_date, current_price, predicted_price, ci_lower, ci_upper, roi_pct, score, action, reasoning, sc_opportunity, sc_liquidity, sc_volatility, sc_event_boost, sc_uncertainty, model_slug`
-- Forecasts: same as forecast CSV + `ci_width_gold`, `ci_pct_of_price` derived columns
-- Drift: raw JSON pass-through (for programmatic use)
-
-### Validating Report Correctness
-
-Cross-check a CLI report against raw data:
-
-```bash
-# 1. Run the pipeline to produce fresh output
-wow-forecaster run-daily-forecast --realm area-52
-
-# 2. Read the report
-wow-forecaster report-top-items --realm area-52
-
-# 3. Export for cross-checking
-wow-forecaster report-forecasts --realm area-52 --export /tmp/fc.csv
-
-# 4. Check DB directly (SQLite)
-sqlite3 data/db/wow_forecaster.db \
-  "SELECT archetype_id, predicted_price_gold, confidence_lower, confidence_upper \
-   FROM forecast_outputs ORDER BY created_at DESC LIMIT 10;"
-```
-
-The `report-forecasts` table values should match the `forecast_outputs` DB rows for the same run.
+- **Recommendations**: `realm_slug, generated_at, run_slug, category, rank, archetype_id, horizon, target_date, current_price, predicted_price, ci_lower, ci_upper, roi_pct, score, action, reasoning, sc_opportunity, sc_liquidity, sc_volatility, sc_event_boost, sc_uncertainty, model_slug`
+- **Forecasts**: same as forecast CSV + `ci_width_gold`, `ci_pct_of_price` derived columns
+- **Drift**: raw JSON pass-through (for programmatic use)
 
 ---
 
@@ -292,16 +357,8 @@ The `report-forecasts` table values should match the `forecast_outputs` DB rows 
 
 The `dashboard/` directory contains an optional local analysis UI that reads the same `data/outputs/` files as the CLI commands.
 
-**Why optional:**
-- Adds ~100 MB of deps (streamlit, pandas) not needed for headless pipeline runs.
-- All views are also available via the `wow-forecaster report-*` CLI commands.
-- Keep it off if you only use the system in scheduled/cron mode.
-
-**Setup:**
-
 ```bash
 pip install -e ".[dashboard]"
-# or: pip install -r dashboard/requirements.txt
 streamlit run dashboard/app.py
 
 # Override default realm:
@@ -318,35 +375,35 @@ streamlit run dashboard/app.py -- --realm area-52
 | Model Health | Drift level, uncertainty multiplier, MAE ratio per horizon, retrain flag | `drift_status_*.json` + `model_health_*.json` |
 | Source Status | Per-source snapshot counts, success rates, data freshness vs report age | `provenance_{realm}_{date}.json` |
 
-**Freshness badges:** Every tab shows a green/orange/red badge (`FRESH` / `STALE` / `NO DATA`). The threshold is configurable in the sidebar.
-
-**Forecast vs Actual chart:** The Forecasts tab queries `market_observations_normalized` from SQLite to render an actual price line, then overlays the forecast point with CI bounds. Nearby WoW events from the `wow_events` table are shown as a reference table below the chart.
+Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / `NO DATA`). The threshold is configurable in the sidebar.
 
 ---
 
 ## Running Tests
 
 ```bash
-# All tests (741 total across 13 groups)
+# All 840 tests
 pytest
 
 # With coverage
 pytest --cov=wow_forecaster --cov-report=term-missing
 
-# Specific groups
-pytest tests/test_reporting/       # Reader, formatters, export (79 tests)
-pytest tests/test_monitoring/      # Drift, adaptive, orchestrator (73 tests)
-pytest tests/test_governance/      # Source policies, preflight, freshness (84 tests)
-pytest tests/test_recommendations/ # Scorer, ranker (92 tests)
-pytest tests/test_ml/              # LightGBM training and inference (44 tests)
-pytest tests/test_features/        # Feature engineering (68 tests)
-pytest tests/test_backtest/        # Backtest framework (60 tests)
-pytest tests/test_models/          # Pydantic validation (60 tests)
-pytest tests/test_db/              # Schema + repositories (26 tests)
-pytest tests/test_taxonomy/        # Taxonomy integrity (30 tests)
-pytest tests/test_ingestion/       # Ingestion + snapshots (73 tests)
-pytest tests/test_events/          # Seed loader, event imports (24 tests)
-pytest tests/test_pipeline/        # Pipeline interfaces (28 tests)
+# By group
+pytest tests/test_recommendations/  # Scorer, ranker, item overlay (106 tests)
+pytest tests/test_governance/       # Source policies, preflight, freshness (84 tests)
+pytest tests/test_reporting/        # Reader, formatters, export (79 tests)
+pytest tests/test_monitoring/       # Drift, adaptive, orchestrator (73 tests)
+pytest tests/test_ingestion/        # Ingestion + snapshots (73 tests)
+pytest tests/test_features/         # Feature engineering (72 tests)
+pytest tests/test_backtest/         # Backtest framework (60 tests)
+pytest tests/test_models/           # Pydantic validation (61 tests)
+pytest tests/test_pipeline/         # Pipeline interfaces, normalize (36 tests)
+pytest tests/test_ml/               # LightGBM training and inference (44 tests)
+pytest tests/test_cli/              # CLI smoke tests (46 tests)
+pytest tests/test_scheduler/        # Scheduler daemon (26 tests)
+pytest tests/test_db/               # Schema + repositories (26 tests)
+pytest tests/test_events/           # Seed loader, event imports (24 tests)
+pytest tests/test_taxonomy/         # Taxonomy integrity (30 tests)
 ```
 
 ---
@@ -358,7 +415,7 @@ pytest tests/test_pipeline/        # Pipeline interfaces (28 tests)
 | Model | Storage | Description |
 |---|---|---|
 | `RawMarketObservation` | SQLite + Parquet | Price data as received (copper int) |
-| `NormalizedMarketObservation` | SQLite + Parquet | Gold-converted, z-scored, outlier-flagged |
+| `NormalizedMarketObservation` | SQLite + Parquet | Gold-converted, rolling z-scored, outlier-flagged |
 
 ### Taxonomy
 
@@ -383,17 +440,18 @@ pytest tests/test_pipeline/        # Pipeline interfaces (28 tests)
 
 ---
 
-## SQLite Schema (17 tables)
+## SQLite Schema (18 tables)
 
 ```
 item_categories               Item hierarchy (slug-based, expansion-aware)
 economic_archetypes           36 behavior tags with transfer_confidence
-items                         WoW item registry (item_id → archetype_id FK)
+items                         WoW item registry (item_id -> archetype_id FK)
 market_observations_raw       Raw AH snapshots (copper, pre-normalization)
-market_observations_normalized Gold-converted, z-scored, outlier-flagged
-archetype_mappings            TWW → Midnight transfer map (rationale required)
+market_observations_normalized Gold-converted, rolling z-scored, outlier-flagged
+archetype_mappings            TWW -> Midnight transfer map (rationale required)
 wow_events                    Economy events with announced_at bias guard
-event_archetype_impacts       Event × archetype impact direction/magnitude/lag
+event_archetype_impacts       Event x archetype impact direction/magnitude/lag
+event_category_impacts        Event x category impact (no archetype FK; uses category string)
 model_metadata                Trained model registry (slug, type, artifact_path)
 run_metadata                  Pipeline execution audit (config_snapshot, status)
 forecast_outputs              Point forecasts with CI bounds
@@ -412,76 +470,75 @@ model_health_snapshots        Live MAE vs backtest baseline per horizon
 Recommendations are ranked by a 5-component composite score:
 
 ```
-score = 0.35 × opportunity
-      + 0.20 × liquidity
-      − 0.20 × volatility
-      + 0.15 × event_boost
-      − 0.10 × uncertainty
+score = 0.35 x opportunity
+      + 0.20 x liquidity
+      - 0.20 x volatility
+      + 0.15 x event_boost
+      - 0.10 x uncertainty
 ```
 
 Actions:
-- **buy** — predicted ROI ≥ 10%
-- **sell** — predicted ROI ≤ −10%
+- **buy** — predicted ROI >= 10%
+- **sell** — predicted ROI <= -10%
 - **avoid** — CI width > 80% of price OR coefficient of variation > 80%
 - **hold** — otherwise
 
+`event_boost` is clamped to `[-100, 100]` — negative impacts penalize the score.
+`top_n_per_category` deduplication: best-scoring horizon per archetype_id (tie: shorter horizon wins).
+
 ---
 
-## Event Seed Data
+## Feature Columns
 
-`config/events/tww_events.json` contains 15 real TWW events:
+The dataset builder produces two Parquet files per run:
 
-| Slug | Type | Severity |
+| File | Columns | Description |
 |---|---|---|
-| `tww-launch` | expansion_launch | critical |
-| `tww-prepatch-110` | expansion_prepatch | major |
-| `tww-rtwf-nerubar-s1` | rtwf | major |
-| `tww-s1-start` | season_start | major |
-| `tww-patch-1105` | minor_patch | minor |
-| `tww-s2-start` | season_start | major |
-| `tww-patch-111` | major_patch | major |
-| `tww-rtwf-liberation-s2` | rtwf | major |
-| `tww-darkmoon-faire-recurring` | holiday_event | minor |
-| `tww-winter-veil-2024` | holiday_event | minor |
-| `tww-brewfest-2024` | holiday_event | minor |
-| `tww-content-drought-s1-end` | content_drought | moderate |
-| `tww-s1-end` | season_end | moderate |
-| `tww-trading-post-2024-09` | trading_post_reset | negligible |
-| `tww-blizzcon-2024` | blizzcon | minor |
+| Training | 48 | All features + 3 forward-looking target columns (`target_price_1d/7d/28d`) |
+| Inference | 45 | Same minus target columns (no leakage) |
+
+**Feature groups:** price (9), volume (3), lag (5), rolling (6), momentum (3), temporal (4), event (8), archetype (5), transfer (2), target (3 — training only).
+
+The ML model uses **37 input features** (subset of inference columns, selected by `wow_forecaster/ml/feature_selector.py`).
 
 ---
 
 ## Pipeline Stages
 
-| Stage | Class | Status |
+| Stage | Class | Description |
 |---|---|---|
-| Ingest | `IngestStage` | Fixture mode (writes snapshots; TODO: parse → DB rows) |
-| Normalize | `NormalizeStage` | Copper→gold, batch z-score, outlier flag |
-| Feature Build | `FeatureBuildStage` | 45-col Parquet (lag/rolling/event/archetype features) |
-| Train | `TrainStage` | LightGBM cross-archetype model per horizon |
-| Forecast | `ForecastStage` | Inference + heuristic CI with adaptive multiplier |
+| Ingest | `IngestStage` | Live Blizzard API -> raw observations -> snapshots |
+| Normalize | `NormalizeStage` | Copper->gold, rolling z-score (30-day window), outlier flag |
+| Feature Build | `FeatureBuildStage` | 48-col Parquet (lag/rolling/event/archetype features) |
+| Train | `TrainStage` | LightGBM cross-archetype model per horizon (1d/7d/28d) |
+| Forecast | `ForecastStage` | Inference + heuristic CI with adaptive drift multiplier |
 | Recommend | `RecommendStage` | 5-component scoring, top-N per category, CSV/JSON output |
 | Backtest | `BacktestStage` | Walk-forward with 4 baseline models |
 | Orchestrator | `HourlyOrchestrator` | 7-step hourly pipeline with drift + provenance |
 
 ---
 
-## What's Not Implemented Yet
+## Source Governance
 
-- `IngestStage`: snapshot records → `market_observations_raw` (TODO in ingest.py)
-- `NormalizeStage`: rolling z-score (batch only) and archetype_id lookup via item join
-- Real HTTP calls in all 3 clients (httpx not yet wired)
-- `top_n_per_category` V2 refinements (Pareto, de-duplication, user profiles)
-- Adaptive CI: `get_latest_uncertainty_multiplier()` not yet wired into `ForecastStage`
+`config/sources.toml` defines 3 source policies:
+
+| Source | Status | Notes |
+|---|---|---|
+| `blizzard_api` | **Enabled** | Live commodity + realm AH data via OAuth2 |
+| `blizzard_news` | Enabled | Patch notes + hotfix RSS feed |
+| `auctionator` | Enabled | Local SavedVariables backfill (no HTTP) |
+
+`wow_forecaster/governance/preflight.py` runs 3 checks before each ingest: source enabled, not on cooldown, freshness threshold not exceeded.
 
 ---
 
-## Next Steps
+## Seed Events
 
-1. **Implement IngestStage record parsing** — snapshot JSON → `RawMarketObservation` → `market_observations_raw` (enables real price history in reports and charts)
-2. **Add httpx + real UndermineClient** — live AH data flowing into the pipeline
-3. **Wire adaptive CI multiplier** — `get_latest_uncertainty_multiplier()` into `ForecastStage` so drift automatically widens live CIs
-4. **top_n_per_category V2** — Pareto-frontier, cross-horizon de-duplication
+`config/events/tww_events.json` contains 28 TWW events covering expansion launch, season starts/ends, RTWFs, major patches, holiday events, and content droughts.
+
+`config/events/tww_event_impacts.json` contains 56 category-level impact records mapping event type + category to expected price-change magnitude and direction.
+
+Run `wow-forecaster build-events` to load these into the database before building datasets.
 
 ---
 
@@ -492,32 +549,40 @@ All settings in `config/default.toml`. Override locally with:
 2. `.env` (gitignored) — secrets and env-specific overrides
 3. `WOW_FORECASTER_*` environment variables
 
-Key sections: `[database]`, `[expansions]`, `[realms]`, `[pipeline]`, `[forecast]`, `[features]`, `[model]`, `[monitoring]`, `[backtest]`, `[logging]`.
+Key sections: `[database]`, `[expansions]`, `[realms]`, `[pipeline]`, `[forecast]`, `[features]`, `[model]`, `[monitoring]`, `[backtest]`, `[logging]`, `[governance]`.
 
 ### Credentials (.env)
 
 ```
-UNDERMINE_API_KEY=...        # enables live Undermine data
-BLIZZARD_CLIENT_ID=...       # enables live Blizzard AH data
-BLIZZARD_CLIENT_SECRET=...
+BLIZZARD_CLIENT_ID=...       # required for live Blizzard AH data
+BLIZZARD_CLIENT_SECRET=...   # required for live Blizzard AH data
 ```
 
-Without credentials the pipeline runs in **fixture mode** (synthetic sample data).
+Without Blizzard credentials the pipeline cannot ingest live data.
 
 ---
 
-## Contributing / Development
+## What's Not Implemented Yet
+
+- `NormalizeStage`: archetype_id in `market_observations_normalized` is always NULL; the workaround in `daily_agg.py` (JOIN on `items` table) is used instead.
+- `top_n_per_category` V2 refinements (Pareto-frontier, cross-horizon deduplication, user profiles).
+- Source governance: per-source `last_call_at` cooldown tracking.
+- Source governance: `prune-snapshots` via `retention.raw_snapshot_days`.
+
+---
+
+## Development
 
 ```bash
 # Install dev dependencies
 pip install -e ".[dev]"
 
-# Run linter
+# Lint
 ruff check wow_forecaster/ tests/
 
-# Run all tests with coverage
+# All tests with coverage
 pytest --cov=wow_forecaster --cov-report=term-missing
 
-# Run only reporting tests
-pytest tests/test_reporting/ -v
+# Run a specific test group
+pytest tests/test_recommendations/ -v
 ```

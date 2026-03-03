@@ -519,7 +519,6 @@ def run_hourly_refresh(
 
     \b
     Credential setup (.env, gitignored):
-      UNDERMINE_API_KEY=...          -> enables real Undermine data
       BLIZZARD_CLIENT_ID=...         -> enables real Blizzard AH data
       BLIZZARD_CLIENT_SECRET=...
 
@@ -2444,12 +2443,12 @@ def report_status_cmd(
     \b
     IMPORTANT: Report age != data freshness.
       A provenance file written 5 minutes ago can still report stale data
-      if the Undermine or Blizzard API did not respond during that run.
+      if the Blizzard API did not respond during that run.
       This command surfaces both values explicitly.
 
     \b
     Per-source columns:
-      Source        -- undermine / blizzard_api / blizzard_news
+      Source        -- blizzard_api / blizzard_news / auctionator
       Last Snapshot -- timestamp of the most recent ingested snapshot
       Snaps/24h     -- number of snapshots in the last 24 hours
       Records       -- total market records ingested in the last 24 hours

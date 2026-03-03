@@ -23,7 +23,6 @@ pip install -e ".[dev]"
 ```
 BLIZZARD_CLIENT_ID=...
 BLIZZARD_CLIENT_SECRET=...
-UNDERMINE_API_KEY=...   # not needed — Undermine not implemented
 ```
 
 ## Key Files
@@ -35,7 +34,7 @@ UNDERMINE_API_KEY=...   # not needed — Undermine not implemented
 - [wow_forecaster/pipeline/base.py](wow_forecaster/pipeline/base.py) — PipelineStage ABC
 - [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (26 commands)
 - [config/default.toml](config/default.toml) — static config
-- [config/sources.toml](config/sources.toml) — 4 source policies
+- [config/sources.toml](config/sources.toml) — 3 source policies
 - [config/events/tww_events.json](config/events/tww_events.json) — TWW seed events
 - [config/events/tww_event_impacts.json](config/events/tww_event_impacts.json) — 56 category-level impact records
 
@@ -52,9 +51,8 @@ UNDERMINE_API_KEY=...   # not needed — Undermine not implemented
 - Windows terminal: avoid Unicode arrows in typer.echo() — use ASCII -> instead
 - datetime.utcnow() deprecated — use datetime.now(tz=timezone.utc).replace(tzinfo=None)
 
-## Data Sources (Blizzard API only — never use Undermine Exchange)
+## Data Sources (Blizzard API only)
 - BlizzardClient: LIVE — fetch_commodities() + fetch_connected_realm_auctions() + OAuth2
-- Undermine: raises NotImplementedError; fixture mode only
 - Default realm: ["us"] (commodity AH is region-wide since 9.2.7)
 
 ## Primary Workflow
@@ -68,7 +66,6 @@ run-daily-forecast   # train → forecast → recommend
 ## Snapshot Layout (disk)
 ```
 data/raw/snapshots/
-  undermine/YYYY/MM/DD/{realm}_{faction}_{ts}Z.json
   blizzard_api/YYYY/MM/DD/realm_{realm}_{ts}Z.json
   blizzard_news/YYYY/MM/DD/news_{ts}Z.json
 ```
@@ -115,7 +112,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - [dashboard/app.py](dashboard/app.py) — 5-tab Streamlit UI (optional dep group)
 
 ### Source Governance (v0.8.0)
-- [config/sources.toml](config/sources.toml) — blizzard_api enabled; undermine_exchange disabled
+- [config/sources.toml](config/sources.toml) — blizzard_api, blizzard_news_manual, manual_event_csv (3 policies)
 - [wow_forecaster/governance/preflight.py](wow_forecaster/governance/preflight.py) — 3-check preflight before each ingest
 - CLI: list-sources, validate-source-policies, check-source-freshness
 
@@ -146,4 +143,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses) — prior known-bug entry was incorrect
 
 ## Test Count
-741 tests passing (as of v1.3.1)
+840 tests passing (as of v1.3.9)

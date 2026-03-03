@@ -182,14 +182,11 @@ would either be too aggressive for event data or too lenient for auction data.
 ```
 HourlyOrchestrator.run()
   └── _run_ingest(realm_slug)
-        └── _run_governance_preflight(realm_slug)   ← NEW in v0.8.0
-              ├── get_source_policy("undermine_exchange")
-              ├── run_preflight_checks(policy)
-              │     ├── Check: policy_present → always True
-              │     ├── Check: enabled        → False if source is disabled
-              │     └── Check: cooldown       → False if called too soon
+        └── _run_governance_preflight(realm_slug)   ← added in v0.8.0
               └── get_source_policy("blizzard_api")
-                    └── same checks
+                    ├── Check: policy_present → always True
+                    ├── Check: enabled        → False if source is disabled
+                    └── Check: cooldown       → False if called too soon
 ```
 
 **If a source is disabled** (the default for API sources until credentials are
@@ -228,23 +225,15 @@ calling a source that was accidentally disabled or is mid-credential-rotation.
 
 ## Enabling a real API source
 
-The API sources (`blizzard_api`, `undermine_exchange`) are `enabled = false` by
-default. To activate one:
+`blizzard_api` is `enabled = true` by default. To activate it:
 
-1. Obtain your credentials (see `.env.example`).
+1. Obtain your credentials from https://develop.battle.net.
 2. Add them to `.env`:
    ```env
    BLIZZARD_CLIENT_ID=your_client_id
    BLIZZARD_CLIENT_SECRET=your_client_secret
-   UNDERMINE_API_KEY=your_key
    ```
-3. In `config/sources.toml` (or `config/local.toml` for local-only overrides):
-   ```toml
-   [sources.blizzard_api]
-   enabled = true
-   ```
-4. Run `wow-forecaster validate-source-policies` to confirm the config is valid.
-5. Add `httpx>=0.27` to `pyproject.toml` and implement real HTTP in the client stubs.
+3. Run `wow-forecaster validate-source-policies` to confirm the config is valid.
 
 ---
 
@@ -261,7 +250,7 @@ wow-forecaster validate-source-policies
 
 ```bash
 wow-forecaster list-sources
-# blizzard_api and undermine_exchange show [disabled]
+# blizzard_api shows [ENABLED]
 # blizzard_news_manual and manual_event_csv show [ENABLED]
 ```
 
@@ -277,16 +266,16 @@ wow-forecaster check-source-freshness
 
 ```bash
 wow-forecaster run-hourly-refresh --realm area-52
-# Logs should show: "Governance[area-52][undermine_exchange]: blocked — Source is disabled"
-# The realm result is still recorded; IngestStage runs in fixture mode
+# With credentials set: IngestStage runs in live mode
+# Without credentials: IngestStage runs in fixture mode (synthetic data)
 ```
 
 ### 5. After ingest runs, check freshness again
 
 ```bash
 wow-forecaster check-source-freshness
-# API sources: still [UNKNOWN] (fixture mode writes ingestion_snapshots with source="undermine")
-# If source IDs match, you should see [FRESH]
+# blizzard_api: [FRESH] after a successful live ingest
+# Manual sources: [UNKNOWN] (requires_snapshot=false)
 ```
 
 ---

@@ -202,12 +202,12 @@ class TestAssertSourceEnabled:
         assert_source_enabled("test_source", policy)
 
     def test_disabled_source_raises(self):
-        policy = _make_policy(enabled=False, source_id="undermine_exchange")
+        policy = _make_policy(enabled=False, source_id="test_disabled_source")
         with pytest.raises(SourceDisabledError) as exc_info:
-            assert_source_enabled("undermine_exchange", policy)
+            assert_source_enabled("test_disabled_source", policy)
 
-        assert exc_info.value.source_id == "undermine_exchange"
-        assert "undermine_exchange" in str(exc_info.value)
+        assert exc_info.value.source_id == "test_disabled_source"
+        assert "test_disabled_source" in str(exc_info.value)
 
     def test_error_message_guides_user(self):
         policy = _make_policy(enabled=False)

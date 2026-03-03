@@ -508,8 +508,8 @@ def format_status_summary(
 ) -> str:
     """Format a source freshness and last-refresh summary.
 
-    Operations-level view — shows the three data sources (undermine,
-    blizzard_api, blizzard_news) with per-source snapshot counts,
+    Operations-level view — shows active data sources (blizzard_api,
+    blizzard_news) with per-source snapshot counts,
     record counts, and success rates from the last 24 hours.
 
     Distinguishes between:

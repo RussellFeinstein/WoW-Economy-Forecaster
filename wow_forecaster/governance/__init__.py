@@ -11,8 +11,7 @@ This sub-package provides:
 
 Purpose
 -------
-When real provider integrations are added (real HTTP calls to the Blizzard
-Game Data API or Undermine Exchange), the pipeline needs explicit, enforceable
+The pipeline's Blizzard Game Data API integration needs explicit, enforceable
 contracts for each source:
 
   - Is this source currently enabled?

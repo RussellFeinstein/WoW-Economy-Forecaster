@@ -94,63 +94,6 @@ data publicly. Rate limits above are intentionally conservative.
 """
 
 # ---------------------------------------------------------------------------
-# Undermine Exchange (Nexus Hub)
-# ---------------------------------------------------------------------------
-# Third-party AH analytics platform (undermine.exchange / nexushub.co).
-# Provides market_value (Nexus Hub algorithm) and historical_value fields
-# alongside raw min_buyout. Requires a personal API key.
-#
-# Endpoint reference (for when real HTTP is implemented):
-#   Realm data: GET https://undermine.exchange/api/v2/{region}/{realm}/{faction}
-
-[sources.undermine_exchange]
-source_id    = "undermine_exchange"
-display_name = "Undermine Exchange / Nexus Hub"
-source_type  = "auction_data"
-access_method   = "api"
-requires_auth   = true
-enabled         = false   # Set true after configuring UNDERMINE_API_KEY in .env
-
-[sources.undermine_exchange.rate_limit]
-# Nexus Hub rate limits are not publicly documented; conservative defaults applied.
-requests_per_minute = 10
-requests_per_hour   = 200
-burst_limit         = 3
-cooldown_seconds    = 6.0
-
-[sources.undermine_exchange.backoff]
-strategy     = "exponential"
-base_seconds = 2.0
-max_seconds  = 180.0
-jitter       = true
-max_retries  = 3
-
-[sources.undermine_exchange.freshness]
-ttl_hours              = 1.0
-refresh_cadence_hours  = 1.0
-stale_threshold_hours  = 4.0    # Slightly more lenient than Blizzard (different update cadence)
-critical_threshold_hours = 25.0
-
-[sources.undermine_exchange.provenance]
-requires_snapshot     = true
-snapshot_format       = "json"
-content_hash_required = true
-
-[sources.undermine_exchange.retention]
-raw_snapshot_days = 30
-notes = "Raw Nexus Hub JSON retained 30 days."
-
-[sources.undermine_exchange.policy_notes]
-access_type                = "authorized_api"
-requires_registered_account = true
-personal_research_only     = true
-notes = """
-Undermine Exchange / Nexus Hub provides a personal-use API key on request.
-Usage should comply with their posted terms. Rate limits here are conservative
-estimates — adjust based on any limits communicated in your API key agreement.
-"""
-
-# ---------------------------------------------------------------------------
 # Blizzard Official News (Manual Collection)
 # ---------------------------------------------------------------------------
 # Patch notes, hotfix posts, and season announcements from official Blizzard

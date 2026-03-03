@@ -95,11 +95,10 @@ class TestImplementedStages:
     def test_ingest_inserts_raw_observations_when_items_exist(
         self, minimal_config, tmp_path
     ):
-        """IngestStage inserts 6 raw observations when fixture item IDs are registered.
+        """IngestStage inserts 3 raw observations when fixture item IDs are registered.
 
-        Both the Undermine (3 records) and Blizzard API (3 records) fixture
-        clients return item IDs 191528, 204783, 206448.  With those items
-        seeded in the DB, all 6 records should be inserted and returned.
+        The Blizzard API fixture client returns item IDs 191528, 204783, 206448.
+        With those items seeded in the DB, all 3 records should be inserted and returned.
         """
         import sqlite3
         from wow_forecaster.db.schema import apply_schema
@@ -153,8 +152,8 @@ class TestImplementedStages:
         )
         result = stage._execute(run=run, realm_slugs=["area-52"])
 
-        # 3 undermine + 3 blizzard = 6
-        assert result == 6
+        # 3 Blizzard fixture records
+        assert result == 3
 
         # Verify the DB row count matches the return value
         verify_conn = sqlite3.connect(db_file)
@@ -162,14 +161,14 @@ class TestImplementedStages:
         row = verify_conn.execute(
             "SELECT COUNT(*) AS n FROM market_observations_raw;"
         ).fetchone()
-        assert row["n"] == 6
+        assert row["n"] == 3
 
-        # Verify exactly the two expected sources appear
+        # Verify only blizzard_api source appears
         source_rows = verify_conn.execute(
             "SELECT DISTINCT source FROM market_observations_raw ORDER BY source;"
         ).fetchall()
         sources = {r["source"] for r in source_rows}
-        assert sources == {"undermine_api", "blizzard_api"}
+        assert sources == {"blizzard_api"}
 
         verify_conn.close()
 

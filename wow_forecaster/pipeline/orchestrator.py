@@ -292,13 +292,11 @@ class HourlyOrchestrator:
             RealmIngestionResult.
         """
         # ── Governance preflight gate ──────────────────────────────────────
-        # Before calling IngestStage (which will eventually make real HTTP
-        # calls when clients are enabled), check that each data source is
+        # Before calling IngestStage (which makes real HTTP calls when
+        # credentials are configured), check that each data source is
         # enabled and within its cooldown window.
         #
-        # IngestStage uses two sources: "undermine_exchange" and "blizzard_api".
-        # Both are currently disabled (enabled=false in config/sources.toml)
-        # until real credentials are configured.
+        # IngestStage uses "blizzard_api" as its market data source.
         #
         # Preflight is non-fatal for per-realm runs: a blocked source is logged
         # as WARNING and the realm result is flagged, but orchestration continues
@@ -335,13 +333,8 @@ class HourlyOrchestrator:
     def _run_governance_preflight(self, realm_slug: str) -> Optional[str]:
         """Run governance preflight checks for the sources used by IngestStage.
 
-        Checks ``undermine_exchange`` and ``blizzard_api`` against the source
-        registry.  Disabled sources are blocked (or skipped, depending on
-        ``block_disabled_sources`` config).
-
-        This is intentionally non-fatal: if *any* source check passes, the
-        ingest can proceed in fixture mode.  Real provider calls are gated
-        individually inside the client stubs.
+        Checks ``blizzard_api`` against the source registry.  Disabled sources
+        are blocked (or skipped, depending on ``block_disabled_sources`` config).
 
         Args:
             realm_slug: Realm being ingested (used for logging only).
@@ -356,7 +349,7 @@ class HourlyOrchestrator:
             from wow_forecaster.governance.registry import get_source_policy
 
             gc = self.config.governance
-            sources_to_check = ["undermine_exchange", "blizzard_api"]
+            sources_to_check = ["blizzard_api"]
             blocked_sources: list[str] = []
 
             for sid in sources_to_check:
@@ -392,9 +385,8 @@ class HourlyOrchestrator:
                         )
                         return result.blocked_reason
 
-            # In fixture mode all sources are disabled, so ALL checks will fail.
-            # However, IngestStage uses fixture data regardless of source status.
-            # We therefore only hard-block when EVERY source is blocked AND
+            # When blizzard_api is disabled, IngestStage falls back to fixture data.
+            # We therefore only hard-block when the source is blocked AND
             # block_disabled_sources is False.  When block_disabled_sources=True
             # (the default), we silently allow the run to proceed in fixture mode.
             if blocked_sources and not gc.block_disabled_sources:

@@ -22,7 +22,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_KNOWN_SOURCES         = ("undermine", "blizzard_api", "blizzard_news")
+_KNOWN_SOURCES         = ("blizzard_api", "blizzard_news")
 _DEFAULT_STALE_HOURS   = 25
 _DEFAULT_LOOKBACK_HOURS = 25
 
@@ -32,7 +32,7 @@ class SourceProvenance:
     """Provenance record for a single data source.
 
     Attributes:
-        source:              Source name ("undermine", "blizzard_api", etc.).
+        source:              Source name ("blizzard_api", "blizzard_news", etc.).
         last_snapshot_at:    ISO-8601 timestamp of the most recent snapshot
                              (None if no snapshot ever recorded).
         snapshot_count_24h:  Number of successful snapshots in lookback window.
@@ -109,7 +109,7 @@ def build_provenance_summary(
                   AND fetched_at >= ?
                 ORDER BY fetched_at DESC;
                 """,
-                # Use prefix range to match source names like "undermine", "blizzard_api"
+                # Use prefix range to match source names like "blizzard_api", "blizzard_news"
                 (source, source + "\xff", cutoff),
             ).fetchall()
         except Exception as exc:

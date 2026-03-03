@@ -3,7 +3,7 @@ IngestStage — fetch raw AH data, save JSON snapshots, and parse records into
 market_observations_raw.
 
 Fixture mode (no credentials set):
-  All three clients return canned fixture records.  Snapshot JSON files are
+  Blizzard client returns canned fixture records.  Snapshot JSON files are
   written to ``data/raw/snapshots/{source}/YYYY/MM/DD/``, snapshot metadata is
   recorded in ``ingestion_snapshots``, and any fixture items that exist in the
   ``items`` table are inserted into ``market_observations_raw``.
@@ -15,7 +15,6 @@ FK safety:
 
 Switching to real API data:
   Set credentials in ``.env`` (gitignored):
-    UNDERMINE_API_KEY=...
     BLIZZARD_CLIENT_ID=...
     BLIZZARD_CLIENT_SECRET=...
 
@@ -60,7 +59,7 @@ class IngestStage(PipelineStage):
         realm_slugs: list[str] | None = None,
         **kwargs,
     ) -> int:
-        """Fetch snapshots from Undermine, Blizzard API, and Blizzard news.
+        """Fetch snapshots from Blizzard API and Blizzard news.
 
         Args:
             run: In-progress :class:`RunMetadata` (mutable).
@@ -79,7 +78,6 @@ class IngestStage(PipelineStage):
         from wow_forecaster.db.repositories.market_repo import MarketObservationRepository
         from wow_forecaster.ingestion.blizzard_client import BlizzardClient
         from wow_forecaster.ingestion.blizzard_news_client import BlizzardNewsClient
-        from wow_forecaster.ingestion.undermine_client import UndermineClient
 
         # Pre-persist run to get a run_id for FK use in ingestion_snapshots.
         self._persist_run(run)
@@ -88,11 +86,9 @@ class IngestStage(PipelineStage):
         raw_dir = self.config.data.raw_dir
 
         # Read credentials — None → fixture mode
-        undermine_key = os.environ.get("UNDERMINE_API_KEY")
         blizzard_id = os.environ.get("BLIZZARD_CLIENT_ID")
         blizzard_secret = os.environ.get("BLIZZARD_CLIENT_SECRET")
 
-        undermine = UndermineClient(api_key=undermine_key)
         blizzard = BlizzardClient(client_id=blizzard_id, client_secret=blizzard_secret)
         news = BlizzardNewsClient()
 
@@ -109,31 +105,6 @@ class IngestStage(PipelineStage):
             logger.info(
                 "IngestStage: %d known items in registry", len(known_item_ids)
             )
-
-            # ── Undermine Exchange ─────────────────────────────────────────────
-            for realm in realms:
-                faction = self.config.realms.default_faction
-                snap, records_data = self._fetch_undermine(
-                    undermine=undermine,
-                    realm=realm,
-                    faction=faction,
-                    raw_dir=raw_dir,
-                    run=run,
-                    undermine_key=undermine_key,
-                )
-                snap_repo.insert(snap)
-                if snap.success:
-                    total_snapshots += 1
-                    observations, skipped = self._parse_undermine_records(
-                        records_data, snap.fetched_at, known_item_ids
-                    )
-                    inserted = market_repo.insert_raw_batch(observations)
-                    total_inserted_raw += inserted
-                    logger.info(
-                        "Undermine %s/%s: %d records | inserted=%d | "
-                        "skipped_missing_items=%d",
-                        realm, faction, len(records_data), inserted, skipped,
-                    )
 
             # ── Blizzard Game Data API ─────────────────────────────────────────
             # Live mode: fetch commodities ONCE for the whole US region.
@@ -189,7 +160,7 @@ class IngestStage(PipelineStage):
 
             conn.commit()
 
-        mode = "fixture" if not (undermine_key or blizzard_id) else "live"
+        mode = "fixture" if not blizzard_id else "live"
         logger.info(
             "IngestStage complete | mode=%s | snapshots=%d | "
             "market_observations_raw inserted=%d",
@@ -198,53 +169,6 @@ class IngestStage(PipelineStage):
         return total_inserted_raw
 
     # ── Record parsing helpers ─────────────────────────────────────────────────
-
-    def _parse_undermine_records(
-        self,
-        records_data: list[dict],
-        observed_at: datetime,
-        known_item_ids: set[int],
-    ) -> tuple[list[RawMarketObservation], int]:
-        """Convert Undermine Exchange records to :class:`RawMarketObservation` objects.
-
-        Args:
-            records_data: List of serialised record dicts from the snapshot.
-            observed_at: UTC timestamp from the API response (``fetched_at``).
-            known_item_ids: Set of item IDs present in ``items`` table.
-                Records for absent IDs are skipped to avoid FK violations.
-
-        Returns:
-            Tuple of ``(observations, skipped_count)`` where ``skipped_count``
-            is the number of records dropped because item_id was unknown.
-        """
-        from wow_forecaster.models.market import RawMarketObservation
-
-        observations: list[RawMarketObservation] = []
-        skipped = 0
-
-        for rec in records_data:
-            item_id = rec["item_id"]
-            if item_id not in known_item_ids:
-                skipped += 1
-                continue
-
-            observations.append(
-                RawMarketObservation(
-                    item_id=item_id,
-                    realm_slug=rec["realm_slug"],
-                    faction=rec["faction"],
-                    observed_at=observed_at,
-                    source="undermine_api",
-                    min_buyout_raw=rec.get("min_buyout"),
-                    market_value_raw=rec.get("market_value"),
-                    historical_value_raw=rec.get("historical_value"),
-                    quantity_listed=rec.get("quantity"),
-                    num_auctions=rec.get("num_auctions"),
-                    raw_json=json.dumps(rec, separators=(",", ":")),
-                )
-            )
-
-        return observations, skipped
 
     def _parse_blizzard_records(
         self,
@@ -311,97 +235,6 @@ class IngestStage(PipelineStage):
         return observations, skipped
 
     # ── Per-source fetch helpers ───────────────────────────────────────────────
-
-    def _fetch_undermine(
-        self,
-        undermine,
-        realm: str,
-        faction: str,
-        raw_dir: str,
-        run: RunMetadata,
-        undermine_key: str | None,
-    ) -> tuple[object, list[dict]]:
-        """Fetch and snapshot Undermine Exchange data for one realm/faction.
-
-        Returns:
-            Tuple of ``(IngestionSnapshot, records_data)`` where
-            ``records_data`` is empty on failure.
-        """
-        from wow_forecaster.db.repositories.ingestion_repo import IngestionSnapshot
-        from wow_forecaster.ingestion.snapshot import build_snapshot_path, save_snapshot
-        from wow_forecaster.utils.time_utils import utcnow
-
-        try:
-            if undermine_key:
-                response = undermine.fetch_realm_auctions(realm, faction)
-            else:
-                logger.warning(
-                    "UNDERMINE_API_KEY not set — using fixture data for %s/%s",
-                    realm, faction,
-                )
-                response = undermine.get_fixture_response(realm, faction)
-
-            records_data = [
-                {
-                    "item_id": r.item_id,
-                    "realm_slug": r.realm_slug,
-                    "faction": r.faction,
-                    "min_buyout": r.min_buyout,
-                    "market_value": r.market_value,
-                    "historical_value": r.historical_value,
-                    "quantity": r.quantity,
-                    "num_auctions": r.num_auctions,
-                }
-                for r in response.records
-            ]
-
-            path = build_snapshot_path(
-                raw_dir, "undermine", f"{realm}_{faction}", response.fetched_at
-            )
-            content_hash, record_count = save_snapshot(
-                path,
-                records_data,
-                metadata={
-                    "source": "undermine",
-                    "realm": realm,
-                    "faction": faction,
-                    "is_fixture": response.is_fixture,
-                    "run_slug": run.run_slug,
-                },
-            )
-            logger.info(
-                "Undermine snapshot: %s | %d records | fixture=%s",
-                path.name, record_count, response.is_fixture,
-            )
-            snap = IngestionSnapshot(
-                snapshot_id=None,
-                run_id=run.run_id,
-                source="undermine",
-                endpoint=response.endpoint,
-                snapshot_path=str(path),
-                content_hash=content_hash,
-                record_count=record_count,
-                success=True,
-                error_message=None,
-                fetched_at=response.fetched_at,
-            )
-            return snap, records_data
-
-        except Exception as exc:
-            logger.error("Undermine fetch failed for %s/%s: %s", realm, faction, exc)
-            snap = IngestionSnapshot(
-                snapshot_id=None,
-                run_id=run.run_id,
-                source="undermine",
-                endpoint=f"realm_auctions/{realm}/{faction}",
-                snapshot_path="",
-                content_hash=None,
-                record_count=0,
-                success=False,
-                error_message=str(exc),
-                fetched_at=utcnow(),
-            )
-            return snap, []
 
     def _fetch_blizzard(
         self,

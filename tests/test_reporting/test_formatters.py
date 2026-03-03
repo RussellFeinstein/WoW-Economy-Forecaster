@@ -388,7 +388,7 @@ _PROVENANCE = {
     "is_fresh":        True,
     "sources": [
         {
-            "source":             "undermine",
+            "source":             "blizzard_api",
             "last_snapshot_at":   "2025-01-15T11:00:00+00:00",
             "snapshot_count_24h": 24,
             "total_records_24h":  15000,
@@ -396,7 +396,7 @@ _PROVENANCE = {
             "is_stale":           False,
         },
         {
-            "source":             "blizzard_api",
+            "source":             "blizzard_news",
             "last_snapshot_at":   None,
             "snapshot_count_24h": 0,
             "total_records_24h":  0,
@@ -410,8 +410,8 @@ _PROVENANCE = {
 def test_format_status_summary_shows_sources() -> None:
     """Source names and status flags appear in the output."""
     out = format_status_summary(_PROVENANCE, "area-52", is_fresh_prov=True, age_hours_prov=0.5)
-    assert "undermine" in out
     assert "blizzard_api" in out
+    assert "blizzard_news" in out
     assert "[OK]" in out
     assert "[STALE]" in out
 
