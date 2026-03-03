@@ -565,9 +565,11 @@ Without Blizzard credentials the pipeline cannot ingest live data.
 ## What's Not Implemented Yet
 
 - `NormalizeStage`: archetype_id in `market_observations_normalized` is always NULL; the workaround in `daily_agg.py` (JOIN on `items` table) is used instead.
-- `top_n_per_category` V2 refinements (Pareto-frontier, cross-horizon deduplication, user profiles).
-- Source governance: per-source `last_call_at` cooldown tracking.
-- Source governance: `prune-snapshots` via `retention.raw_snapshot_days`.
+- `top_n_per_category` V2 refinements: Pareto-frontier ranking, user-profile weighting, "do not recommend" blocklist, A/B test support. (Cross-horizon deduplication was implemented in v0.9.1.)
+- Source governance: per-source cooldown enforcement — the cooldown check logic exists in `preflight.py` but `orchestrator.py` never queries or passes `last_call_at`, so the check is always skipped.
+- Source governance: `prune-snapshots` via `retention.raw_snapshot_days` — the field is modelled and displayed but no CLI command or deletion logic exists.
+- Live news ingestion: `BlizzardNewsClient.fetch_recent_news()` is implemented but `IngestStage._fetch_news()` always calls fixture mode regardless of credentials.
+- News-to-event auto-detection: `extract_wow_events()` (mapping ingested news items to `WoWEvent` candidates) is not implemented.
 
 ---
 

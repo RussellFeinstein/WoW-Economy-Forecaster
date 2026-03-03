@@ -133,9 +133,11 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 
 ## What's NOT Implemented Yet
 - NormalizeStage: archetype_id lookup via item→archetype join (always NULL; workaround in daily_agg.py works)
-- top_n_per_category V2 (Pareto, user profiles)
-- Governance: last_call_at per-source cooldown tracking
-- Governance: prune-snapshots via retention.raw_snapshot_days
+- top_n_per_category V2 (Pareto-frontier, user-profile weighting, blocklist, A/B test support); cross-horizon dedup done in v0.9.1
+- Governance: cooldown enforcement not wired — preflight.py has check but orchestrator.py never passes last_call_at
+- Governance: prune-snapshots via retention.raw_snapshot_days (field modelled, no CLI/deletion logic)
+- Live news ingestion: BlizzardNewsClient.fetch_recent_news() exists but IngestStage._fetch_news() always uses fixture mode
+- News-to-event: extract_wow_events() not implemented (news items → WoWEvent candidates)
 
 ## Known Bugs (unfixed)
 - NormalizeStage: archetype_id always NULL in market_observations_normalized; workaround in daily_agg.py works but schema is misleading
@@ -143,4 +145,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses) — prior known-bug entry was incorrect
 
 ## Test Count
-840 tests passing (as of v1.3.9)
+840 tests passing (as of v1.3.10)
