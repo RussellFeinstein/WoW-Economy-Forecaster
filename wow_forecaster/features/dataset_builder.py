@@ -181,13 +181,23 @@ def rows_to_parquet_table(
     return pa.table(arrays, schema=schema)
 
 
+_EXPECTED_TRAINING_COLS: int = len(training_feature_names())
+_EXPECTED_INFERENCE_COLS: int = len(inference_feature_names())
+
+
 def write_training_parquet(rows: list[dict[str, Any]], path: Path) -> int:
-    """Write the training Parquet file (all 45 columns including targets).
+    """Write the training Parquet file (all columns including targets).
 
     Returns the number of rows written.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     schema = build_parquet_schema(include_targets=True)
+    if len(schema) != _EXPECTED_TRAINING_COLS:
+        raise RuntimeError(
+            f"Training schema has {len(schema)} columns; expected "
+            f"{_EXPECTED_TRAINING_COLS}.  Update _EXPECTED_TRAINING_COLS after "
+            f"intentionally changing FEATURE_REGISTRY."
+        )
     table = rows_to_parquet_table(rows, schema)
     pq.write_table(table, str(path), compression="snappy")
     log.info("Training Parquet written: %s (%d rows)", path.name, len(rows))
@@ -195,7 +205,7 @@ def write_training_parquet(rows: list[dict[str, Any]], path: Path) -> int:
 
 
 def write_inference_parquet(rows: list[dict[str, Any]], path: Path) -> int:
-    """Write the inference Parquet file (42 columns, no target columns).
+    """Write the inference Parquet file (no target columns).
 
     Uses the last available row per (archetype_id, realm_slug) as the
     inference row — i.e., the most recent features available for prediction.
@@ -217,6 +227,12 @@ def write_inference_parquet(rows: list[dict[str, Any]], path: Path) -> int:
 
     inference_rows = list(latest.values())
     schema = build_parquet_schema(include_targets=False)
+    if len(schema) != _EXPECTED_INFERENCE_COLS:
+        raise RuntimeError(
+            f"Inference schema has {len(schema)} columns; expected "
+            f"{_EXPECTED_INFERENCE_COLS}.  Update _EXPECTED_INFERENCE_COLS after "
+            f"intentionally changing FEATURE_REGISTRY."
+        )
     table = rows_to_parquet_table(inference_rows, schema)
     pq.write_table(table, str(path), compression="snappy")
     log.info("Inference Parquet written: %s (%d rows)", path.name, len(inference_rows))

@@ -59,7 +59,7 @@ class LightGBMForecaster:
         MODEL_VERSION: Package-level version string embedded in artifact metadata.
     """
 
-    MODEL_VERSION = "v1.3.1"
+    MODEL_VERSION = "v1.3.6"
 
     def __init__(
         self,

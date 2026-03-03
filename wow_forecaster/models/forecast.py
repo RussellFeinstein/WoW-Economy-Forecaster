@@ -80,6 +80,10 @@ class ForecastOutput(BaseModel):
             )
         if self.archetype_id is None and self.item_id is None:
             raise ValueError("At least one of archetype_id or item_id must be set.")
+        if self.archetype_id is not None and self.item_id is not None:
+            raise ValueError(
+                "archetype_id and item_id are mutually exclusive; set only one."
+            )
         return self
 
 

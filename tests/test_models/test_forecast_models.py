@@ -110,6 +110,23 @@ class TestForecastOutput:
         assert f.item_id == 12345
         assert f.archetype_id is None
 
+    def test_both_archetype_and_item_id_raises(self):
+        """archetype_id and item_id are mutually exclusive."""
+        with pytest.raises(ValidationError, match="mutually exclusive"):
+            ForecastOutput(
+                run_id=1,
+                archetype_id=7,
+                item_id=12345,
+                realm_slug="area-52",
+                forecast_horizon="7d",
+                target_date=date(2024, 9, 22),
+                predicted_price_gold=500.0,
+                confidence_lower=400.0,
+                confidence_upper=600.0,
+                confidence_pct=0.80,
+                model_slug="stub",
+            )
+
     def test_frozen_immutable(self, sample_forecast):
         with pytest.raises(Exception):
             sample_forecast.predicted_price_gold = 999.0
