@@ -82,7 +82,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 
 ### Feature Engineering (v0.3.0 / v0.9.0)
 - [wow_forecaster/features/registry.py](wow_forecaster/features/registry.py) — 48 training / 45 inference cols
-- [wow_forecaster/features/daily_agg.py](wow_forecaster/features/daily_agg.py) — recursive CTE date spine; JOINs items.archetype_id (NOT normalized table col which is always NULL)
+- [wow_forecaster/features/daily_agg.py](wow_forecaster/features/daily_agg.py) — recursive CTE date spine; JOINs items.archetype_id (backward-compat with pre-v1.3.4 rows + items with no archetype assignment)
 - [wow_forecaster/features/dataset_builder.py](wow_forecaster/features/dataset_builder.py) — orchestrates all steps → training/inference Parquet + JSON manifest
 - build-datasets end_date default = date.today()+timedelta(days=1) (captures UTC-midnight observations)
 
@@ -124,7 +124,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 ### Normalization (v1.1.0)
 - Rolling z-score via _fetch_rolling_stats() + _normalize_batch(); falls back to batch stats on cold-start
 - config: pipeline.normalize_rolling_days=30
-- archetype_id in normalize.py still always NULL (workaround: daily_agg.py JOINs items table)
+- archetype_id populated via _fetch_archetype_map() since v1.3.4; daily_agg.py JOINs items for backward-compat + unassigned items
 
 ### Automation (v1.0.0)
 - [wow_forecaster/scheduler.py](wow_forecaster/scheduler.py) — SchedulerDaemon (stdlib only)
@@ -132,7 +132,6 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - [scripts/setup_tasks.bat](scripts/setup_tasks.bat) — one-shot Windows Task Scheduler registration
 
 ## What's NOT Implemented Yet
-- NormalizeStage: archetype_id lookup via item→archetype join (always NULL; workaround in daily_agg.py works)
 - top_n_per_category V2 (Pareto-frontier, user-profile weighting, blocklist, A/B test support); cross-horizon dedup done in v0.9.1
 - Governance: cooldown enforcement not wired — preflight.py has check but orchestrator.py never passes last_call_at
 - Governance: prune-snapshots via retention.raw_snapshot_days (field modelled, no CLI/deletion logic)
@@ -140,7 +139,6 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - News-to-event: extract_wow_events() not implemented (news items → WoWEvent candidates)
 
 ## Known Bugs (unfixed)
-- NormalizeStage: archetype_id always NULL in market_observations_normalized; workaround in daily_agg.py works but schema is misleading
 - Broad `except Exception` in orchestrator/pipeline stages loses stack traces when missing exc_info=True (partially fixed in v1.3.0: 4 key error paths now include exc_info)
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses) — prior known-bug entry was incorrect
 

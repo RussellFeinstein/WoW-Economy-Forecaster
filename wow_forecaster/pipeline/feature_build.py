@@ -33,8 +33,8 @@ class FeatureBuildStage(PipelineStage):
     """Build feature vectors from normalized market observations.
 
     Reads from ``market_observations_normalized`` (joined through ``items``
-    for archetype_id — the normalized table's own archetype_id column is
-    always NULL until the normalize TODO is filled).
+    for archetype_id — backward-compat with pre-v1.3.4 rows that have NULL
+    in the normalized table, and to exclude unassigned items).
 
     Writes:
     - ``<processed_dir>/features/training/train_<realm>_<start>_<end>.parquet``

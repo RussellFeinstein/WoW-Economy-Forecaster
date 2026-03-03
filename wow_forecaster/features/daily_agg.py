@@ -10,11 +10,12 @@ archetype encoding).
 
 Key design choices
 ------------------
-1.  **Archetype join through items table** — ``market_observations_normalized``
-    has ``archetype_id = NULL`` everywhere (the normalization TODO is not done).
-    We JOIN through ``items.archetype_id`` instead.  Items without an archetype
-    assignment are excluded from features; their count is surfaced in the quality
-    report by ``quality.count_items_without_archetype()``.
+1.  **Archetype join through items table** — ``NormalizeStage`` has populated
+    ``market_observations_normalized.archetype_id`` via ``_fetch_archetype_map()``
+    since v1.3.4, but rows written before that release have ``NULL``.  We JOIN
+    through ``items.archetype_id`` for backward compatibility and to exclude items
+    with no archetype assignment; their count is surfaced in the quality report by
+    ``quality.count_items_without_archetype()``.
 
 2.  **Date spine via recursive CTE** — prices are sparse (an item may not be
     listed every day).  A recursive CTE generates the full calendar range, and a

@@ -60,8 +60,9 @@ Both use Snappy compression.  The schema uses float32 for price/stat columns
 
 Assumptions
 -----------
-- ``market_observations_normalized.archetype_id`` may be NULL everywhere.
-  The daily aggregation JOIN goes through ``items.archetype_id`` instead.
+- ``market_observations_normalized.archetype_id`` is populated since v1.3.4
+  but rows written before that release have NULL.  The daily aggregation JOIN
+  goes through ``items.archetype_id`` for backward compatibility.
 - Items with NULL archetype_id in the items table are excluded from all outputs.
   Their count is recorded in the quality report and manifest.
 - An empty result (no normalised observations for a realm) produces no Parquet
