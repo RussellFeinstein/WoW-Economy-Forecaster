@@ -56,10 +56,15 @@ class LightGBMForecaster:
 
     Attributes:
         horizon_days: Forecast horizon this model was trained for.
-        MODEL_VERSION: Package-level version string embedded in artifact metadata.
+        MODEL_VERSION: Artifact schema version embedded in ``.pkl`` metadata.
+            Increment this (v1 → v2, etc.) ONLY when the serialized format
+            changes in a way that makes old ``.pkl`` files incompatible — e.g.
+            a change to the feature vector layout or target encoding.  It is
+            intentionally decoupled from the package version so that routine
+            bug fixes and minor releases do not invalidate trained artifacts.
     """
 
-    MODEL_VERSION = "v1.3.7"
+    MODEL_VERSION = "v1"
 
     def __init__(
         self,

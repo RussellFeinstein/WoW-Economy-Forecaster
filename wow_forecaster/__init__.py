@@ -1,3 +1,5 @@
 """WoW Economy Forecaster — local-first AH research and forecasting system."""
 
-__version__ = "1.3.7"
+from importlib.metadata import version as _pkg_version
+
+__version__ = _pkg_version("wow-economy-forecaster")

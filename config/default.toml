@@ -2,10 +2,7 @@
 # This file is committed to git. Use config/local.toml (gitignored) for local overrides.
 # Use .env for secrets (API keys, etc.). See .env.example.
 
-[project]
-name    = "wow-economy-forecaster"
-version = "1.3.7"
-debug   = false
+debug = false
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
