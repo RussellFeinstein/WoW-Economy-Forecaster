@@ -308,7 +308,7 @@ class IngestStage(PipelineStage):
             return snap, records_data
 
         except Exception as exc:
-            logger.error("Blizzard API fetch failed for %s: %s", realm, exc)
+            logger.error("Blizzard API fetch failed for %s: %s", realm, exc, exc_info=True)
             snap = IngestionSnapshot(
                 snapshot_id=None,
                 run_id=run.run_id,
@@ -392,7 +392,7 @@ class IngestStage(PipelineStage):
             return snap, records_data
 
         except Exception as exc:
-            logger.error("Blizzard commodities fetch failed: %s", exc)
+            logger.error("Blizzard commodities fetch failed: %s", exc, exc_info=True)
             snap = IngestionSnapshot(
                 snapshot_id=None,
                 run_id=run.run_id,
@@ -464,7 +464,7 @@ class IngestStage(PipelineStage):
             )
 
         except Exception as exc:
-            logger.error("News fetch failed: %s", exc)
+            logger.error("News fetch failed: %s", exc, exc_info=True)
             return IngestionSnapshot(
                 snapshot_id=None,
                 run_id=run.run_id,

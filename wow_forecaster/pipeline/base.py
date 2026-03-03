@@ -120,6 +120,7 @@ class PipelineStage(ABC):
             logger.error(
                 "Stage [%s] FAILED: %s | run_slug=%s",
                 self.stage_name, exc, run.run_slug,
+                exc_info=True,
             )
             self._persist_run(run)
             raise
@@ -167,4 +168,5 @@ class PipelineStage(ABC):
             logger.error(
                 "Failed to persist RunMetadata for run_slug=%s: %s",
                 run.run_slug, exc,
+                exc_info=True,
             )

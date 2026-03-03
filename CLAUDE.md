@@ -139,8 +139,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - News-to-event: extract_wow_events() not implemented (news items → WoWEvent candidates)
 
 ## Known Bugs (unfixed)
-- Broad `except Exception` in orchestrator/pipeline stages loses stack traces when missing exc_info=True (partially fixed in v1.3.0: 4 key error paths now include exc_info)
-- Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses) — prior known-bug entry was incorrect
+- Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
 840 tests passing (as of v1.3.10)

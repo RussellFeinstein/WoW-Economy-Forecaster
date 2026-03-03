@@ -166,7 +166,7 @@ class HourlyOrchestrator:
             result.status = "failed"
             result.errors.append(f"Pre-flight schema check failed: {exc}")
             result.finished_at = datetime.now(tz=timezone.utc)
-            logger.error("Pre-flight failed: %s", exc)
+            logger.error("Pre-flight failed: %s", exc, exc_info=True)
             return result
 
         # Pre-persist orchestrator run record

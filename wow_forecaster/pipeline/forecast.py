@@ -104,7 +104,8 @@ class ForecastStage(PipelineStage):
                     forecasters[h] = LightGBMForecaster.load(artifact_path)
                 except Exception as exc:
                     logger.error(
-                        "Failed to load model %s: %s", artifact_path, exc
+                        "Failed to load model %s: %s", artifact_path, exc,
+                        exc_info=True,
                     )
 
             if not forecasters:
@@ -151,7 +152,7 @@ class ForecastStage(PipelineStage):
                     uncertainty_multiplier=uncertainty_mult,
                 )
             except Exception as exc:
-                logger.error("Inference failed for realm=%s: %s", realm, exc)
+                logger.error("Inference failed for realm=%s: %s", realm, exc, exc_info=True)
                 continue
 
             # Persist to DB

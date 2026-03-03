@@ -229,7 +229,7 @@ def run_migrations(conn: sqlite3.Connection) -> int:
             count += 1
         except Exception as exc:
             conn.rollback()
-            logger.error("Migration %s FAILED: %s", version_id, exc)
+            logger.error("Migration %s FAILED: %s", version_id, exc, exc_info=True)
             raise
 
     if count:

@@ -211,7 +211,10 @@ def persist_drift_to_db(
         )
         conn.commit()
     except Exception as exc:
-        logger.error("Failed to persist drift result for realm=%s: %s", result.realm_slug, exc)
+        logger.error(
+            "Failed to persist drift result for realm=%s: %s",
+            result.realm_slug, exc, exc_info=True,
+        )
 
 
 def persist_health_to_db(
@@ -254,6 +257,7 @@ def persist_health_to_db(
         logger.error(
             "Failed to persist health summary for realm=%s h=%dd: %s",
             summary.realm_slug, summary.horizon_days, exc,
+            exc_info=True,
         )
 
 
