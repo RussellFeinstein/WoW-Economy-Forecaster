@@ -38,6 +38,9 @@ data/*.db-shm
 data/logs/*.log
 logs/
 
+# Claude Code (local permission settings — not shared across machines)
+.claude/
+
 # IDE
 .vscode/settings.json
 .idea/
