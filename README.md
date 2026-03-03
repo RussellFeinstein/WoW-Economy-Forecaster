@@ -8,7 +8,7 @@ Uses historical data from **The War Within (TWW)** to learn economy patterns, th
 
 ## Project Status
 
-**v1.3.12 — Production-ready pipeline**
+**v1.3.13 — Production-ready pipeline**
 
 | Layer | Version | Status |
 |---|---|---|
@@ -564,7 +564,6 @@ Without Blizzard credentials the pipeline cannot ingest live data.
 
 ## What's Not Implemented Yet
 
-- `NormalizeStage`: archetype_id in `market_observations_normalized` is always NULL; the workaround in `daily_agg.py` (JOIN on `items` table) is used instead.
 - `top_n_per_category` V2 refinements: Pareto-frontier ranking, user-profile weighting, "do not recommend" blocklist, A/B test support. (Cross-horizon deduplication was implemented in v0.9.1.)
 - Source governance: per-source cooldown enforcement — the cooldown check logic exists in `preflight.py` but `orchestrator.py` never queries or passes `last_call_at`, so the check is always skipped.
 - Source governance: `prune-snapshots` via `retention.raw_snapshot_days` — the field is modelled and displayed but no CLI command or deletion logic exists.
