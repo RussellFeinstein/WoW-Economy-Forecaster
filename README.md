@@ -67,14 +67,16 @@ tests/
 ├── test_models/       # Pydantic validation (60 tests)
 ├── test_taxonomy/     # Taxonomy integrity (30 tests)
 ├── test_db/           # Schema + repositories (26 tests)
-├── test_pipeline/     # Pipeline interfaces (11 tests)
+├── test_pipeline/     # Pipeline interfaces (28 tests)
 ├── test_ingestion/    # Snapshots, event CSV, persistence (73 tests)
-├── test_features/     # Feature engineering, no-leakage (53 tests)
+├── test_events/       # Seed loader, event imports (24 tests)
+├── test_features/     # Feature engineering, no-leakage (68 tests)
 ├── test_backtest/     # Splits, models, metrics (60 tests)
 ├── test_ml/           # Feature selector, LightGBM (44 tests)
-├── test_recommendations/ # Scorer, ranker (67 tests)
+├── test_recommendations/ # Scorer, ranker (92 tests)
 ├── test_monitoring/   # Drift, adaptive, orchestrator (73 tests)
-└── test_reporting/    # Reader, formatters, export (55 tests)
+├── test_governance/   # Source policies, preflight, freshness (84 tests)
+└── test_reporting/    # Reader, formatters, export (79 tests)
 ```
 
 ### Key Design Decisions
@@ -87,7 +89,7 @@ tests/
 | Config | **tomllib + python-dotenv** | TOML for static config, .env for secrets |
 | ML | **LightGBM** | Fast training, handles mixed types, interpretable feature importances |
 | Reporting | **CLI-first + optional Streamlit** | Terminal reports work headlessly; Streamlit is zero-cost when not needed |
-| Tests | **pytest** | Standard; 552 tests across 11 groups |
+| Tests | **pytest** | Standard; 741 tests across 13 groups |
 
 ### Transfer Learning Architecture
 
@@ -325,24 +327,26 @@ streamlit run dashboard/app.py -- --realm area-52
 ## Running Tests
 
 ```bash
-# All tests (552 total across 11 groups)
+# All tests (741 total across 13 groups)
 pytest
 
 # With coverage
 pytest --cov=wow_forecaster --cov-report=term-missing
 
 # Specific groups
-pytest tests/test_reporting/    # Reader, formatters, export (55 tests)
-pytest tests/test_monitoring/   # Drift, adaptive, orchestrator (73 tests)
-pytest tests/test_recommendations/ # Scorer, ranker (67 tests)
-pytest tests/test_ml/           # LightGBM training and inference (44 tests)
-pytest tests/test_features/     # Feature engineering (53 tests)
-pytest tests/test_backtest/     # Backtest framework (60 tests)
-pytest tests/test_models/       # Pydantic validation (60 tests)
-pytest tests/test_db/           # Schema + repositories (26 tests)
-pytest tests/test_taxonomy/     # Taxonomy integrity (30 tests)
-pytest tests/test_ingestion/    # Ingestion + snapshots (73 tests)
-pytest tests/test_pipeline/     # Pipeline interfaces (11 tests)
+pytest tests/test_reporting/       # Reader, formatters, export (79 tests)
+pytest tests/test_monitoring/      # Drift, adaptive, orchestrator (73 tests)
+pytest tests/test_governance/      # Source policies, preflight, freshness (84 tests)
+pytest tests/test_recommendations/ # Scorer, ranker (92 tests)
+pytest tests/test_ml/              # LightGBM training and inference (44 tests)
+pytest tests/test_features/        # Feature engineering (68 tests)
+pytest tests/test_backtest/        # Backtest framework (60 tests)
+pytest tests/test_models/          # Pydantic validation (60 tests)
+pytest tests/test_db/              # Schema + repositories (26 tests)
+pytest tests/test_taxonomy/        # Taxonomy integrity (30 tests)
+pytest tests/test_ingestion/       # Ingestion + snapshots (73 tests)
+pytest tests/test_events/          # Seed loader, event imports (24 tests)
+pytest tests/test_pipeline/        # Pipeline interfaces (28 tests)
 ```
 
 ---
