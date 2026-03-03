@@ -55,11 +55,11 @@ SEVERITY_ENCODING: dict[str | None, int] = {
 
 # ── Impact direction encoding ──────────────────────────────────────────────────
 IMPACT_ENCODING: dict[str | None, int] = {
-    None:       0,
-    "neutral":  0,
-    "mixed":    0,
-    "positive": 1,
-    "negative": -1,
+    None:      0,
+    "neutral": 0,
+    "mixed":   0,
+    "spike":   1,
+    "crash":  -1,
 }
 
 # ── Training feature columns ───────────────────────────────────────────────────

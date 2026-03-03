@@ -67,7 +67,7 @@ class TestEncodeRow:
             "price_mean":        100.0,
             "archetype_category": "consumable",
             "event_severity_max": "major",
-            "event_archetype_impact": "positive",
+            "event_archetype_impact": "spike",
             "event_active":       True,
             "is_transferable":    False,
             "is_cold_start":      True,
@@ -134,14 +134,14 @@ class TestEncodeRow:
         enc = encode_row(row)
         assert enc["event_severity_enc"] == 0
 
-    def test_impact_encoding_positive(self):
+    def test_impact_encoding_spike(self):
         row = self._base_row()
         enc = encode_row(row)
         assert enc["event_archetype_impact_enc"] == 1
 
-    def test_impact_encoding_negative(self):
+    def test_impact_encoding_crash(self):
         row = self._base_row()
-        row["event_archetype_impact"] = "negative"
+        row["event_archetype_impact"] = "crash"
         enc = encode_row(row)
         assert enc["event_archetype_impact_enc"] == -1
 
