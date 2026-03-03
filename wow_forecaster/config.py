@@ -64,7 +64,7 @@ class RealmsConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    defaults: list[str] = ["area-52", "illidan", "stormrage", "tichondrius"]
+    defaults: list[str] = ["us"]
     default_faction: str = "neutral"
 
 
@@ -84,7 +84,7 @@ class ForecastConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    horizons: list[str] = ["1d", "7d", "30d"]
+    horizons: list[str] = ["1d", "7d", "28d"]
     confidence_pct: float = 0.80
     default_model_slug: str = "stub_linear_v0"
 

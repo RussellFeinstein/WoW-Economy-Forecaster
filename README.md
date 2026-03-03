@@ -8,7 +8,7 @@ Uses historical data from **The War Within (TWW)** to learn economy patterns, th
 
 ## Project Status
 
-**v1.3.8 — Production-ready pipeline**
+**v1.3.11 — Production-ready pipeline**
 
 | Layer | Version | Status |
 |---|---|---|
