@@ -388,6 +388,18 @@ def build_datasets(
     cfg_feat = config.features
     cfg_exp  = config.expansions
 
+    # ── Preflight: events must be seeded ──────────────────────────────────────
+    # If wow_events is empty, all 8 event feature columns will be zero/null for
+    # every row in the dataset.  The model will train with no event signal at all
+    # and silently produce a degraded artifact.  Fail loudly instead.
+    row = conn.execute("SELECT COUNT(*) AS n FROM wow_events;").fetchone()
+    if row is None or row["n"] == 0:
+        raise RuntimeError(
+            "wow_events table is empty — run `build-events` before `build-datasets`. "
+            "All event features would be zero without seeded events, silently "
+            "producing a degraded training dataset."
+        )
+
     # ── Load shared data once (not per realm, not per row) ────────────────────
     events          = load_known_events(conn)
     impacts         = load_archetype_impacts(conn)

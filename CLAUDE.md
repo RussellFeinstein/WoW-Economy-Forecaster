@@ -146,4 +146,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses) — prior known-bug entry was incorrect
 
 ## Test Count
-738 tests passing (as of v1.3.0)
+741 tests passing (as of v1.3.1)
