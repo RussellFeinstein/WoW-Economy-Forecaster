@@ -106,6 +106,9 @@ WITH RECURSIVE date_spine(d) AS (
     SELECT date(d, '+1 day') FROM date_spine WHERE d < ?
 ),
 archetypes_in_realm AS (
+    -- Join through items.archetype_id rather than mon.archetype_id: records
+    -- written before v1.3.4 have mon.archetype_id = NULL, so items is the
+    -- authoritative source for the archetype assignment.
     SELECT DISTINCT i.archetype_id
     FROM market_observations_normalized mon
     JOIN items i ON mon.item_id = i.item_id

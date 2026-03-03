@@ -72,12 +72,16 @@ class TestNextDailyRun:
         assert result.hour == expected_h
         assert result.minute == expected_m
 
-    def test_past_time_today_is_scheduled_tomorrow(self):
-        """If the target HH:MM has already passed today, schedule for tomorrow."""
+    def test_past_time_is_scheduled_in_the_future(self):
+        """A past HH:MM always returns a strictly future datetime at that HH:MM."""
         past_time = (datetime.now() - timedelta(hours=2)).strftime("%H:%M")
+        expected_h, expected_m = (int(p) for p in past_time.split(":"))
         result = _next_daily_run(past_time)
-        tomorrow = (datetime.now() + timedelta(days=1)).date()
-        assert result.date() == tomorrow
+        # Must be strictly in the future.
+        assert result > datetime.now().replace(second=0, microsecond=0)
+        # Must have exactly the requested hours and minutes.
+        assert result.hour == expected_h
+        assert result.minute == expected_m
 
     def test_returns_correct_hour_and_minute(self):
         """The returned datetime always has the requested hour and minute."""

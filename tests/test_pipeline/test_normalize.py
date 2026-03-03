@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 import pytest
 
 from wow_forecaster.db.schema import apply_schema
-from wow_forecaster.pipeline.normalize import _MIN_ROLLING_OBS, _fetch_rolling_stats, _normalize_batch
+from wow_forecaster.pipeline.normalize import _MIN_ROLLING_OBS, _fetch_archetype_map, _fetch_rolling_stats, _normalize_batch
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
@@ -228,3 +228,79 @@ class TestNormalizeBatch:
         ]
         _, obs_ids = _normalize_batch(rows, z_threshold=3.0, rolling_stats=None)
         assert sorted(obs_ids) == [10, 20]
+
+    def test_archetype_id_populated_from_map(self):
+        """archetype_id is set from archetype_map when provided."""
+        row = _make_raw_row(obs_id=1, item_id=1001, realm_slug="us")
+        archetype_map = {1001: 42}
+        normalized, _ = _normalize_batch([row], z_threshold=3.0,
+                                          rolling_stats=None, archetype_map=archetype_map)
+        assert normalized[0].archetype_id == 42
+
+    def test_archetype_id_none_for_unmapped_item(self):
+        """Items absent from archetype_map keep archetype_id = None."""
+        row = _make_raw_row(obs_id=1, item_id=9999, realm_slug="us")
+        archetype_map = {1001: 42}  # 9999 not in map
+        normalized, _ = _normalize_batch([row], z_threshold=3.0,
+                                          rolling_stats=None, archetype_map=archetype_map)
+        assert normalized[0].archetype_id is None
+
+    def test_archetype_id_none_when_map_not_provided(self):
+        """Omitting archetype_map preserves pre-v1.3.4 NULL behaviour."""
+        row = _make_raw_row(obs_id=1, item_id=1001, realm_slug="us")
+        normalized, _ = _normalize_batch([row], z_threshold=3.0, rolling_stats=None)
+        assert normalized[0].archetype_id is None
+
+    def test_single_obs_cold_start_z_score_none(self):
+        """Single observation with no rolling history → z_score is None, not an outlier."""
+        row = _make_raw_row(obs_id=1, item_id=1001, realm_slug="us",
+                            min_buyout_raw=1_000_000)
+        # Empty rolling_stats (not None): triggers the cold-start path,
+        # item has 1 valid price so std_p = 0.0 → z_score = None.
+        normalized, _ = _normalize_batch([row], z_threshold=3.0, rolling_stats={})
+        assert normalized[0].z_score is None
+        assert not normalized[0].is_outlier
+
+
+# ── _fetch_archetype_map ───────────────────────────────────────────────────────
+
+class TestFetchArchetypeMap:
+    def test_empty_item_ids_returns_empty(self, norm_db):
+        result = _fetch_archetype_map(norm_db, set())
+        assert result == {}
+
+    def test_returns_archetype_id_for_known_item(self, norm_db):
+        norm_db.execute(
+            "INSERT INTO item_categories (slug, display_name, archetype_tag) "
+            "VALUES ('test.cat', 'Test', 'test.tag');"
+        )
+        norm_db.execute(
+            "INSERT INTO economic_archetypes "
+            "(archetype_id, slug, display_name, category_tag, sub_tag, is_transferable, transfer_confidence) "
+            "VALUES (7, 'test.arch', 'Test Arch', 'test', 'test.tag', 1, 0.9);"
+        )
+        norm_db.execute(
+            "INSERT INTO items (item_id, name, category_id, archetype_id, expansion_slug, quality, is_crafted, is_boe) "
+            "VALUES (1001, 'Test Item', 1, 7, 'tww', 'common', 0, 0);"
+        )
+        norm_db.commit()
+        result = _fetch_archetype_map(norm_db, {1001})
+        assert result == {1001: 7}
+
+    def test_returns_none_for_item_without_archetype(self, norm_db):
+        norm_db.execute(
+            "INSERT INTO item_categories (slug, display_name, archetype_tag) "
+            "VALUES ('test.cat', 'Test', 'test.tag');"
+        )
+        norm_db.execute(
+            "INSERT INTO items (item_id, name, category_id, archetype_id, expansion_slug, quality, is_crafted, is_boe) "
+            "VALUES (2002, 'No Arch Item', 1, NULL, 'tww', 'common', 0, 0);"
+        )
+        norm_db.commit()
+        result = _fetch_archetype_map(norm_db, {2002})
+        assert result == {2002: None}
+
+    def test_unknown_item_absent_from_result(self, norm_db):
+        """Items not in the items table are simply absent (not mapped to None)."""
+        result = _fetch_archetype_map(norm_db, {9999})
+        assert 9999 not in result

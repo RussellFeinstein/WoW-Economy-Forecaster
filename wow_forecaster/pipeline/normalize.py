@@ -12,9 +12,9 @@ Processing steps:
   5. Write ``NormalizedMarketObservation`` records.
   6. Mark raw observations as processed (``is_processed = 1``).
 
-Archetype mapping TODO:
-  The ``archetype_id`` field on normalized observations is currently NULL.
-  To fill it: JOIN items → economic_archetypes via item_id during normalization.
+Archetype mapping:
+  ``archetype_id`` is populated via a pre-batch lookup of item_id → archetype_id
+  from the ``items`` table.  Items without an archetype assignment remain NULL.
 """
 
 from __future__ import annotations
@@ -77,7 +77,8 @@ class NormalizeStage(PipelineStage):
                 realm_slugs = {row["realm_slug"] for row in batch}
                 rolling_stats = _fetch_rolling_stats(conn, item_ids, realm_slugs, rolling_days)
 
-                normalized_rows, obs_ids = _normalize_batch(batch, z_threshold, rolling_stats)
+                archetype_map = _fetch_archetype_map(conn, item_ids)
+                normalized_rows, obs_ids = _normalize_batch(batch, z_threshold, rolling_stats, archetype_map)
 
                 # Bulk-insert normalized rows
                 conn.executemany(
@@ -189,10 +190,38 @@ def _fetch_rolling_stats(
     return result
 
 
+def _fetch_archetype_map(
+    conn: sqlite3.Connection,
+    item_ids: set[int],
+) -> dict[int, int | None]:
+    """Return a mapping of item_id → archetype_id for the given item IDs.
+
+    Items not present in the ``items`` table, or items with no archetype
+    assignment, map to ``None``.
+
+    Args:
+        conn:     Open SQLite connection with ``row_factory = sqlite3.Row``.
+        item_ids: Set of item_ids present in the current batch.
+
+    Returns:
+        Dict of ``{item_id: archetype_id}``; archetype_id is ``None`` for
+        unregistered or unassigned items.
+    """
+    if not item_ids:
+        return {}
+    placeholders = ",".join("?" for _ in item_ids)
+    rows = conn.execute(
+        f"SELECT item_id, archetype_id FROM items WHERE item_id IN ({placeholders});",
+        tuple(item_ids),
+    ).fetchall()
+    return {row["item_id"]: row["archetype_id"] for row in rows}
+
+
 def _normalize_batch(
     batch: list[sqlite3.Row],
     z_threshold: float,
     rolling_stats: dict[tuple[int, str], tuple[float, float]] | None = None,
+    archetype_map: dict[int, int | None] | None = None,
 ) -> tuple[list[NormalizedMarketObservation], list[int]]:
     """Normalize a batch of raw rows and compute z-scores.
 
@@ -210,6 +239,8 @@ def _normalize_batch(
         z_threshold:   Outlier flag threshold (|z_score| > this → is_outlier=True).
         rolling_stats: Pre-fetched rolling baselines from ``_fetch_rolling_stats()``.
                        If None, always falls back to batch-level stats.
+        archetype_map: Mapping of item_id → archetype_id from ``_fetch_archetype_map()``.
+                       If None, archetype_id is left as NULL (pre-v1.3.4 behaviour).
 
     Returns:
         Tuple of (normalized observations list, obs_id list for mark_processed).
@@ -264,7 +295,7 @@ def _normalize_batch(
             norm = NormalizedMarketObservation(
                 obs_id=row["obs_id"],
                 item_id=row["item_id"],
-                archetype_id=None,   # TODO: look up via item→archetype join
+                archetype_id=archetype_map.get(row["item_id"]) if archetype_map else None,
                 realm_slug=row["realm_slug"],
                 faction=row["faction"],
                 observed_at=datetime.fromisoformat(row["observed_at"]),
