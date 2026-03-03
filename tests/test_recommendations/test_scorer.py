@@ -271,6 +271,67 @@ class TestUncertaintyPenalty:
         assert cold.uncertainty_penalty > normal.uncertainty_penalty
 
 
+# ── ScoreComponents field bounds ──────────────────────────────────────────────
+
+class TestScoreComponentsBounds:
+    """ScoreComponents.__post_init__ enforces documented field bounds."""
+
+    def _valid_kwargs(self, **overrides):
+        base = dict(
+            opportunity_score=50.0,
+            liquidity_score=50.0,
+            volatility_penalty=20.0,
+            event_boost=0.0,
+            uncertainty_penalty=10.0,
+            roi=0.1,
+            volatility_cv=0.1,
+            uncertainty_pct=0.1,
+        )
+        base.update(overrides)
+        return base
+
+    def test_valid_construction_succeeds(self):
+        ScoreComponents(**self._valid_kwargs())  # must not raise
+
+    def test_opportunity_score_above_100_raises(self):
+        with pytest.raises(ValueError, match="opportunity_score"):
+            ScoreComponents(**self._valid_kwargs(opportunity_score=101.0))
+
+    def test_opportunity_score_below_0_raises(self):
+        with pytest.raises(ValueError, match="opportunity_score"):
+            ScoreComponents(**self._valid_kwargs(opportunity_score=-0.1))
+
+    def test_liquidity_score_above_100_raises(self):
+        with pytest.raises(ValueError, match="liquidity_score"):
+            ScoreComponents(**self._valid_kwargs(liquidity_score=100.01))
+
+    def test_volatility_penalty_above_100_raises(self):
+        with pytest.raises(ValueError, match="volatility_penalty"):
+            ScoreComponents(**self._valid_kwargs(volatility_penalty=100.1))
+
+    def test_uncertainty_penalty_above_100_raises(self):
+        with pytest.raises(ValueError, match="uncertainty_penalty"):
+            ScoreComponents(**self._valid_kwargs(uncertainty_penalty=100.1))
+
+    def test_event_boost_above_100_raises(self):
+        with pytest.raises(ValueError, match="event_boost"):
+            ScoreComponents(**self._valid_kwargs(event_boost=100.01))
+
+    def test_event_boost_below_neg_100_raises(self):
+        with pytest.raises(ValueError, match="event_boost"):
+            ScoreComponents(**self._valid_kwargs(event_boost=-100.01))
+
+    def test_event_boost_at_neg_100_is_valid(self):
+        ScoreComponents(**self._valid_kwargs(event_boost=-100.0))  # boundary: valid
+
+    def test_event_boost_at_pos_100_is_valid(self):
+        ScoreComponents(**self._valid_kwargs(event_boost=100.0))   # boundary: valid
+
+    def test_raw_fields_are_unconstrained(self):
+        """roi, volatility_cv, uncertainty_pct have no bounds — large values are fine."""
+        ScoreComponents(**self._valid_kwargs(roi=-9.9, volatility_cv=5.0, uncertainty_pct=3.0))
+
+
 # ── ScoreComponents.total ─────────────────────────────────────────────────────
 
 class TestScoreComponentsTotal:

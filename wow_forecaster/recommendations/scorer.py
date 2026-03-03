@@ -85,6 +85,19 @@ class ScoreComponents:
     volatility_cv:       float
     uncertainty_pct:     float
 
+    def __post_init__(self) -> None:
+        for name in ("opportunity_score", "liquidity_score",
+                     "volatility_penalty", "uncertainty_penalty"):
+            v = getattr(self, name)
+            if not 0.0 <= v <= 100.0:
+                raise ValueError(
+                    f"ScoreComponents.{name} must be in [0, 100]; got {v}."
+                )
+        if not -100.0 <= self.event_boost <= 100.0:
+            raise ValueError(
+                f"ScoreComponents.event_boost must be in [-100, 100]; got {self.event_boost}."
+            )
+
     @property
     def total(self) -> float:
         """Weighted total score.  Approximate range 0–100 for buy opportunities."""
