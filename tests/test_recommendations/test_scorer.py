@@ -12,6 +12,7 @@ compute_score():
   - volatility_penalty is 0 when std is 0 or unknown.
   - event_boost > 0 for an active "positive" event.
   - event_boost has anticipation component when days_to_next <= 7.
+  - event_boost is clamped to [-100, 100] (regression: was wrongly documented as 0–100).
   - uncertainty_penalty reflects CI width relative to predicted price.
   - Cold-start with low transfer_confidence widens uncertainty_penalty.
 
@@ -203,6 +204,45 @@ class TestEventBoost:
     def test_anticipation_boost_beyond_7_days_is_zero(self):
         c = _score(event_active=False, event_days_to_next=8.0)
         assert c.event_boost == pytest.approx(0.0)
+
+    def test_event_boost_clamped_at_positive_100(self):
+        """event_boost must never exceed +100, even if severity base is extreme."""
+        import wow_forecaster.recommendations.scorer as scorer_mod
+        original = scorer_mod._SEVERITY_BOOST.copy()
+        scorer_mod._SEVERITY_BOOST["catastrophic"] = 999.0
+        try:
+            c = _score(
+                event_active=True,
+                event_severity_max="catastrophic",
+                event_archetype_impact="positive",
+            )
+            assert c.event_boost <= 100.0
+        finally:
+            scorer_mod._SEVERITY_BOOST.update(original)
+
+    def test_event_boost_clamped_at_negative_100(self):
+        """event_boost must never go below -100, even if severity base is extreme."""
+        import wow_forecaster.recommendations.scorer as scorer_mod
+        original = scorer_mod._SEVERITY_BOOST.copy()
+        scorer_mod._SEVERITY_BOOST["catastrophic"] = 999.0
+        try:
+            c = _score(
+                event_active=True,
+                event_severity_max="catastrophic",
+                event_archetype_impact="negative",
+            )
+            assert c.event_boost >= -100.0
+        finally:
+            scorer_mod._SEVERITY_BOOST.update(original)
+
+    def test_event_boost_is_negative_for_negative_impact(self):
+        """Regression: event_boost range is [-100, 100], not [0, 100]."""
+        c = _score(
+            event_active=True,
+            event_severity_max="major",
+            event_archetype_impact="negative",
+        )
+        assert c.event_boost < 0.0
 
 
 # ── compute_score: uncertainty_penalty ───────────────────────────────────────

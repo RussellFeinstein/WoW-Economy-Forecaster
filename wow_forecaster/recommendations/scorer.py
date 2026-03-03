@@ -29,10 +29,11 @@ volatility_penalty (0–100):
     Coefficient of variation (price_roll_std_7d / price_mean).
     CV = 50% → penalty 50.  Penalises execution risk on volatile archetypes.
 
-event_boost (0–100):
+event_boost (-100–100):
     Active events with "positive" archetype impact add severity-based boost.
     Upcoming events within 7 days add a proportional anticipation boost.
     Negative impacts apply a soft penalty (negative boost * 0.5).
+    Clamped to [-100, 100]; negative values penalise the total score.
 
 uncertainty_penalty (0–100):
     CI width / predicted_price.
@@ -68,7 +69,7 @@ class ScoreComponents:
         opportunity_score:   0–100, derived from expected ROI.
         liquidity_score:     0–100, derived from quantity / auction depth.
         volatility_penalty:  0–100, derived from price coefficient of variation.
-        event_boost:         0–100, derived from active/upcoming events.
+        event_boost:         -100–100, derived from active/upcoming events; negative for net-negative impact.
         uncertainty_penalty: 0–100, derived from CI width / predicted price.
         roi:                 Raw expected return (can be negative).
         volatility_cv:       Raw CV = price_roll_std_7d / price_mean.
