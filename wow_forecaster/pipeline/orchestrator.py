@@ -201,7 +201,8 @@ class HourlyOrchestrator:
                     )
                 except Exception as exc:
                     logger.error(
-                        "Drift step raised unexpectedly for realm=%s: %s", realm, exc
+                        "Drift step raised unexpectedly for realm=%s: %s", realm, exc,
+                        exc_info=True,
                     )
                     drift_result, prov = None, None
                 if drift_result is not None:
@@ -323,7 +324,7 @@ class HourlyOrchestrator:
                 rows_written=stage_run.rows_processed,
             )
         except Exception as exc:
-            logger.error("IngestStage[%s] failed: %s", realm_slug, exc)
+            logger.error("IngestStage[%s] failed: %s", realm_slug, exc, exc_info=True)
             return RealmIngestionResult(
                 realm_slug=realm_slug,
                 success=False,
@@ -424,7 +425,7 @@ class HourlyOrchestrator:
             stage_run = stage.run()
             return stage_run.rows_processed, stage_run.status == "success", None
         except Exception as exc:
-            logger.error("NormalizeStage failed: %s", exc)
+            logger.error("NormalizeStage failed: %s", exc, exc_info=True)
             return 0, False, str(exc)
 
     def _run_drift_and_provenance(
@@ -486,7 +487,7 @@ class HourlyOrchestrator:
                 )
 
         except Exception as exc:
-            logger.error("Drift/provenance check failed for realm=%s: %s", realm_slug, exc)
+            logger.error("Drift/provenance check failed for realm=%s: %s", realm_slug, exc, exc_info=True)
 
         return drift_result, prov
 

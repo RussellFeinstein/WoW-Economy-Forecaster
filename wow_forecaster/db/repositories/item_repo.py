@@ -85,7 +85,8 @@ class ItemCategoryRepository(BaseRepository):
     def count(self) -> int:
         """Return total number of categories."""
         row = self.fetchone("SELECT COUNT(*) AS n FROM item_categories;")
-        assert row is not None
+        if row is None:
+            raise RuntimeError("COUNT query returned no row — unexpected SQLite state.")
         return int(row["n"])
 
 
@@ -182,7 +183,8 @@ class ItemRepository(BaseRepository):
     def count(self) -> int:
         """Return total number of registered items."""
         row = self.fetchone("SELECT COUNT(*) AS n FROM items;")
-        assert row is not None
+        if row is None:
+            raise RuntimeError("COUNT query returned no row — unexpected SQLite state.")
         return int(row["n"])
 
 

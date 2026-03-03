@@ -104,5 +104,6 @@ class BaseRepository:
             Integer rowid.
         """
         row = self.fetchone("SELECT last_insert_rowid() AS rowid;")
-        assert row is not None
+        if row is None:
+            raise RuntimeError("last_insert_rowid() returned no row — unexpected SQLite state.")
         return int(row["rowid"])

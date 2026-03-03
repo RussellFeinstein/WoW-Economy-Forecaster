@@ -128,7 +128,8 @@ def build_provenance_summary(
                 """,
                 (source, cutoff),
             ).fetchall()
-        except Exception:
+        except Exception as exc:
+            logger.warning("Provenance exact-match query failed for source=%s: %s", source, exc)
             rows_exact = []
 
         # Merge and deduplicate by fetched_at

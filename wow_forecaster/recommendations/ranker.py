@@ -39,7 +39,7 @@ from wow_forecaster.recommendations.scorer import (
 )
 
 _HORIZON_MAP: dict[str, int] = {
-    "1d": 1, "7d": 7, "14d": 14, "28d": 28, "30d": 30, "90d": 90,
+    "1d": 1, "7d": 7, "28d": 28,
 }
 
 

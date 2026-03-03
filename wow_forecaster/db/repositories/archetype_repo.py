@@ -104,7 +104,8 @@ class ArchetypeRepository(BaseRepository):
     def count(self) -> int:
         """Return total number of archetypes."""
         row = self.fetchone("SELECT COUNT(*) AS n FROM economic_archetypes;")
-        assert row is not None
+        if row is None:
+            raise RuntimeError("COUNT query returned no row — unexpected SQLite state.")
         return int(row["n"])
 
 
@@ -167,7 +168,8 @@ class ArchetypeMappingRepository(BaseRepository):
     def count(self) -> int:
         """Return total number of archetype mappings."""
         row = self.fetchone("SELECT COUNT(*) AS n FROM archetype_mappings;")
-        assert row is not None
+        if row is None:
+            raise RuntimeError("COUNT query returned no row — unexpected SQLite state.")
         return int(row["n"])
 
 

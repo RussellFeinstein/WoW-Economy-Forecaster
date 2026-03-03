@@ -186,13 +186,15 @@ class IngestionSnapshotRepository(BaseRepository):
             "SELECT COUNT(*) AS n FROM ingestion_snapshots WHERE source = ?;",
             (source,),
         )
-        assert row is not None
+        if row is None:
+            raise RuntimeError("COUNT query returned no row — unexpected SQLite state.")
         return int(row["n"])
 
     def count(self) -> int:
         """Return total number of snapshot records."""
         row = self.fetchone("SELECT COUNT(*) AS n FROM ingestion_snapshots;")
-        assert row is not None
+        if row is None:
+            raise RuntimeError("COUNT query returned no row — unexpected SQLite state.")
         return int(row["n"])
 
 

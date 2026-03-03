@@ -103,7 +103,8 @@ class WoWEventRepository(BaseRepository):
             ),
         )
         row = self.fetchone("SELECT event_id FROM wow_events WHERE slug = ?;", (event.slug,))
-        assert row is not None
+        if row is None:
+            raise RuntimeError(f"Event slug '{event.slug}' not found after insert — unexpected SQLite state.")
         return int(row["event_id"])
 
     def get_by_id(self, event_id: int) -> Optional[WoWEvent]:
@@ -186,7 +187,8 @@ class WoWEventRepository(BaseRepository):
     def count(self) -> int:
         """Return total number of events in the table."""
         row = self.fetchone("SELECT COUNT(*) AS n FROM wow_events;")
-        assert row is not None
+        if row is None:
+            raise RuntimeError("COUNT query returned no row — unexpected SQLite state.")
         return int(row["n"])
 
 

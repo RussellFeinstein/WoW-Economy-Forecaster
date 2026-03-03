@@ -141,9 +141,9 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Governance: prune-snapshots via retention.raw_snapshot_days
 
 ## Known Bugs (unfixed)
-- _HORIZON_MAP in ranker.py has dead entries "14d","30d","90d" (configured horizons are 1d/7d/28d)
-- Assertions in 9 repository methods disabled under python -O; should raise ValueError instead
-- 23 bare `except Exception` in pipeline stages catch KeyboardInterrupt/SystemExit; should re-raise
+- NormalizeStage: archetype_id always NULL in market_observations_normalized; workaround in daily_agg.py works but schema is misleading
+- Broad `except Exception` in orchestrator/pipeline stages loses stack traces when missing exc_info=True (partially fixed in v1.3.0: 4 key error paths now include exc_info)
+- Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses) — prior known-bug entry was incorrect
 
 ## Test Count
-738 tests passing (as of v1.1.0)
+738 tests passing (as of v1.3.0)

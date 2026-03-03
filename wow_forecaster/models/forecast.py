@@ -18,8 +18,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-ForecastHorizon = Literal["1d", "7d", "14d", "28d", "30d", "90d"]
-VALID_HORIZONS: frozenset[str] = frozenset({"1d", "7d", "14d", "28d", "30d", "90d"})
+ForecastHorizon = Literal["1d", "7d", "28d"]
+VALID_HORIZONS: frozenset[str] = frozenset({"1d", "7d", "28d"})
 
 RecommendationAction = Literal["buy", "sell", "hold", "avoid"]
 
