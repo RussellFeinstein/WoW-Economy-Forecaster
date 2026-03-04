@@ -92,7 +92,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - DB tables: backtest_runs, backtest_fold_results (migration 0002)
 
 ### ML + Recommendations (v0.5.0)
-- [wow_forecaster/ml/feature_selector.py](wow_forecaster/ml/feature_selector.py) — TRAINING_FEATURE_COLS (37)
+- [wow_forecaster/ml/feature_selector.py](wow_forecaster/ml/feature_selector.py) — TRAINING_FEATURE_COLS (40)
 - [wow_forecaster/ml/lgbm_model.py](wow_forecaster/ml/lgbm_model.py) — LightGBMForecaster: fit/predict/save/load; global cross-archetype model
 - ForecastHorizon: 1d/7d/28d; TARGET_COL_MAP = {1: 1d, 7: 7d, 28: 28d}
 - Score formula: 0.35×opportunity + 0.20×liquidity − 0.20×volatility + 0.15×event_boost − 0.10×uncertainty

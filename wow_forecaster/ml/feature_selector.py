@@ -105,6 +105,9 @@ TRAINING_FEATURE_COLS: list[str] = [
     "event_days_since_last",
     "event_severity_enc",
     "event_archetype_impact_enc",
+    "event_impact_magnitude",
+    "days_until_major_event",
+    "is_pre_event_window_int",
     # archetype features (encoded)
     "archetype_category_enc",
     "is_transferable_int",
@@ -149,10 +152,11 @@ def encode_row(row: dict[str, Any]) -> dict[str, Any]:
     encoded = dict(row)
 
     # Bool → int
-    encoded["event_active_int"]         = int(bool(row.get("event_active", False)))
-    encoded["is_transferable_int"]      = int(bool(row.get("is_transferable", True)))
-    encoded["is_cold_start_int"]        = int(bool(row.get("is_cold_start", False)))
-    encoded["has_transfer_mapping_int"] = int(bool(row.get("has_transfer_mapping", False)))
+    encoded["event_active_int"]          = int(bool(row.get("event_active", False)))
+    encoded["is_transferable_int"]       = int(bool(row.get("is_transferable", True)))
+    encoded["is_cold_start_int"]         = int(bool(row.get("is_cold_start", False)))
+    encoded["has_transfer_mapping_int"]  = int(bool(row.get("has_transfer_mapping", False)))
+    encoded["is_pre_event_window_int"]   = int(bool(row.get("is_pre_event_window", False)))
 
     # String → ordinal int
     encoded["event_severity_enc"]          = SEVERITY_ENCODING.get(

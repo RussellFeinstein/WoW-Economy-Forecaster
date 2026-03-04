@@ -205,8 +205,8 @@ class TestBuildFeatureMatrix:
 # ── TRAINING_FEATURE_COLS sanity ──────────────────────────────────────────────
 
 def test_training_feature_cols_count():
-    """Sanity check: TRAINING_FEATURE_COLS has the expected 37 columns."""
-    assert len(TRAINING_FEATURE_COLS) == 37
+    """Sanity check: TRAINING_FEATURE_COLS has the expected 40 columns."""
+    assert len(TRAINING_FEATURE_COLS) == 40
 
 
 def test_training_feature_cols_no_leakage():
