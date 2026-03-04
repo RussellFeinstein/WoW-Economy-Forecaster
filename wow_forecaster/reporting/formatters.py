@@ -59,6 +59,34 @@ def format_freshness_banner(
     return "\n".join(parts)
 
 
+# ── Price formatting ──────────────────────────────────────────────────────────
+
+
+def _fmt_gold(gold: float) -> str:
+    """Format a gold amount as WoW-style 'Xg Xs Xc'.
+
+    Examples:
+        66145.1  -> '66,145g 10s'
+        601.3    -> '601g 30s'
+        1.0      -> '1g 00s'
+        0.5      -> '50s'
+        0.005    -> '5c'
+    """
+    total_copper = round(gold * 10000)
+    g = total_copper // 10000
+    s = (total_copper % 10000) // 100
+    c = total_copper % 100
+    if g > 0:
+        if s > 0 or c > 0:
+            if c > 0:
+                return f"{g:,}g {s:02d}s {c:02d}c"
+            return f"{g:,}g {s:02d}s"
+        return f"{g:,}g"
+    if s > 0:
+        return f"{s}s {c:02d}c" if c > 0 else f"{s}s"
+    return f"{c}c"
+
+
 # ── Top items ─────────────────────────────────────────────────────────────────
 
 
@@ -116,7 +144,7 @@ def format_top_items_table(
         lines.append(f"  [{cat.upper()}]")
         header = (
             f"    {'Rank':>4}  {'Archetype':<30}  {'Horizon':>7}  "
-            f"{'Current':>9}  {'Predicted':>9}  {'ROI':>8}  "
+            f"{'Current':>13}  {'Predicted':>13}  {'ROI':>8}  "
             f"{'Score':>6}  {'Action':>6}"
         )
         lines.append(header)
@@ -126,15 +154,15 @@ def format_top_items_table(
             curr    = item.get("current_price", 0.0)
             pred    = item.get("predicted_price", 0.0)
             score   = item.get("score", 0.0)
-            roi_str   = f"{roi:+.1%}"    if isinstance(roi,   (int, float)) else str(roi)
-            curr_str  = f"{curr:.1f}g"   if isinstance(curr,  (int, float)) else str(curr)
-            pred_str  = f"{pred:.1f}g"   if isinstance(pred,  (int, float)) else str(pred)
-            score_str = f"{score:.1f}"   if isinstance(score, (int, float)) else str(score)
+            roi_str   = f"{roi:+.1%}"  if isinstance(roi,   (int, float)) else str(roi)
+            curr_str  = _fmt_gold(curr) if isinstance(curr,  (int, float)) else str(curr)
+            pred_str  = _fmt_gold(pred) if isinstance(pred,  (int, float)) else str(pred)
+            score_str = f"{score:.1f}" if isinstance(score, (int, float)) else str(score)
             sub_tag   = item.get("archetype_sub_tag") or str(item.get("archetype_id", ""))
             archetype = sub_tag[:30]
             lines.append(
                 f"    {item.get('rank', ''):>4}  {archetype:<30}  "
-                f"{item.get('horizon', ''):>7}  {curr_str:>9}  {pred_str:>9}  "
+                f"{item.get('horizon', ''):>7}  {curr_str:>13}  {pred_str:>13}  "
                 f"{roi_str:>8}  {score_str:>6}  {item.get('action', ''):>6}"
             )
 
@@ -143,18 +171,23 @@ def format_top_items_table(
             disc_rows = (item_discounts or {}).get(arch_id, [])
             if disc_rows:
                 lines.append(
-                    f"          {'Item':<32}  {'Price':>9}  {'vs. Mean':>9}"
+                    f"          {'Item':<32}  {'Price':>13}  {'vs. Arch':>9}"
                 )
                 for dr in disc_rows:
                     name      = str(dr.get("name", ""))[:32]
                     price     = dr.get("item_price_gold", 0.0)
                     discount  = dr.get("discount_pct", 0.0)
-                    price_str = f"{price:.1f}g"   if isinstance(price,   (int, float)) else "?"
+                    price_str = _fmt_gold(price) if isinstance(price, (int, float)) else "?"
                     disc_str  = f"{discount:+.1%}" if isinstance(discount, (int, float)) else "?"
                     lines.append(
-                        f"          {name:<32}  {price_str:>9}  {disc_str:>9}"
+                        f"          {name:<32}  {price_str:>13}  {disc_str:>9}"
                     )
 
+    lines.append("")
+    lines.append(
+        "  * Price = item's 3-day avg current price."
+        "  vs. Arch = % vs. current archetype mean (not the horizon forecast)."
+    )
     return "\n".join(lines)
 
 

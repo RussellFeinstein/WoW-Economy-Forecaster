@@ -107,7 +107,7 @@ def test_format_top_items_table_item_data() -> None:
     out = format_top_items_table(
         _SAMPLE_CATEGORIES, "area-52", "2025-01-15", True, 1.0
     )
-    assert "60.0g" in out   # predicted price
+    assert "60g" in out   # predicted price
     assert "buy" in out
     assert "hold" in out
 
