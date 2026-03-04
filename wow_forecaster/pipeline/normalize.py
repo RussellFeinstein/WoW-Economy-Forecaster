@@ -48,13 +48,47 @@ class NormalizeStage(PipelineStage):
         """
         from wow_forecaster.db.connection import get_connection
 
-        batch_size = self.config.pipeline.normalize_batch_size
+        batch_size  = self.config.pipeline.normalize_batch_size
         z_threshold = self.config.pipeline.outlier_z_threshold
-        total_normalized = 0
-
         rolling_days = self.config.pipeline.normalize_rolling_days
 
+        total_normalized = 0
+        total_processed  = 0
+
         with get_connection(self.db_path) as conn:
+            # Count pending rows upfront for X/Y progress reporting.
+            total_pending = conn.execute(
+                "SELECT COUNT(*) FROM market_observations_raw WHERE is_processed = 0;"
+            ).fetchone()[0]
+
+            if total_pending == 0:
+                logger.info("NormalizeStage: no unprocessed raw observations found.")
+                return 0
+
+            logger.info("NormalizeStage: %d raw rows pending normalization.", total_pending)
+
+            # Pre-fetch rolling stats and archetype map once for all pending items.
+            # Previously these were re-fetched per batch (~N_batches queries).
+            # The 30-day rolling window dwarfs what one ingest run adds, so a single
+            # pre-fetch produces effectively identical baselines for every batch.
+            pending_meta = conn.execute(
+                "SELECT DISTINCT item_id, realm_slug "
+                "FROM market_observations_raw WHERE is_processed = 0;"
+            ).fetchall()
+            pending_item_ids   = {row["item_id"]   for row in pending_meta}
+            pending_realm_slugs = {row["realm_slug"] for row in pending_meta}
+
+            rolling_stats = _fetch_rolling_stats(
+                conn, pending_item_ids, pending_realm_slugs, rolling_days
+            )
+            archetype_map = _fetch_archetype_map(conn, pending_item_ids)
+
+            logger.info(
+                "NormalizeStage: rolling stats for %d item/realm pairs | "
+                "archetype map: %d items.",
+                len(rolling_stats), len(archetype_map),
+            )
+
             while True:
                 batch = conn.execute(
                     """
@@ -72,13 +106,9 @@ class NormalizeStage(PipelineStage):
                 if not batch:
                     break
 
-                # Pre-fetch rolling mean/std from historical normalized data
-                item_ids   = {row["item_id"]   for row in batch}
-                realm_slugs = {row["realm_slug"] for row in batch}
-                rolling_stats = _fetch_rolling_stats(conn, item_ids, realm_slugs, rolling_days)
-
-                archetype_map = _fetch_archetype_map(conn, item_ids)
-                normalized_rows, obs_ids = _normalize_batch(batch, z_threshold, rolling_stats, archetype_map)
+                normalized_rows, obs_ids = _normalize_batch(
+                    batch, z_threshold, rolling_stats, archetype_map
+                )
 
                 # Bulk-insert normalized rows
                 conn.executemany(
@@ -110,17 +140,16 @@ class NormalizeStage(PipelineStage):
                 )
                 conn.commit()
 
+                total_processed  += len(batch)
                 total_normalized += len(normalized_rows)
+                pct = total_processed * 100 // total_pending
                 logger.info(
-                    "NormalizeStage: processed batch of %d → %d normalized rows (total: %d)",
-                    len(batch), len(normalized_rows), total_normalized,
+                    "NormalizeStage: %d / %d rows (%d%%) | normalized=%d",
+                    total_processed, total_pending, pct, total_normalized,
                 )
 
                 if len(batch) < batch_size:
                     break  # Last (partial) batch
-
-        if total_normalized == 0:
-            logger.info("NormalizeStage: no unprocessed raw observations found.")
 
         return total_normalized
 
