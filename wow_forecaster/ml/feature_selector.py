@@ -45,12 +45,11 @@ CATEGORY_ENCODING: dict[str | None, int] = {
 
 # ── Severity encoding ──────────────────────────────────────────────────────────
 SEVERITY_ENCODING: dict[str | None, int] = {
-    None:           0,
-    "minor":        1,
-    "moderate":     2,
-    "major":        3,
-    "critical":     4,
-    "catastrophic": 5,
+    None:        0,
+    "minor":     1,
+    "moderate":  2,
+    "major":     3,
+    "critical":  4,
 }
 
 # ── Impact direction encoding ──────────────────────────────────────────────────
