@@ -167,15 +167,6 @@ def load_events(db_path: str, days_ahead: int = 30) -> list[dict]:
     return rows
 
 
-def report_file_age_hours(realm: str, pattern: str, output_dir: str) -> float | None:
-    """Return file age in hours for the most-recently-modified matching file."""
-    path = _find_latest(Path(output_dir), pattern.replace("{realm}", realm))
-    if path is None:
-        return None
-    return (os.path.getmtime.__func__ if hasattr(os.path.getmtime, "__func__")
-            else os.path.getmtime)(str(path))
-
-
 def file_age_hours(realm: str, pattern: str, output_dir: str) -> float | None:
     """Return age in hours of the most-recently-modified file matching *pattern*.
 
