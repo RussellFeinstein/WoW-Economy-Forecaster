@@ -61,6 +61,20 @@ def _configure_logging(config):
     configure_logging(config.logging)
 
 
+def _load_archetype_names(db_path: str) -> dict[int, str]:
+    """Return {archetype_id: display_name} from economic_archetypes."""
+    import sqlite3 as _sqlite3
+    try:
+        conn = _sqlite3.connect(db_path)
+        rows = conn.execute(
+            "SELECT archetype_id, display_name FROM economic_archetypes;"
+        ).fetchall()
+        conn.close()
+        return {int(r[0]): r[1] for r in rows}
+    except Exception:
+        return {}
+
+
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 @app.command("init-db")
@@ -2181,6 +2195,14 @@ def report_forecasts_cmd(
         typer.echo("       Run 'wow-forecaster run-daily-forecast' first.")
         raise typer.Exit(code=0)
 
+    # Enrich records with human-readable archetype names.
+    arch_names = _load_archetype_names(config.database.db_path)
+    for r in records:
+        if "archetype_sub_tag" not in r or not r["archetype_sub_tag"]:
+            arch_id = r.get("archetype_id")
+            if arch_id is not None:
+                r["archetype_sub_tag"] = arch_names.get(int(arch_id), str(arch_id))
+
     # Freshness: use file mtime as proxy (CSV has no embedded timestamp).
     from wow_forecaster.reporting.reader import find_latest_file
     csv_path = find_latest_file(out_dir, f"forecast_{target_realm}_*.csv")
@@ -2280,6 +2302,14 @@ def report_volatility_cmd(
         )
         typer.echo("       Run 'wow-forecaster run-daily-forecast' first.")
         raise typer.Exit(code=0)
+
+    # Enrich records with human-readable archetype names.
+    arch_names = _load_archetype_names(config.database.db_path)
+    for r in records:
+        if "archetype_sub_tag" not in r or not r["archetype_sub_tag"]:
+            arch_id = r.get("archetype_id")
+            if arch_id is not None:
+                r["archetype_sub_tag"] = arch_names.get(int(arch_id), str(arch_id))
 
     csv_path = find_latest_file(out_dir, f"forecast_{target_realm}_*.csv")
     age_hours_: Optional[float] = None
