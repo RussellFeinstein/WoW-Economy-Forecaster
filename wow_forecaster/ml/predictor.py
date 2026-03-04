@@ -37,7 +37,7 @@ from wow_forecaster.models.meta import RunMetadata
 
 logger = logging.getLogger(__name__)
 
-_HORIZON_TO_STR: dict[int, str] = {1: "1d", 7: "7d", 14: "14d", 28: "28d", 30: "30d"}
+_HORIZON_TO_STR: dict[int, str] = {1: "1d", 7: "7d", 28: "28d"}
 
 
 def run_inference(
