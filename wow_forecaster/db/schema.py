@@ -5,19 +5,24 @@ All statements use ``IF NOT EXISTS`` so ``apply_schema()`` is **idempotent**:
 safe to call on an already-initialized database (e.g. after restart or in tests).
 
 Table creation order respects foreign key dependencies:
-  1. item_categories      (no FKs)
-  2. economic_archetypes  (no FKs)
-  3. items                (→ item_categories, economic_archetypes)
-  4. market_observations_raw          (→ items)
-  5. market_observations_normalized   (→ market_observations_raw, items, economic_archetypes)
-  6. archetype_mappings  (→ economic_archetypes × 2)
-  7. wow_events          (no FKs)
-  8. event_archetype_impacts (→ wow_events, economic_archetypes)
-  9. event_category_impacts  (→ wow_events; no archetype FK — uses category string)
-  10. model_metadata     (no FKs)
-  10. run_metadata        (→ model_metadata)
-  11. forecast_outputs    (→ run_metadata, economic_archetypes, items)
-  12. recommendation_outputs (→ forecast_outputs)
+   1. item_categories               (no FKs)
+   2. economic_archetypes           (no FKs)
+   3. items                         (→ item_categories, economic_archetypes)
+   4. market_observations_raw       (→ items)
+   5. market_observations_normalized (→ market_observations_raw, items, economic_archetypes)
+   6. archetype_mappings            (→ economic_archetypes × 2)
+   7. wow_events                    (no FKs)
+   8. event_archetype_impacts       (→ wow_events, economic_archetypes)
+   9. event_category_impacts        (→ wow_events; no archetype FK — uses category string)
+  10. model_metadata                (no FKs)
+  11. run_metadata                  (→ model_metadata)
+  12. forecast_outputs              (→ run_metadata, economic_archetypes, items)
+  13. recommendation_outputs        (→ forecast_outputs)
+  14. ingestion_snapshots           (no FKs)
+  15. backtest_runs                 (→ run_metadata)
+  16. backtest_fold_results         (→ backtest_runs)
+  17. drift_check_results           (no FKs)
+  18. model_health_snapshots        (no FKs)
 """
 
 from __future__ import annotations
