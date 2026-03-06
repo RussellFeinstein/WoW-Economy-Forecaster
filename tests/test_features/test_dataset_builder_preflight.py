@@ -20,6 +20,8 @@ from wow_forecaster.db.schema import apply_schema
 from wow_forecaster.features.dataset_builder import (
     _EXPECTED_INFERENCE_COLS,
     _EXPECTED_TRAINING_COLS,
+    _add_temporal_features,
+    _find_expansion_launch,
     build_datasets,
     build_parquet_schema,
 )
@@ -118,3 +120,88 @@ class TestParquetSchemaColumnCounts:
         training = build_parquet_schema(include_targets=True)
         inference = build_parquet_schema(include_targets=False)
         assert len(training) > len(inference)
+
+
+# ── _find_expansion_launch and _add_temporal_features ────────────────────────
+
+class TestFindExpansionLaunch:
+    """_find_expansion_launch must return a sorted list of all launch dates."""
+
+    def _make_event(self, event_type: str, start_date: date):
+        from types import SimpleNamespace
+        from wow_forecaster.taxonomy.event_taxonomy import EventType
+        return SimpleNamespace(
+            event_type=EventType(event_type),
+            start_date=start_date,
+        )
+
+    def test_no_expansion_events_returns_empty(self):
+        events = [self._make_event("major_patch", date(2025, 1, 1))]
+        assert _find_expansion_launch(events) == []
+
+    def test_single_expansion_launch(self):
+        events = [self._make_event("expansion_launch", date(2024, 8, 26))]
+        assert _find_expansion_launch(events) == [date(2024, 8, 26)]
+
+    def test_two_expansion_launches_sorted(self):
+        events = [
+            self._make_event("expansion_launch", date(2026, 3, 2)),
+            self._make_event("expansion_launch", date(2024, 8, 26)),
+            self._make_event("major_patch", date(2025, 2, 25)),
+        ]
+        result = _find_expansion_launch(events)
+        assert result == [date(2024, 8, 26), date(2026, 3, 2)]
+
+
+class TestAddTemporalFeaturesDaysSinceExpansion:
+    """days_since_expansion must anchor to the most recent launch <= obs_date."""
+
+    def _row(self, obs_date: date) -> dict:
+        return {"obs_date": obs_date, "other": 99}
+
+    def test_no_launches_produces_none(self):
+        rows = [self._row(date(2024, 1, 15))]
+        result = _add_temporal_features(rows, [])
+        assert result[0]["days_since_expansion"] is None
+
+    def test_single_launch_before_obs(self):
+        launch = date(2024, 8, 26)
+        obs = date(2024, 9, 5)
+        result = _add_temporal_features([self._row(obs)], [launch])
+        assert result[0]["days_since_expansion"] == (obs - launch).days  # 10
+
+    def test_obs_before_any_launch_produces_none(self):
+        result = _add_temporal_features(
+            [self._row(date(2024, 8, 25))],
+            [date(2024, 8, 26)],
+        )
+        assert result[0]["days_since_expansion"] is None
+
+    def test_obs_on_launch_day_is_zero(self):
+        launch = date(2024, 8, 26)
+        result = _add_temporal_features([self._row(launch)], [launch])
+        assert result[0]["days_since_expansion"] == 0
+
+    def test_two_expansions_anchors_to_most_recent(self):
+        """After Midnight launches, rows must anchor to Midnight, not TWW."""
+        tww = date(2024, 8, 26)
+        midnight = date(2026, 3, 2)
+        launches = [tww, midnight]
+
+        tww_obs   = date(2025, 6, 1)   # during TWW — should anchor to TWW
+        mid_obs   = date(2026, 3, 6)   # after Midnight — should anchor to Midnight
+
+        rows = [self._row(tww_obs), self._row(mid_obs)]
+        result = _add_temporal_features(rows, launches)
+
+        by_date = {r["obs_date"]: r for r in result}
+        assert by_date[tww_obs]["days_since_expansion"] == (tww_obs - tww).days
+        assert by_date[mid_obs]["days_since_expansion"] == (mid_obs - midnight).days  # 4, not 557
+
+    def test_between_expansions_anchors_to_first(self):
+        """An obs between TWW and Midnight anchors to TWW."""
+        tww = date(2024, 8, 26)
+        midnight = date(2026, 3, 2)
+        obs = date(2025, 12, 1)
+        result = _add_temporal_features([self._row(obs)], [tww, midnight])
+        assert result[0]["days_since_expansion"] == (obs - tww).days

@@ -346,14 +346,26 @@ def write_manifest(manifest: dict[str, Any], path: Path) -> None:
 
 def _add_temporal_features(
     rows: list[dict[str, Any]],
-    expansion_launch_date: date | None,
+    expansion_launch_dates: list[date],
 ) -> list[dict[str, Any]]:
-    """Add day_of_week, day_of_month, week_of_year, days_since_expansion."""
+    """Add day_of_week, day_of_month, week_of_year, days_since_expansion.
+
+    days_since_expansion is anchored to the most recent expansion launch that
+    has occurred on or before each row's obs_date.  This ensures that rows
+    after a new expansion launches (e.g. Midnight on 2026-03-02) get
+    days_since_expansion=0..N relative to *that* expansion, not the prior one.
+    """
     result: list[dict[str, Any]] = []
     for row in rows:
         d: date = row["obs_date"]
         iso = d.isocalendar()
-        days_since = (d - expansion_launch_date).days if expansion_launch_date else None
+        # Pick the most recent launch date that has already occurred by obs_date.
+        anchor: date | None = None
+        for launch in reversed(expansion_launch_dates):  # list is sorted ASC
+            if launch <= d:
+                anchor = launch
+                break
+        days_since = (d - anchor).days if anchor else None
         result.append({
             **row,
             "day_of_week":          iso[2],           # 1=Mon … 7=Sun
@@ -364,13 +376,14 @@ def _add_temporal_features(
     return result
 
 
-def _find_expansion_launch(events: Any) -> date | None:
-    """Return the start_date of the EXPANSION_LAUNCH event, or None."""
+def _find_expansion_launch(events: Any) -> list[date]:
+    """Return sorted list of start_dates for all EXPANSION_LAUNCH events."""
     from wow_forecaster.taxonomy.event_taxonomy import EventType
-    for e in events:
-        if e.event_type == EventType.EXPANSION_LAUNCH:
-            return e.start_date
-    return None
+    return sorted(
+        e.start_date
+        for e in events
+        if e.event_type == EventType.EXPANSION_LAUNCH
+    )
 
 
 # ── Main orchestrator ──────────────────────────────────────────────────────────
@@ -423,7 +436,7 @@ def build_datasets(
     cat_impacts     = load_category_impacts(conn)
     arch_meta       = load_archetype_metadata(conn, cfg_exp.active, cfg_exp.transfer_target)
     items_excluded = count_items_without_archetype(conn)
-    expansion_launch = _find_expansion_launch(events)
+    expansion_launches = _find_expansion_launch(events)
 
     total_rows = 0
 
@@ -483,7 +496,7 @@ def build_datasets(
             )
 
         # Step 7: Temporal features (pure date arithmetic).
-        final_rows = _add_temporal_features(arch_rows_out, expansion_launch)
+        final_rows = _add_temporal_features(arch_rows_out, expansion_launches)
 
         # Sort output by (archetype_id, obs_date) for deterministic output.
         final_rows.sort(key=lambda r: (r["archetype_id"], r["obs_date"]))
