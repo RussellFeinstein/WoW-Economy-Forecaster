@@ -68,6 +68,7 @@ class RecommendStage(PipelineStage):
         from wow_forecaster.recommendations.ranker import (
             build_recommendation_outputs,
             build_scored_forecasts,
+            enrich_with_item_discounts,
             top_n_per_category as rank_top_n,
         )
         from wow_forecaster.recommendations.reporter import (
@@ -129,7 +130,7 @@ class RecommendStage(PipelineStage):
             top_by_cat   = rank_top_n(scored, n=n)
             rec_outputs  = build_recommendation_outputs(top_by_cat)
 
-            # ── Persist recommendations ───────────────────────────────────────
+            # ── Persist recommendations + enrich with item-level discounts ────
             with get_connection(
                 self.db_path,
                 wal_mode=self.config.database.wal_mode,
@@ -138,6 +139,7 @@ class RecommendStage(PipelineStage):
                 repo = ForecastOutputRepository(conn)
                 for rec in rec_outputs:
                     repo.insert_recommendation(rec)
+                enrich_with_item_discounts(top_by_cat, conn)
 
             total_recs += len(rec_outputs)
 

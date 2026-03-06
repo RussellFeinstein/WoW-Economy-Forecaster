@@ -25,8 +25,9 @@ Planned improvements to top_n_per_category
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -71,6 +72,7 @@ class ScoredForecast:
     realm_slug:         str
     current_price:      float | None
     horizon_days:       int
+    item_discounts:     list = field(default_factory=list)  # list[ItemDiscountRow]
 
 
 def build_scored_forecasts(
@@ -214,6 +216,42 @@ def top_n_per_category(
         result[cat] = sorted_items[:n]
 
     return result
+
+
+def enrich_with_item_discounts(
+    top_by_category: dict[str, list[ScoredForecast]],
+    conn:            sqlite3.Connection,
+    lookback_days:   int = 3,
+    top_n:           int = 5,
+) -> None:
+    """Attach item-level discount rows to each winning ScoredForecast.
+
+    Calls fetch_item_discounts() for every ScoredForecast in *top_by_category*
+    and stores the results in ``ScoredForecast.item_discounts``.  Archetypes
+    with no current price or no recent observations are silently skipped
+    (item_discounts remains an empty list).
+
+    Args:
+        top_by_category: Output from top_n_per_category().
+        conn:            Open DB connection (row_factory = sqlite3.Row).
+        lookback_days:   Observation lookback window (default 3 days).
+        top_n:           Max items to surface per archetype (default 5).
+    """
+    from wow_forecaster.recommendations.item_overlay import fetch_item_discounts
+
+    for items in top_by_category.values():
+        for sf in items:
+            if not sf.current_price or sf.current_price <= 0:
+                continue
+            sf.item_discounts = fetch_item_discounts(
+                conn=conn,
+                archetype_id=sf.archetype_id,
+                realm_slug=sf.realm_slug,
+                archetype_mean_gold=sf.current_price,
+                action=sf.action,
+                lookback_days=lookback_days,
+                top_n=top_n,
+            )
 
 
 def build_recommendation_outputs(

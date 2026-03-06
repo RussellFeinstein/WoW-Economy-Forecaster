@@ -116,7 +116,8 @@ def write_recommendation_csv(
 
     fieldnames = [
         "rank", "category", "archetype_id", "realm_slug", "horizon",
-        "current_price", "predicted_price", "roi_pct", "score", "action", "reasoning",
+        "current_price", "predicted_price", "roi_pct", "score", "action",
+        "top_items", "reasoning",
     ]
 
     with csv_path.open("w", newline="", encoding="utf-8") as f:
@@ -127,6 +128,10 @@ def write_recommendation_csv(
                 roi_pct = (
                     f"{sf.components.roi:+.2%}"
                     if sf.components.roi is not None else ""
+                )
+                top_items = "|".join(
+                    f"{dr.name} ({dr.discount_pct:+.1%})"
+                    for dr in sf.item_discounts
                 )
                 writer.writerow(
                     {
@@ -140,6 +145,7 @@ def write_recommendation_csv(
                         "roi_pct":        roi_pct,
                         "score":          sf.score,
                         "action":         sf.action,
+                        "top_items":      top_items,
                         "reasoning":      sf.reasoning,
                     }
                 )
@@ -207,6 +213,16 @@ def write_recommendation_json(
                     "uncertainty":   sf.components.uncertainty_penalty,
                 },
                 "model_slug":      sf.forecast.model_slug,
+                "recommended_items": [
+                    {
+                        "item_id":         dr.item_id,
+                        "name":            dr.name,
+                        "item_price_gold": round(dr.item_price_gold, 2),
+                        "discount_pct":    round(dr.discount_pct, 4),
+                        "obs_count":       dr.obs_count,
+                    }
+                    for dr in sf.item_discounts
+                ],
             }
             for rank, sf in enumerate(items, start=1)
         ]

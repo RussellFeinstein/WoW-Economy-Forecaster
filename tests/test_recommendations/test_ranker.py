@@ -38,8 +38,12 @@ from wow_forecaster.recommendations.ranker import (
     ScoredForecast,
     build_recommendation_outputs,
     build_scored_forecasts,
+    enrich_with_item_discounts,
     top_n_per_category,
 )
+import sqlite3
+
+from wow_forecaster.recommendations.item_overlay import ItemDiscountRow
 from wow_forecaster.recommendations.scorer import ScoreComponents
 
 
@@ -409,3 +413,150 @@ class TestBuildRecommendationOutputs:
         assert len(result) == 2
         cats = {r.category_tag for r in result}
         assert cats == {"consumable", "mat"}
+
+
+# ── enrich_with_item_discounts ────────────────────────────────────────────────
+
+def _make_overlay_db() -> sqlite3.Connection:
+    """In-memory DB with minimal schema for item overlay enrichment tests."""
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA foreign_keys = OFF;")
+    db.executescript("""
+        CREATE TABLE items (
+            item_id      INTEGER PRIMARY KEY,
+            name         TEXT NOT NULL,
+            archetype_id INTEGER,
+            category_id  INTEGER NOT NULL DEFAULT 1,
+            expansion_slug TEXT NOT NULL DEFAULT 'tww',
+            quality      TEXT NOT NULL DEFAULT 'common',
+            is_crafted   INTEGER NOT NULL DEFAULT 0,
+            is_boe       INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE market_observations_normalized (
+            norm_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            obs_id       INTEGER NOT NULL DEFAULT 1,
+            item_id      INTEGER NOT NULL,
+            archetype_id INTEGER,
+            realm_slug   TEXT NOT NULL,
+            faction      TEXT NOT NULL DEFAULT 'neutral',
+            observed_at  TEXT NOT NULL,
+            price_gold   REAL NOT NULL,
+            quantity_listed INTEGER,
+            num_auctions INTEGER,
+            z_score      REAL,
+            is_outlier   INTEGER NOT NULL DEFAULT 0,
+            normalized_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+    """)
+    db.commit()
+    return db
+
+
+def _insert_item_and_obs(
+    conn: sqlite3.Connection,
+    item_id: int,
+    name: str,
+    archetype_id: int,
+    realm_slug: str,
+    price_gold: float,
+) -> None:
+    conn.execute(
+        "INSERT INTO items(item_id, name, archetype_id) VALUES (?,?,?)",
+        (item_id, name, archetype_id),
+    )
+    conn.execute(
+        """INSERT INTO market_observations_normalized
+           (item_id, realm_slug, price_gold, observed_at, is_outlier)
+           VALUES (?,?,?,datetime('now'),0)""",
+        (item_id, realm_slug, price_gold),
+    )
+    conn.commit()
+
+
+class TestEnrichWithItemDiscounts:
+    """enrich_with_item_discounts() mutates ScoredForecast.item_discounts in-place."""
+
+    def test_empty_top_by_category_no_error(self):
+        conn = _make_overlay_db()
+        enrich_with_item_discounts({}, conn)  # should not raise
+
+    def test_items_attached_for_winning_archetype(self):
+        conn = _make_overlay_db()
+        _insert_item_and_obs(conn, 1, "Herb A", archetype_id=1, realm_slug="area-52", price_gold=80.0)
+        _insert_item_and_obs(conn, 2, "Herb B", archetype_id=1, realm_slug="area-52", price_gold=70.0)
+
+        sf = _scored_forecast(archetype_id=1, action="buy", forecast_id=1)
+        sf.realm_slug = "area-52"
+        sf.current_price = 100.0
+
+        enrich_with_item_discounts({"consumable": [sf]}, conn)
+
+        assert len(sf.item_discounts) == 2
+        assert all(isinstance(d, ItemDiscountRow) for d in sf.item_discounts)
+
+    def test_buy_items_ordered_most_underpriced_first(self):
+        conn = _make_overlay_db()
+        # 60g = 40% under mean; 80g = 20% under mean
+        _insert_item_and_obs(conn, 1, "Cheap", archetype_id=1, realm_slug="area-52", price_gold=60.0)
+        _insert_item_and_obs(conn, 2, "Mid",   archetype_id=1, realm_slug="area-52", price_gold=80.0)
+
+        sf = _scored_forecast(archetype_id=1, action="buy", forecast_id=1)
+        sf.realm_slug = "area-52"
+        sf.current_price = 100.0
+
+        enrich_with_item_discounts({"consumable": [sf]}, conn)
+
+        assert sf.item_discounts[0].name == "Cheap"   # most underpriced first
+
+    def test_zero_current_price_skipped(self):
+        conn = _make_overlay_db()
+        _insert_item_and_obs(conn, 1, "Herb A", archetype_id=1, realm_slug="area-52", price_gold=80.0)
+
+        sf = _scored_forecast(archetype_id=1, action="buy", forecast_id=1)
+        sf.realm_slug = "area-52"
+        sf.current_price = 0.0
+
+        enrich_with_item_discounts({"consumable": [sf]}, conn)
+
+        assert sf.item_discounts == []
+
+    def test_none_current_price_skipped(self):
+        conn = _make_overlay_db()
+        sf = _scored_forecast(archetype_id=1, action="buy", forecast_id=1)
+        sf.realm_slug = "area-52"
+        sf.current_price = None
+
+        enrich_with_item_discounts({"consumable": [sf]}, conn)
+
+        assert sf.item_discounts == []
+
+    def test_no_observations_leaves_empty_list(self):
+        conn = _make_overlay_db()
+        sf = _scored_forecast(archetype_id=99, action="buy", forecast_id=1)
+        sf.realm_slug = "area-52"
+        sf.current_price = 100.0
+
+        enrich_with_item_discounts({"consumable": [sf]}, conn)
+
+        assert sf.item_discounts == []
+
+    def test_multiple_categories_all_enriched(self):
+        conn = _make_overlay_db()
+        _insert_item_and_obs(conn, 1, "Flask A", archetype_id=1, realm_slug="area-52", price_gold=90.0)
+        _insert_item_and_obs(conn, 2, "Ore B",   archetype_id=2, realm_slug="area-52", price_gold=50.0)
+
+        sf1 = _scored_forecast(archetype_id=1, action="buy", forecast_id=1)
+        sf1.realm_slug = "area-52"
+        sf1.current_price = 100.0
+
+        sf2 = _scored_forecast(archetype_id=2, action="buy", forecast_id=2)
+        sf2.realm_slug = "area-52"
+        sf2.current_price = 100.0
+
+        enrich_with_item_discounts({"consumable": [sf1], "mat": [sf2]}, conn)
+
+        assert len(sf1.item_discounts) == 1
+        assert sf1.item_discounts[0].name == "Flask A"
+        assert len(sf2.item_discounts) == 1
+        assert sf2.item_discounts[0].name == "Ore B"
