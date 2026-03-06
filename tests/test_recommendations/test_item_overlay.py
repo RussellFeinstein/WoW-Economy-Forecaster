@@ -286,3 +286,59 @@ class TestFetchItemDiscounts:
         rows = fetch_item_discounts(conn, archetype_id=1, realm_slug="us",
                                     archetype_mean_gold=100.0)
         assert rows[0].item_price_gold == pytest.approx(80.0)  # (60+80+100)/3
+
+
+class TestPriceZScore:
+    """price_z_score = (archetype_mean - item_price) / population_std of all item prices."""
+
+    def test_single_item_z_score_is_zero(self, conn):
+        # Only one item → std=0 → z_score fallback 0.0
+        _insert_item(conn, 1, "Herb A", archetype_id=1)
+        _insert_obs(conn, 1, "us", 70.0, _now_iso())
+        conn.commit()
+
+        rows = fetch_item_discounts(conn, archetype_id=1, realm_slug="us",
+                                    archetype_mean_gold=100.0)
+        assert rows[0].price_z_score == 0.0
+
+    def test_two_items_z_scores_opposite_sign(self, conn):
+        # Item A at 60g (below mean), Item B at 140g (above mean)
+        # archetype_mean = 100g
+        # deviations from mean: 40g and -40g → std = 40g
+        # z_score A = (100 - 60) / 40 = +1.0  (underpriced)
+        # z_score B = (100 - 140) / 40 = -1.0  (overpriced)
+        _insert_item(conn, 1, "Cheap", archetype_id=1)
+        _insert_item(conn, 2, "Pricey", archetype_id=1)
+        _insert_obs(conn, 1, "us",  60.0, _now_iso())
+        _insert_obs(conn, 2, "us", 140.0, _now_iso())
+        conn.commit()
+
+        rows = fetch_item_discounts(conn, archetype_id=1, realm_slug="us",
+                                    archetype_mean_gold=100.0, action="buy")
+        cheap  = next(r for r in rows if r.item_id == 1)
+        pricey = next(r for r in rows if r.item_id == 2)
+        assert cheap.price_z_score  == pytest.approx(+1.0)
+        assert pricey.price_z_score == pytest.approx(-1.0)
+
+    def test_item_at_mean_has_zero_z_score(self, conn):
+        _insert_item(conn, 1, "At Mean",  archetype_id=1)
+        _insert_item(conn, 2, "Off Mean", archetype_id=1)
+        _insert_obs(conn, 1, "us", 100.0, _now_iso())
+        _insert_obs(conn, 2, "us",  80.0, _now_iso())
+        conn.commit()
+
+        rows = fetch_item_discounts(conn, archetype_id=1, realm_slug="us",
+                                    archetype_mean_gold=100.0, action="hold")
+        at_mean = next(r for r in rows if r.item_id == 1)
+        assert at_mean.price_z_score == pytest.approx(0.0)
+
+    def test_z_score_field_present_on_all_rows(self, conn):
+        for item_id, price in [(1, 50.0), (2, 100.0), (3, 150.0)]:
+            _insert_item(conn, item_id, f"Item {item_id}", archetype_id=1)
+            _insert_obs(conn, item_id, "us", price, _now_iso())
+        conn.commit()
+
+        rows = fetch_item_discounts(conn, archetype_id=1, realm_slug="us",
+                                    archetype_mean_gold=100.0)
+        assert all(hasattr(r, "price_z_score") for r in rows)
+        assert all(isinstance(r.price_z_score, float) for r in rows)

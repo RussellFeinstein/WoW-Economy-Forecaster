@@ -219,6 +219,7 @@ def write_recommendation_json(
                         "name":            dr.name,
                         "item_price_gold": round(dr.item_price_gold, 2),
                         "discount_pct":    round(dr.discount_pct, 4),
+                        "price_z_score":   dr.price_z_score,
                         "obs_count":       dr.obs_count,
                     }
                     for dr in sf.item_discounts

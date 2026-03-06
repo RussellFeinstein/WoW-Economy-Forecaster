@@ -80,8 +80,9 @@ def flatten_recommendations_for_export(recs_json: dict) -> list[dict]:
     - ``sc_opportunity``, ``sc_liquidity``, ``sc_volatility``,
       ``sc_event_boost``, ``sc_uncertainty`` (score components)
     - ``model_slug``
-    - ``top_item_names``, ``top_item_prices``, ``top_item_discounts``
-      (pipe-delimited item-level data; empty string when no items available)
+    - ``top_item_names``, ``top_item_prices``, ``top_item_discounts``,
+      ``top_item_z_scores`` (pipe-delimited item-level data; empty string when
+      no items available)
 
     Args:
         recs_json: Parsed ``recommendations_{realm}_{date}.json`` dict.
@@ -134,6 +135,12 @@ def flatten_recommendations_for_export(recs_json: dict) -> list[dict]:
                     "top_item_discounts": "|".join(
                         f"{d['discount_pct']:+.1%}"
                         if isinstance(d.get("discount_pct"), (int, float))
+                        else ""
+                        for d in rec_items
+                    ),
+                    "top_item_z_scores":  "|".join(
+                        f"{d['price_z_score']:+.2f}"
+                        if isinstance(d.get("price_z_score"), (int, float))
                         else ""
                         for d in rec_items
                     ),

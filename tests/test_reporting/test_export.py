@@ -222,6 +222,7 @@ def test_flatten_recommendations_all_expected_columns() -> None:
         "sc_opportunity", "sc_liquidity", "sc_volatility",
         "sc_event_boost", "sc_uncertainty", "model_slug",
         "top_item_names", "top_item_prices", "top_item_discounts",
+        "top_item_z_scores",
     }
     rows = flatten_recommendations_for_export(_RECS_JSON)
     for row in rows:
@@ -321,8 +322,8 @@ _RECS_JSON_WITH_ITEMS = {
                 },
                 "model_slug": "lgbm_v1",
                 "recommended_items": [
-                    {"item_id": 10, "name": "Ore A",  "item_price_gold": 80.0,  "discount_pct": 0.20,  "obs_count": 5},
-                    {"item_id": 11, "name": "Ore B",  "item_price_gold": 90.0,  "discount_pct": 0.10,  "obs_count": 3},
+                    {"item_id": 10, "name": "Ore A",  "item_price_gold": 80.0,  "discount_pct": 0.20,  "price_z_score":  1.0,  "obs_count": 5},
+                    {"item_id": 11, "name": "Ore B",  "item_price_gold": 90.0,  "discount_pct": 0.10,  "price_z_score":  0.5,  "obs_count": 3},
                 ],
             }
         ],
@@ -355,6 +356,19 @@ def test_flatten_recommendations_item_discounts_pipe_delimited() -> None:
     """top_item_discounts is pipe-delimited formatted discount percentages."""
     rows = flatten_recommendations_for_export(_RECS_JSON_WITH_ITEMS)
     assert rows[0]["top_item_discounts"] == "+20.0%|+10.0%"
+
+
+def test_flatten_recommendations_item_z_scores_pipe_delimited() -> None:
+    """top_item_z_scores is pipe-delimited formatted z-score values."""
+    rows = flatten_recommendations_for_export(_RECS_JSON_WITH_ITEMS)
+    assert rows[0]["top_item_z_scores"] == "+1.00|+0.50"
+
+
+def test_flatten_recommendations_z_scores_empty_when_no_items() -> None:
+    """top_item_z_scores is empty string when no recommended_items present."""
+    rows = flatten_recommendations_for_export(_RECS_JSON)
+    for row in rows:
+        assert row["top_item_z_scores"] == ""
 
 
 def test_flatten_recommendations_single_item_no_pipe() -> None:

@@ -24,6 +24,7 @@ or when archetype_mean_gold <= 0.
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from dataclasses import dataclass
 
@@ -39,6 +40,10 @@ class ItemDiscountRow:
         discount_pct:    Fractional deviation from archetype mean.
                          Positive = underpriced, negative = overpriced.
         obs_count:       Number of observations used to compute item_price_gold.
+        price_z_score:   Standard deviations from archetype mean, using the
+                         population std of all items in the archetype window.
+                         Negative = overpriced; positive = underpriced.
+                         0.0 when fewer than two items exist in the window.
     """
 
     item_id:         int
@@ -46,6 +51,7 @@ class ItemDiscountRow:
     item_price_gold: float
     discount_pct:    float
     obs_count:       int
+    price_z_score:   float = 0.0
 
 
 def fetch_item_discounts(
@@ -109,10 +115,19 @@ def fetch_item_discounts(
     if not rows:
         return []
 
+    # Pre-compute population std of all item prices for z-score normalisation.
+    all_prices = [float(r["item_price_gold"] or 0.0) for r in rows]
+    if len(all_prices) > 1:
+        variance = sum((p - archetype_mean_gold) ** 2 for p in all_prices) / len(all_prices)
+        price_std = math.sqrt(variance)
+    else:
+        price_std = 0.0
+
     results: list[ItemDiscountRow] = []
     for row in rows:
-        item_price = float(row["item_price_gold"] or 0.0)
-        discount   = (archetype_mean_gold - item_price) / archetype_mean_gold
+        item_price  = float(row["item_price_gold"] or 0.0)
+        discount    = (archetype_mean_gold - item_price) / archetype_mean_gold
+        z_score     = round((archetype_mean_gold - item_price) / price_std, 3) if price_std > 0 else 0.0
         results.append(
             ItemDiscountRow(
                 item_id         = row["item_id"],
@@ -120,6 +135,7 @@ def fetch_item_discounts(
                 item_price_gold = item_price,
                 discount_pct    = discount,
                 obs_count       = row["obs_count"],
+                price_z_score   = z_score,
             )
         )
 
