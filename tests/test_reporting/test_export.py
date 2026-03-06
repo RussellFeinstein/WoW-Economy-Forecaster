@@ -221,6 +221,7 @@ def test_flatten_recommendations_all_expected_columns() -> None:
         "roi_pct", "score", "action", "reasoning",
         "sc_opportunity", "sc_liquidity", "sc_volatility",
         "sc_event_boost", "sc_uncertainty", "model_slug",
+        "top_item_names", "top_item_prices", "top_item_discounts",
     }
     rows = flatten_recommendations_for_export(_RECS_JSON)
     for row in rows:
@@ -290,3 +291,90 @@ def test_flatten_forecast_records_preserves_original_keys() -> None:
     assert result[0]["archetype_id"] == "ore"
     assert result[0]["score"] == "70"
     assert "ci_width_gold" in result[0]
+
+
+# ── flatten_recommendations_for_export — item columns ─────────────────────────
+
+_RECS_JSON_WITH_ITEMS = {
+    "schema_version": "v0.5.0",
+    "realm_slug":     "area-52",
+    "generated_at":   "2025-01-15",
+    "run_slug":       "run-abc123",
+    "categories": {
+        "mat": [
+            {
+                "rank":            1,
+                "archetype_id":    1,
+                "horizon":         "7d",
+                "target_date":     "2025-01-22",
+                "current_price":   100.0,
+                "predicted_price": 120.0,
+                "ci_lower":        110.0,
+                "ci_upper":        130.0,
+                "roi_pct":         0.20,
+                "score":           60.0,
+                "action":          "buy",
+                "reasoning":       "Upward forecast.",
+                "score_components": {
+                    "opportunity": 0.80, "liquidity": 0.60,
+                    "volatility": 0.10, "event_boost": 0.0, "uncertainty": 0.10,
+                },
+                "model_slug": "lgbm_v1",
+                "recommended_items": [
+                    {"item_id": 10, "name": "Ore A",  "item_price_gold": 80.0,  "discount_pct": 0.20,  "obs_count": 5},
+                    {"item_id": 11, "name": "Ore B",  "item_price_gold": 90.0,  "discount_pct": 0.10,  "obs_count": 3},
+                ],
+            }
+        ],
+    },
+}
+
+
+def test_flatten_recommendations_no_items_gives_empty_strings() -> None:
+    """When recommended_items is absent, item columns are empty strings."""
+    rows = flatten_recommendations_for_export(_RECS_JSON)
+    for row in rows:
+        assert row["top_item_names"]     == ""
+        assert row["top_item_prices"]    == ""
+        assert row["top_item_discounts"] == ""
+
+
+def test_flatten_recommendations_item_names_pipe_delimited() -> None:
+    """top_item_names is pipe-delimited item names in order."""
+    rows = flatten_recommendations_for_export(_RECS_JSON_WITH_ITEMS)
+    assert rows[0]["top_item_names"] == "Ore A|Ore B"
+
+
+def test_flatten_recommendations_item_prices_pipe_delimited() -> None:
+    """top_item_prices is pipe-delimited rounded prices."""
+    rows = flatten_recommendations_for_export(_RECS_JSON_WITH_ITEMS)
+    assert rows[0]["top_item_prices"] == "80.0|90.0"
+
+
+def test_flatten_recommendations_item_discounts_pipe_delimited() -> None:
+    """top_item_discounts is pipe-delimited formatted discount percentages."""
+    rows = flatten_recommendations_for_export(_RECS_JSON_WITH_ITEMS)
+    assert rows[0]["top_item_discounts"] == "+20.0%|+10.0%"
+
+
+def test_flatten_recommendations_single_item_no_pipe() -> None:
+    """Single item produces no pipe character in the output columns."""
+    recs = {
+        "realm_slug": "us", "generated_at": "", "run_slug": "",
+        "categories": {
+            "mat": [{
+                "rank": 1, "archetype_id": 1, "horizon": "1d",
+                "target_date": "2025-01-16", "current_price": 100.0,
+                "predicted_price": 110.0, "ci_lower": 105.0, "ci_upper": 115.0,
+                "roi_pct": 0.10, "score": 50.0, "action": "buy", "reasoning": "",
+                "score_components": {"opportunity": 0, "liquidity": 0, "volatility": 0, "event_boost": 0, "uncertainty": 0},
+                "model_slug": "lgbm_v1",
+                "recommended_items": [
+                    {"item_id": 1, "name": "Solo Item", "item_price_gold": 95.0, "discount_pct": 0.05, "obs_count": 2}
+                ],
+            }],
+        },
+    }
+    rows = flatten_recommendations_for_export(recs)
+    assert "|" not in rows[0]["top_item_names"]
+    assert rows[0]["top_item_names"] == "Solo Item"

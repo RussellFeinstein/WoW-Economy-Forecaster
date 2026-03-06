@@ -80,6 +80,8 @@ def flatten_recommendations_for_export(recs_json: dict) -> list[dict]:
     - ``sc_opportunity``, ``sc_liquidity``, ``sc_volatility``,
       ``sc_event_boost``, ``sc_uncertainty`` (score components)
     - ``model_slug``
+    - ``top_item_names``, ``top_item_prices``, ``top_item_discounts``
+      (pipe-delimited item-level data; empty string when no items available)
 
     Args:
         recs_json: Parsed ``recommendations_{realm}_{date}.json`` dict.
@@ -94,7 +96,8 @@ def flatten_recommendations_for_export(recs_json: dict) -> list[dict]:
 
     for cat, items in recs_json.get("categories", {}).items():
         for item in items:
-            comps = item.get("score_components", {})
+            comps     = item.get("score_components", {})
+            rec_items = item.get("recommended_items", [])
             rows.append(
                 {
                     "realm_slug":      realm,
@@ -119,6 +122,21 @@ def flatten_recommendations_for_export(recs_json: dict) -> list[dict]:
                     "sc_event_boost":  comps.get("event_boost", ""),
                     "sc_uncertainty":  comps.get("uncertainty", ""),
                     "model_slug":      item.get("model_slug", ""),
+                    "top_item_names":     "|".join(
+                        d.get("name", "") for d in rec_items
+                    ),
+                    "top_item_prices":    "|".join(
+                        str(round(d["item_price_gold"], 2))
+                        if isinstance(d.get("item_price_gold"), (int, float))
+                        else ""
+                        for d in rec_items
+                    ),
+                    "top_item_discounts": "|".join(
+                        f"{d['discount_pct']:+.1%}"
+                        if isinstance(d.get("discount_pct"), (int, float))
+                        else ""
+                        for d in rec_items
+                    ),
                 }
             )
 
