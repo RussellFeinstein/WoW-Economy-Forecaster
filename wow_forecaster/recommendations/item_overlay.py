@@ -63,6 +63,7 @@ def fetch_item_discounts(
     lookback_days:       int = 3,
     top_n:               int = 5,
     min_obs:             int = 1,
+    expansion_slug:      str | None = None,
 ) -> list[ItemDiscountRow]:
     """Return top-N items within an archetype ranked by discount from archetype mean.
 
@@ -79,6 +80,10 @@ def fetch_item_discounts(
         lookback_days:       Days of history to include (default 3).
         top_n:               Max items to return (default 5).
         min_obs:             Min observation count required to include an item.
+        expansion_slug:      If provided, only items with this expansion_slug are
+                             returned.  Pass ``config.expansions.transfer_target``
+                             (e.g. ``"midnight"``) to restrict the overlay to the
+                             forecast-target expansion.  ``None`` = no filter.
 
     Returns:
         Ranked list of ItemDiscountRow.  Empty if no data or mean <= 0.
@@ -98,6 +103,7 @@ def fetch_item_discounts(
           AND n.realm_slug    = :realm_slug
           AND n.is_outlier    = 0
           AND n.observed_at   >= datetime('now', :since)
+          AND (:expansion_slug IS NULL OR i.expansion_slug = :expansion_slug)
         GROUP BY i.item_id, i.name
         HAVING COUNT(*) >= :min_obs
     """
@@ -105,10 +111,11 @@ def fetch_item_discounts(
     rows = conn.execute(
         sql,
         {
-            "archetype_id": archetype_id,
-            "realm_slug":   realm_slug,
-            "since":        f"-{lookback_days} days",
-            "min_obs":      min_obs,
+            "archetype_id":   archetype_id,
+            "realm_slug":     realm_slug,
+            "since":          f"-{lookback_days} days",
+            "min_obs":        min_obs,
+            "expansion_slug": expansion_slug,
         },
     ).fetchall()
 

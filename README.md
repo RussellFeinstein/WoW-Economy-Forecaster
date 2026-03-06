@@ -106,7 +106,7 @@ tests/
 | ML | **LightGBM** | Fast training, handles mixed types, interpretable feature importances |
 | HTTP | **httpx** | Async-capable, used for Blizzard OAuth2 + API calls |
 | Reporting | **CLI-first + optional Streamlit** | Terminal reports work headlessly; Streamlit is zero-cost when not needed |
-| Tests | **pytest** | Standard; 884 tests across 16 groups |
+| Tests | **pytest** | Standard; 886 tests across 16 groups |
 
 ### Transfer Learning Architecture
 
@@ -263,7 +263,7 @@ Every report prints a `[FRESH]` or `[STALE]` banner so you can judge data curren
 
 ```bash
 # Top-N buy/sell/hold recommendations per category
-wow-forecaster report-top-items    [--realm SLUG] [--horizon 1d|7d|28d] [--export PATH]
+wow-forecaster report-top-items    [--realm SLUG] [--horizon 1d|7d|28d] [--expansion SLUG] [--export PATH]
 
 # Full forecast summary sorted by score
 wow-forecaster report-forecasts    [--realm SLUG] [--horizon HORIZ] [--top-n N] [--export PATH]
@@ -382,7 +382,7 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 884 tests
+# All 886 tests
 pytest
 
 # With coverage

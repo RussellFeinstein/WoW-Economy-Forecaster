@@ -1980,6 +1980,14 @@ def report_top_items_cmd(
         "--top-items",
         help="Max specific items to show under each archetype recommendation.",
     ),
+    expansion: Optional[str] = typer.Option(
+        None,
+        "--expansion",
+        help=(
+            "Restrict per-item overlay to this expansion slug "
+            "(e.g. 'midnight', 'tww'). Defaults to config transfer_target."
+        ),
+    ),
     db_path: Optional[str] = typer.Option(
         None,
         "--db-path",
@@ -2033,8 +2041,9 @@ def report_top_items_cmd(
     config = _load_config_or_exit(config_path)
     _configure_logging(config)
 
-    target_realm = realm or config.realms.defaults[0]
-    out_dir      = _Path(config.model.recommendation_output_dir)
+    target_realm      = realm or config.realms.defaults[0]
+    out_dir           = _Path(config.model.recommendation_output_dir)
+    target_expansion  = expansion or config.expansions.transfer_target
 
     recs = load_recommendations_report(target_realm, out_dir)
     if recs is None:
@@ -2081,6 +2090,7 @@ def report_top_items_cmd(
                         action              = action,
                         lookback_days       = item_lookback_days,
                         top_n               = top_items_per_arch,
+                        expansion_slug      = target_expansion,
                     )
                     if rows:
                         item_discounts[arch_id] = [

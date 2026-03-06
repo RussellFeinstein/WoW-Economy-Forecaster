@@ -75,10 +75,16 @@ def _now_iso(delta_days: int = 0) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _insert_item(conn: sqlite3.Connection, item_id: int, name: str, archetype_id: int) -> None:
+def _insert_item(
+    conn: sqlite3.Connection,
+    item_id: int,
+    name: str,
+    archetype_id: int,
+    expansion_slug: str = "tww",
+) -> None:
     conn.execute(
-        "INSERT INTO items(item_id, name, archetype_id) VALUES (?,?,?)",
-        (item_id, name, archetype_id),
+        "INSERT INTO items(item_id, name, archetype_id, expansion_slug) VALUES (?,?,?,?)",
+        (item_id, name, archetype_id, expansion_slug),
     )
 
 
@@ -266,6 +272,32 @@ class TestFetchItemDiscounts:
         rows = fetch_item_discounts(conn, archetype_id=1, realm_slug="us",
                                     archetype_mean_gold=100.0)
         assert rows == []
+
+    def test_expansion_slug_filter_excludes_other_expansions(self, conn):
+        # TWW item and Midnight item in the same archetype.
+        # Filtering by "midnight" should return only the Midnight item.
+        _insert_item(conn, 1, "TWW Flask",      archetype_id=1, expansion_slug="tww")
+        _insert_item(conn, 2, "Midnight Flask", archetype_id=1, expansion_slug="midnight")
+        _insert_obs(conn, 1, "us", 80.0, _now_iso())
+        _insert_obs(conn, 2, "us", 80.0, _now_iso())
+        conn.commit()
+
+        rows = fetch_item_discounts(conn, archetype_id=1, realm_slug="us",
+                                    archetype_mean_gold=100.0, expansion_slug="midnight")
+        assert len(rows) == 1
+        assert rows[0].name == "Midnight Flask"
+
+    def test_expansion_slug_none_returns_all_expansions(self, conn):
+        # No filter (None) returns items from any expansion.
+        _insert_item(conn, 1, "TWW Flask",      archetype_id=1, expansion_slug="tww")
+        _insert_item(conn, 2, "Midnight Flask", archetype_id=1, expansion_slug="midnight")
+        _insert_obs(conn, 1, "us", 80.0, _now_iso())
+        _insert_obs(conn, 2, "us", 80.0, _now_iso())
+        conn.commit()
+
+        rows = fetch_item_discounts(conn, archetype_id=1, realm_slug="us",
+                                    archetype_mean_gold=100.0, expansion_slug=None)
+        assert len(rows) == 2
 
     def test_obs_count_reported(self, conn):
         _insert_item(conn, 1, "Herb A", archetype_id=1)
