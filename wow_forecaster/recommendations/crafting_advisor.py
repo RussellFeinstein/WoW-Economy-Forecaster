@@ -531,11 +531,12 @@ def _fetch_latest_item_price(
     realm_slug: str,
     run_date: date,
 ) -> float | None:
-    """Fetch 7-day mean price for an item (rolling fallback)."""
+    """Fetch 7-day quantity-weighted mean price for an item (rolling fallback)."""
     start = (run_date - timedelta(days=6)).isoformat()
     row = conn.execute(
         """
-        SELECT AVG(price_gold)
+        SELECT SUM(price_gold * COALESCE(quantity_listed, 1))
+                   / NULLIF(SUM(COALESCE(quantity_listed, 1)), 0)
         FROM market_observations_normalized
         WHERE item_id = ? AND realm_slug = ? AND is_outlier = 0
           AND DATE(observed_at) BETWEEN ? AND ?

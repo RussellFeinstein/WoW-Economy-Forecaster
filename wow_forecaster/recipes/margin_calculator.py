@@ -181,7 +181,11 @@ class MarginCalculator:
     def _fetch_prices(
         self, realm_slug: str, start_date: date, end_date: date
     ) -> dict[int, dict[str, float]]:
-        """Fetch mean daily prices for all items in the date range.
+        """Fetch quantity-weighted mean daily prices for all items in the date range.
+
+        Uses SUM(price * qty) / SUM(qty) so high-priced wall listings with tiny
+        quantity (e.g. 5 units at 49,997g) cannot dominate the average over
+        hundreds of units priced at market rate.
 
         Returns dict: item_id -> {date_str: avg_price_gold}.
         """
@@ -190,7 +194,8 @@ class MarginCalculator:
             SELECT
                 item_id,
                 DATE(observed_at) AS obs_date,
-                AVG(price_gold)   AS avg_price
+                SUM(price_gold * COALESCE(quantity_listed, 1))
+                    / NULLIF(SUM(COALESCE(quantity_listed, 1)), 0) AS avg_price
             FROM market_observations_normalized
             WHERE realm_slug = ?
               AND is_outlier  = 0
