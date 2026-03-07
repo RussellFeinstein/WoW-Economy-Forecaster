@@ -23,6 +23,7 @@ Uses historical data from **The War Within (TWW)** to learn economy patterns, th
 | v0.9.0 — Seed Events | 28 TWW seed events, category-level impact records | Complete |
 | v1.0.0 — Automation | Scheduler daemon, Windows Task Scheduler integration | Complete |
 | v1.1.0 — Normalization | Rolling z-score normalization with cold-start fallback | Complete |
+| v1.5.0 — Crafting Advisor | Recipe seeder, margin compression/expansion, 6-window temporal analysis | Complete |
 
 ---
 
@@ -32,7 +33,7 @@ Uses historical data from **The War Within (TWW)** to learn economy patterns, th
 wow_forecaster/
 ├── taxonomy/        # Pure enums: EventType, ArchetypeCategory, ArchetypeTag
 ├── models/          # Pydantic v2 domain models (frozen/immutable value objects)
-├── db/              # SQLite: connection, schema DDL (18 tables), migrations, repos
+├── db/              # SQLite: connection, schema DDL (21 tables), migrations, repos
 ├── pipeline/        # 7 stages: ingest, normalize, feature_build, train,
 │                    #           forecast, recommend, orchestrator (backtest separate)
 ├── ingestion/       # Blizzard live client, snapshot writer, item bootstrapper,
@@ -41,13 +42,15 @@ wow_forecaster/
 │                    # dataset builder → 48-col training / 45-col inference Parquet
 ├── backtest/        # Walk-forward splits, baseline models, metrics, reporter
 ├── ml/              # LightGBM: feature selector (37 cols), trainer, predictor
+├── recipes/         # Blizzard recipe client, seeder, repo, margin calculator
 ├── recommendations/ # Scorer (5-component formula), ranker, reporter (CSV/JSON)
+│                    # crafting_advisor: 6-window margin compression/expansion
 ├── monitoring/      # Drift detection, adaptive policy, health, provenance, reporter
 ├── reporting/       # Reader (file discovery + freshness), formatters (ASCII tables),
 │                    # export (flat CSV/JSON for Power BI)
 ├── governance/      # Source policy registry, preflight checks, freshness validation
 ├── scheduler.py     # SchedulerDaemon (stdlib only) — hourly + daily automation
-└── cli.py           # Typer CLI: 26 commands
+└── cli.py           # Typer CLI: 29 commands
 
 config/
 ├── default.toml             # Static defaults (committed)
@@ -295,6 +298,28 @@ wow-forecaster validate-source-policies
 wow-forecaster check-source-freshness  [--realm SLUG] [--export PATH]
 ```
 
+### Crafting Margin Advisor
+
+```bash
+# Seed recipe data from Blizzard static API
+# Default: most recent expansion (transfer_target in config, currently "midnight")
+wow-forecaster seed-recipes        [--expansion SLUG] [--all] [--professions SLUG,...]
+
+# Compute daily craft cost vs output price -> crafting_margin_snapshots
+wow-forecaster build-margins       [--realm SLUG] [--days N]
+
+# Report top crafting opportunities with 6 temporal windows
+wow-forecaster report-crafting     [--realm SLUG] [--top-n N] [--export PATH]
+```
+
+**Crafting windows** (all valid buy <= sell pairs using existing 1d/7d/28d forecasts):
+- `now -> now` — craft and sell today
+- `now -> +7d` — buy mats today, sell next week
+- `now -> +28d` — buy mats today, sell in 4 weeks
+- `+7d -> +7d` — buy mats next week, sell next week
+- `+7d -> +28d` — buy mats next week, sell in 4 weeks
+- `+28d -> +28d` — buy mats in 4 weeks, sell then
+
 ### Automation
 
 ```bash
@@ -382,28 +407,29 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 886 tests
+# All 942 tests
 pytest
 
 # With coverage
 pytest --cov=wow_forecaster --cov-report=term-missing
 
 # By group
-pytest tests/test_recommendations/  # Scorer, ranker, item overlay (106 tests)
+pytest tests/test_recommendations/  # Scorer, ranker, item overlay, crafting advisor (133 tests)
 pytest tests/test_governance/       # Source policies, preflight, freshness (84 tests)
-pytest tests/test_reporting/        # Reader, formatters, export (79 tests)
+pytest tests/test_reporting/        # Reader, formatters, export (86 tests)
 pytest tests/test_monitoring/       # Drift, adaptive, orchestrator (73 tests)
 pytest tests/test_ingestion/        # Ingestion + snapshots (73 tests)
-pytest tests/test_features/         # Feature engineering (72 tests)
+pytest tests/test_features/         # Feature engineering (81 tests)
 pytest tests/test_backtest/         # Backtest framework (60 tests)
 pytest tests/test_models/           # Pydantic validation (61 tests)
 pytest tests/test_pipeline/         # Pipeline interfaces, normalize (36 tests)
 pytest tests/test_ml/               # LightGBM training and inference (44 tests)
 pytest tests/test_cli/              # CLI smoke tests (46 tests)
 pytest tests/test_scheduler/        # Scheduler daemon (26 tests)
-pytest tests/test_db/               # Schema + repositories (26 tests)
+pytest tests/test_db/               # Schema + repositories + migrations (37 tests)
 pytest tests/test_events/           # Seed loader, event imports (24 tests)
 pytest tests/test_taxonomy/         # Taxonomy integrity (30 tests)
+pytest tests/test_recipes/          # Recipe repo, seeder, margin calculator (21 tests)
 ```
 
 ---
@@ -440,7 +466,7 @@ pytest tests/test_taxonomy/         # Taxonomy integrity (30 tests)
 
 ---
 
-## SQLite Schema (18 tables)
+## SQLite Schema (21 tables)
 
 ```
 item_categories               Item hierarchy (slug-based, expansion-aware)
@@ -461,6 +487,9 @@ backtest_runs                 Backtest invocation metadata (window, folds)
 backtest_fold_results         Per-prediction backtest results
 drift_check_results           Drift detection results (level, uncertainty_mult)
 model_health_snapshots        Live MAE vs backtest baseline per horizon
+recipes                       Blizzard recipe registry (profession, output item, expansion)
+recipe_reagents               Required reagents per recipe (qty, required type only)
+crafting_margin_snapshots     Daily craft cost vs sell price margin per recipe+realm
 ```
 
 ---
@@ -549,7 +578,7 @@ All settings in `config/default.toml`. Override locally with:
 2. `.env` (gitignored) — secrets and env-specific overrides
 3. `WOW_FORECASTER_*` environment variables
 
-Key sections: `[database]`, `[expansions]`, `[realms]`, `[pipeline]`, `[forecast]`, `[features]`, `[model]`, `[monitoring]`, `[backtest]`, `[logging]`, `[governance]`.
+Key sections: `[database]`, `[expansions]`, `[realms]`, `[pipeline]`, `[forecast]`, `[features]`, `[model]`, `[monitoring]`, `[backtest]`, `[logging]`, `[governance]`, `[crafting]`.
 
 ### Credentials (.env)
 

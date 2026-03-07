@@ -181,6 +181,55 @@ def migration_0004_add_monitoring_tables(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def migration_0005_add_crafting_tables(conn: sqlite3.Connection) -> None:
+    """Add recipes, recipe_reagents, and crafting_margin_snapshots tables."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS recipes (
+            recipe_id            INTEGER PRIMARY KEY,
+            profession_slug      TEXT    NOT NULL,
+            output_item_id       INTEGER NOT NULL,
+            output_quantity      INTEGER NOT NULL DEFAULT 1,
+            recipe_name          TEXT,
+            skill_level_required INTEGER,
+            expansion_slug       TEXT    NOT NULL,
+            source               TEXT    NOT NULL DEFAULT 'blizzard_api',
+            created_at           TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_recipes_output_item ON recipes(output_item_id);
+        CREATE INDEX IF NOT EXISTS idx_recipes_expansion   ON recipes(expansion_slug);
+
+        CREATE TABLE IF NOT EXISTS recipe_reagents (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipe_id            INTEGER NOT NULL REFERENCES recipes(recipe_id),
+            ingredient_item_id   INTEGER NOT NULL,
+            quantity             INTEGER NOT NULL,
+            reagent_type         TEXT    NOT NULL DEFAULT 'required'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_reagents_recipe     ON recipe_reagents(recipe_id);
+        CREATE INDEX IF NOT EXISTS idx_reagents_ingredient ON recipe_reagents(ingredient_item_id);
+
+        CREATE TABLE IF NOT EXISTS crafting_margin_snapshots (
+            snapshot_id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipe_id               INTEGER NOT NULL REFERENCES recipes(recipe_id),
+            realm_slug              TEXT    NOT NULL,
+            obs_date                TEXT    NOT NULL,
+            output_price_gold       REAL,
+            craft_cost_gold         REAL,
+            margin_gold             REAL,
+            margin_pct              REAL,
+            ingredient_coverage_pct REAL    NOT NULL,
+            created_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+            UNIQUE(recipe_id, realm_slug, obs_date)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_margin_recipe_date ON crafting_margin_snapshots(recipe_id, obs_date);
+        CREATE INDEX IF NOT EXISTS idx_margin_realm_date  ON crafting_margin_snapshots(realm_slug, obs_date);
+    """)
+    conn.commit()
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 # Add new migrations here. They will run once, in order.
 
@@ -200,6 +249,10 @@ MIGRATIONS: dict[str, tuple[MigrationFn, str]] = {
     "0004_monitoring_tables": (
         migration_0004_add_monitoring_tables,
         "Add drift_check_results and model_health_snapshots tables",
+    ),
+    "0005_crafting_tables": (
+        migration_0005_add_crafting_tables,
+        "Add recipes, recipe_reagents, and crafting_margin_snapshots tables",
     ),
 }
 

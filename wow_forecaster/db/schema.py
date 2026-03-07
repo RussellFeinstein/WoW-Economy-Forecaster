@@ -23,6 +23,9 @@ Table creation order respects foreign key dependencies:
   16. backtest_fold_results         (→ backtest_runs)
   17. drift_check_results           (no FKs)
   18. model_health_snapshots        (no FKs)
+  19. recipes                       (no FKs — output_item_id intentionally loose)
+  20. recipe_reagents               (→ recipes)
+  21. crafting_margin_snapshots     (→ recipes)
 """
 
 from __future__ import annotations
@@ -402,6 +405,61 @@ CREATE INDEX IF NOT EXISTS idx_health_realm_horizon
     ON model_health_snapshots(realm_slug, horizon_days, checked_at DESC);
 """
 
+_DDL_RECIPES = """
+CREATE TABLE IF NOT EXISTS recipes (
+    recipe_id            INTEGER PRIMARY KEY,
+    profession_slug      TEXT    NOT NULL,
+    output_item_id       INTEGER NOT NULL,
+    output_quantity      INTEGER NOT NULL DEFAULT 1,
+    recipe_name          TEXT,
+    skill_level_required INTEGER,
+    expansion_slug       TEXT    NOT NULL,
+    source               TEXT    NOT NULL DEFAULT 'blizzard_api',
+    created_at           TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+"""
+
+_DDL_RECIPES_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_recipes_output_item ON recipes(output_item_id);
+CREATE INDEX IF NOT EXISTS idx_recipes_expansion   ON recipes(expansion_slug);
+"""
+
+_DDL_RECIPE_REAGENTS = """
+CREATE TABLE IF NOT EXISTS recipe_reagents (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    recipe_id            INTEGER NOT NULL REFERENCES recipes(recipe_id),
+    ingredient_item_id   INTEGER NOT NULL,
+    quantity             INTEGER NOT NULL,
+    reagent_type         TEXT    NOT NULL DEFAULT 'required'
+);
+"""
+
+_DDL_RECIPE_REAGENTS_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_reagents_recipe     ON recipe_reagents(recipe_id);
+CREATE INDEX IF NOT EXISTS idx_reagents_ingredient ON recipe_reagents(ingredient_item_id);
+"""
+
+_DDL_CRAFTING_MARGIN_SNAPSHOTS = """
+CREATE TABLE IF NOT EXISTS crafting_margin_snapshots (
+    snapshot_id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    recipe_id               INTEGER NOT NULL REFERENCES recipes(recipe_id),
+    realm_slug              TEXT    NOT NULL,
+    obs_date                TEXT    NOT NULL,
+    output_price_gold       REAL,
+    craft_cost_gold         REAL,
+    margin_gold             REAL,
+    margin_pct              REAL,
+    ingredient_coverage_pct REAL    NOT NULL,
+    created_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(recipe_id, realm_slug, obs_date)
+);
+"""
+
+_DDL_CRAFTING_MARGIN_SNAPSHOTS_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_margin_recipe_date ON crafting_margin_snapshots(recipe_id, obs_date);
+CREATE INDEX IF NOT EXISTS idx_margin_realm_date  ON crafting_margin_snapshots(realm_slug, obs_date);
+"""
+
 # ── Ordered list of all DDL to apply ──────────────────────────────────────────
 
 _ALL_DDL: list[str] = [
@@ -432,6 +490,12 @@ _ALL_DDL: list[str] = [
     _DDL_DRIFT_CHECK_RESULTS_INDEXES,
     _DDL_MODEL_HEALTH_SNAPSHOTS,
     _DDL_MODEL_HEALTH_SNAPSHOTS_INDEXES,
+    _DDL_RECIPES,
+    _DDL_RECIPES_INDEXES,
+    _DDL_RECIPE_REAGENTS,
+    _DDL_RECIPE_REAGENTS_INDEXES,
+    _DDL_CRAFTING_MARGIN_SNAPSHOTS,
+    _DDL_CRAFTING_MARGIN_SNAPSHOTS_INDEXES,
 ]
 
 # Table names for introspection / tests
@@ -454,6 +518,9 @@ ALL_TABLE_NAMES = [
     "backtest_fold_results",
     "drift_check_results",
     "model_health_snapshots",
+    "recipes",
+    "recipe_reagents",
+    "crafting_margin_snapshots",
 ]
 
 
@@ -475,7 +542,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
                 conn.execute(statement)
 
     conn.commit()
-    logger.info("Schema applied: %d tables, indexes created/verified.", len(ALL_TABLE_NAMES))
+    logger.info("Schema applied: %d tables, indexes created/verified.", len(ALL_TABLE_NAMES))  # 21
 
 
 def _split_ddl(ddl: str) -> list[str]:

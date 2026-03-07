@@ -93,7 +93,7 @@ class TestImplementedStages:
         assert result == 0
 
     def test_ingest_inserts_raw_observations_when_items_exist(
-        self, minimal_config, tmp_path
+        self, minimal_config, tmp_path, monkeypatch
     ):
         """IngestStage inserts 3 raw observations when fixture item IDs are registered.
 
@@ -136,6 +136,11 @@ class TestImplementedStages:
         conn.close()
 
         # ── Run ingest ─────────────────────────────────────────────────────────
+        # Ensure Blizzard credentials are absent so fixture mode is used
+        # regardless of whether a prior test loaded them via load_dotenv().
+        monkeypatch.delenv("BLIZZARD_CLIENT_ID", raising=False)
+        monkeypatch.delenv("BLIZZARD_CLIENT_SECRET", raising=False)
+
         config = AppConfig(
             database=DatabaseConfig(db_path=db_file),
             data=DataConfig(raw_dir=str(tmp_path / "raw")),

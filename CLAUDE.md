@@ -30,9 +30,9 @@ BLIZZARD_CLIENT_SECRET=...
 - [wow_forecaster/taxonomy/event_taxonomy.py](wow_forecaster/taxonomy/event_taxonomy.py) — EventType (26), EventScope (4), EventSeverity (5)
 - [wow_forecaster/models/event.py](wow_forecaster/models/event.py) — WoWEvent with is_known_at() backtest bias guard
 - [wow_forecaster/config.py](wow_forecaster/config.py) — AppConfig via load_config()
-- [wow_forecaster/db/schema.py](wow_forecaster/db/schema.py) — 18 tables, apply_schema() idempotent
+- [wow_forecaster/db/schema.py](wow_forecaster/db/schema.py) — 21 tables, apply_schema() idempotent
 - [wow_forecaster/pipeline/base.py](wow_forecaster/pipeline/base.py) — PipelineStage ABC
-- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (26 commands)
+- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (29 commands)
 - [config/default.toml](config/default.toml) — static config
 - [config/sources.toml](config/sources.toml) — 3 source policies
 - [config/events/tww_events.json](config/events/tww_events.json) — TWW seed events
@@ -104,7 +104,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - [wow_forecaster/pipeline/orchestrator.py](wow_forecaster/pipeline/orchestrator.py) — HourlyOrchestrator: 7-step pipeline
 - Drift detection: z-score of means per archetype/realm series; outlier rows excluded
 - Adaptive CI chain: drift check → uncertainty_mult in drift_check_results → ForecastStage reads it → widens CI
-- DB migration 0004: drift_check_results + model_health_snapshots (18 tables total)
+- DB migration 0004: drift_check_results + model_health_snapshots (18 tables + migration 0005 adds 3 more = 21 total)
 
 ### Reporting (v0.7.0)
 - CLI commands: report-top-items, report-forecasts, report-volatility, report-drift, report-status
@@ -126,6 +126,20 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - config: pipeline.normalize_rolling_days=30
 - archetype_id populated via _fetch_archetype_map() since v1.3.4; daily_agg.py JOINs items for backward-compat + unassigned items
 
+### Recipes + Crafting Advisor (v1.5.0)
+- [wow_forecaster/recipes/blizzard_recipe_client.py](wow_forecaster/recipes/blizzard_recipe_client.py) — fetch_all_recipes_for_profession(); NormalisedRecipe/NormalisedReagent; required reagents only
+- [wow_forecaster/recipes/recipe_seeder.py](wow_forecaster/recipes/recipe_seeder.py) — RecipeSeeder: seed(expansion_slug, professions) → upserts recipes + reagents; rate-limited
+- [wow_forecaster/recipes/recipe_repo.py](wow_forecaster/recipes/recipe_repo.py) — RecipeRepository: upsert_recipe/replace_reagents/get_recipes_by_expansion etc.
+- [wow_forecaster/recipes/margin_calculator.py](wow_forecaster/recipes/margin_calculator.py) — MarginCalculator.compute_margins(): daily craft cost vs output price → crafting_margin_snapshots
+- [wow_forecaster/recommendations/crafting_advisor.py](wow_forecaster/recommendations/crafting_advisor.py) — CraftingWindow(6 windows), build_crafting_opportunities(), rank_crafting_opportunities()
+- CraftingWindow: NOW_NOW, NOW_7D, NOW_28D, _7D_7D, _7D_28D, _28D_28D — all (buy≤sell) pairs using 1d/7d/28d forecasts
+- Volume gate: hard filter (quantity_sum_7d < min_volume_units=50 excluded) + volume_score = clamp(qty/500, 0, 1)
+- opportunity_score = best_window_margin_pct × volume_score
+- Compression/expansion: linear regression slope of margin_pct over last N days; ±0.02/day thresholds
+- DB migration 0005: recipes, recipe_reagents, crafting_margin_snapshots (UNIQUE recipe_id+realm+obs_date)
+- CLI: seed-recipes (--expansion default=transfer_target, --all), build-margins (--realm, --days), report-crafting (--realm, --top-n, --export)
+- seed-recipes --expansion defaults to transfer_target config value ("midnight"); use --all for first-time full seed
+
 ### Automation (v1.0.0)
 - [wow_forecaster/scheduler.py](wow_forecaster/scheduler.py) — SchedulerDaemon (stdlib only)
 - CLI: start-scheduler (foreground daemon)
@@ -142,4 +156,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-895 tests passing
+942 tests passing

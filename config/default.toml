@@ -191,3 +191,27 @@ preflight_checks_enabled = true
 # If true, disabled sources are skipped with a WARNING log.
 # If false, disabled sources raise a hard error — useful to catch stale config.
 block_disabled_sources = true
+
+# ── Crafting Margin Detector ───────────────────────────────────────────────────
+
+[crafting]
+# Primary crafting professions to seed and track margins for
+target_professions = [
+    "alchemy", "blacksmithing", "enchanting",
+    "jewelcrafting", "tailoring", "leatherworking", "inscription",
+]
+# Minimum fraction of required reagents that must have current price data
+# for a margin snapshot to be computed (0.5 = at least half)
+min_ingredient_coverage = 0.5
+# Margin slope thresholds (margin_pct change per day).
+# Below compression threshold = compressing market (crafters entering).
+compression_slope_threshold = -0.02
+# Above expansion threshold = expanding market (demand rising / supply shock).
+expansion_slope_threshold = 0.02
+# Days of margin history to use for slope/percentile calculations
+margin_history_days = 30
+# Max crafting opportunities to show in report-crafting
+top_n_crafting = 10
+# Minimum total quantity_sum (units listed) for output item over last 7 days.
+# Items below this are excluded (no market volume = no actionable opportunity).
+min_volume_units = 50

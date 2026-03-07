@@ -2899,6 +2899,361 @@ def start_scheduler_cmd(
     daemon.start()
 
 
+# ── Crafting commands ──────────────────────────────────────────────────────────
+
+@app.command("seed-recipes")
+def seed_recipes(
+    expansion: Optional[str] = typer.Option(
+        None,
+        "--expansion",
+        "-e",
+        help=(
+            "Expansion slug to seed (e.g. 'midnight', 'tww'). "
+            "Defaults to transfer_target from config (most recently released expansion)."
+        ),
+    ),
+    all_expansions: bool = typer.Option(
+        False,
+        "--all",
+        help="Seed all expansions (full history). Overrides --expansion.",
+    ),
+    professions: Optional[str] = typer.Option(
+        None,
+        "--professions",
+        "-p",
+        help=(
+            "Comma-separated profession slugs to seed "
+            "(e.g. 'alchemy,enchanting'). Defaults to all 7 primary crafting professions."
+        ),
+    ),
+    db_path: Optional[str] = typer.Option(None, "--db-path"),
+    config_path: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """Seed recipe data from the Blizzard static Game Data API.
+
+    Fetches profession skill tiers and individual recipe reagents, then upserts
+    into the ``recipes`` and ``recipe_reagents`` DB tables.
+
+    Run once after init-db, and again whenever a new patch adds recipes.
+    Requires BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET in .env.
+
+    Examples::
+
+        wow-forecaster seed-recipes                     # midnight (default)
+        wow-forecaster seed-recipes --expansion tww
+        wow-forecaster seed-recipes --all               # all expansions
+        wow-forecaster seed-recipes --professions alchemy,enchanting
+    """
+    import os as _os
+
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.ingestion.blizzard_client import BlizzardClient
+    from wow_forecaster.recipes.recipe_seeder import RecipeSeeder
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    client_id = _os.environ.get("BLIZZARD_CLIENT_ID")
+    client_secret = _os.environ.get("BLIZZARD_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        typer.echo(
+            "[ERROR] BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET must be set in .env.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    client = BlizzardClient(
+        client_id=client_id,
+        client_secret=client_secret,
+        region="us",
+    )
+
+    target_db = db_path or config.database.db_path
+    target_profs = (
+        [p.strip() for p in professions.split(",") if p.strip()]
+        if professions
+        else config.crafting.target_professions
+    )
+
+    expansions_to_seed: list[str]
+    if all_expansions:
+        expansions_to_seed = list(config.expansions.known)
+        typer.echo(f"Seeding all {len(expansions_to_seed)} expansions...")
+    else:
+        target_expansion = expansion or config.expansions.transfer_target
+        expansions_to_seed = [target_expansion]
+        typer.echo(f"Seeding expansion: {target_expansion}")
+
+    typer.echo(f"Professions : {', '.join(target_profs)}")
+    typer.echo(f"DB          : {target_db}")
+
+    total_upserted = 0
+    total_errors = 0
+
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        seeder = RecipeSeeder(conn, client)
+        for exp in expansions_to_seed:
+            typer.echo(f"\n  Expansion: {exp}")
+            try:
+                stats = seeder.seed(expansion_slug=exp, professions=target_profs)
+                typer.echo(
+                    f"    Upserted: {stats.recipes_upserted}  "
+                    f"Skipped: {stats.recipes_skipped}  "
+                    f"Errors: {len(stats.errors)}"
+                )
+                total_upserted += stats.recipes_upserted
+                total_errors += len(stats.errors)
+            except Exception as exc:
+                typer.echo(f"    [ERROR] {exc}", err=True)
+                total_errors += 1
+
+    typer.echo(f"\nTotal upserted: {total_upserted}  Errors: {total_errors}")
+    typer.echo("[OK] seed-recipes complete.")
+
+
+@app.command("build-margins")
+def build_margins(
+    realm: Optional[str] = typer.Option(
+        None, "--realm", "-r", help="Realm/region slug (default: first in config.realms.defaults)."
+    ),
+    days: int = typer.Option(
+        30, "--days", "-d", help="Number of historical days to (re)compute margins for."
+    ),
+    db_path: Optional[str] = typer.Option(None, "--db-path"),
+    config_path: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """Compute crafting margin snapshots from market price history.
+
+    For each recipe in the DB, looks up ingredient and output item prices in
+    ``market_observations_normalized`` and writes daily margin snapshots to
+    ``crafting_margin_snapshots``.
+
+    Run after build-datasets and whenever you want fresh margin history.
+    Idempotent — re-running updates existing snapshots.
+
+    Examples::
+
+        wow-forecaster build-margins
+        wow-forecaster build-margins --days 60
+        wow-forecaster build-margins --realm us --days 30
+    """
+    from datetime import date as _date
+
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.recipes.margin_calculator import MarginCalculator
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_realm = realm or (
+        list(config.realms.defaults)[0] if config.realms.defaults else "us"
+    )
+    target_db = db_path or config.database.db_path
+
+    typer.echo(f"Computing margins: realm={target_realm}, days={days}")
+    typer.echo(f"DB: {target_db}")
+
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        calc = MarginCalculator(
+            conn,
+            min_coverage=config.crafting.min_ingredient_coverage,
+        )
+        stats = calc.compute_margins(
+            realm_slug=target_realm,
+            lookback_days=days,
+            end_date=_date.today(),
+        )
+
+    typer.echo(f"  Recipes processed      : {stats.recipes_processed}")
+    typer.echo(f"  Snapshots written      : {stats.snapshots_written}")
+    typer.echo(f"  Snapshots skipped      : {stats.snapshots_skipped}")
+    typer.echo(f"  No output price        : {stats.recipes_no_output_price}")
+    typer.echo(f"  Low ingredient coverage: {stats.recipes_low_coverage}")
+    typer.echo("[OK] build-margins complete.")
+
+
+@app.command("report-crafting")
+def report_crafting(
+    realm: Optional[str] = typer.Option(
+        None, "--realm", "-r", help="Realm/region slug (default: first in config.realms.defaults)."
+    ),
+    top_n: int = typer.Option(
+        10, "--top-n", "-n", help="Number of crafting opportunities to show."
+    ),
+    export: Optional[str] = typer.Option(
+        None, "--export", help="Path to write CSV export of results."
+    ),
+    db_path: Optional[str] = typer.Option(None, "--db-path"),
+    config_path: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """Show top crafting opportunities with temporal window analysis.
+
+    For each recipe, displays the best (buy_mats, sell_output) timing window
+    and whether the margin is currently expanding or compressing.
+
+    Requires: seed-recipes + build-margins (+ run-daily-forecast for forecasts).
+
+    Examples::
+
+        wow-forecaster report-crafting
+        wow-forecaster report-crafting --top-n 20
+        wow-forecaster report-crafting --export crafting.csv
+    """
+    import csv as _csv
+    from datetime import date as _date
+
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.recommendations.crafting_advisor import (
+        build_crafting_opportunities,
+        rank_crafting_opportunities,
+    )
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_realm = realm or (
+        list(config.realms.defaults)[0] if config.realms.defaults else "us"
+    )
+    target_db = db_path or config.database.db_path
+    run_date = _date.today()
+
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        opportunities = build_crafting_opportunities(
+            conn=conn,
+            realm_slug=target_realm,
+            run_date=run_date,
+            compression_slope_threshold=config.crafting.compression_slope_threshold,
+            expansion_slope_threshold=config.crafting.expansion_slope_threshold,
+            margin_history_days=config.crafting.margin_history_days,
+            min_volume_units=config.crafting.min_volume_units,
+            min_ingredient_coverage=config.crafting.min_ingredient_coverage,
+        )
+        ranked = rank_crafting_opportunities(opportunities, top_n=top_n)
+
+    if not ranked:
+        typer.echo(
+            "No crafting opportunities found. "
+            "Run seed-recipes and build-margins first, "
+            "and ensure market data is available for this realm."
+        )
+        return
+
+    # ── Table header ──────────────────────────────────────────────────────────
+    typer.echo(f"\nCrafting Opportunities -- {target_realm} -- {run_date}")
+    typer.echo("=" * 76)
+    header = f"{'#':<3} {'Recipe':<36} {'Prof':<14} {'Status':<11} {'Best Window':<12} {'Margin'}"
+    typer.echo(header)
+    typer.echo("-" * 76)
+
+    for i, opp in enumerate(ranked, start=1):
+        name = (opp.recipe_name or f"Recipe #{opp.recipe_id}")[:36]
+        prof = opp.profession_slug[:14]
+        status = opp.margin_status.upper()[:11]
+        best_w = opp.best_window.value[:12]
+        if opp.best_window_margin_gold is not None:
+            margin_str = f"{opp.best_window_margin_gold:.1f}g"
+            if opp.best_window_margin_pct is not None:
+                margin_str += f" ({opp.best_window_margin_pct * 100:.0f}%)"
+        else:
+            margin_str = "n/a"
+        typer.echo(f"{i:<3} {name:<36} {prof:<14} {status:<11} {best_w:<12} {margin_str}")
+
+    # ── Detailed view ─────────────────────────────────────────────────────────
+    typer.echo("")
+    for i, opp in enumerate(ranked, start=1):
+        name = opp.recipe_name or f"Recipe #{opp.recipe_id}"
+        typer.echo(f"[{i}] {name}  ({opp.profession_slug})")
+
+        rank_str = (
+            f"{opp.margin_pct_rank * 100:.0f}th percentile"
+            if opp.margin_pct_rank is not None
+            else "no history"
+        )
+        slope_str = (
+            f"{opp.margin_slope_7d:+.4f}/day"
+            if opp.margin_slope_7d is not None
+            else "n/a"
+        )
+        typer.echo(
+            f"    Status: {opp.margin_status.upper()}  "
+            f"(slope={slope_str}, {rank_str}, {config.crafting.margin_history_days}-day history)"
+        )
+        typer.echo(f"    Volume: {opp.quantity_sum_7d:.0f} units/week  (vol_score={opp.volume_score:.2f})")
+        typer.echo(f"    Ingredient coverage: {opp.ingredient_coverage_pct * 100:.0f}%")
+        typer.echo("    Windows:")
+
+        from wow_forecaster.recommendations.crafting_advisor import CraftingWindow
+        for w in CraftingWindow:
+            m = opp.windows.get(w)
+            if m is None:
+                margin_line = "  n/a"
+            else:
+                pct = (m / opp.current_output_price_gold * 100) if opp.current_output_price_gold else 0
+                margin_line = f"  {m:>8.1f}g ({pct:.0f}%)"
+            best_marker = " <- BEST" if w == opp.best_window else ""
+            typer.echo(f"      {w.value:<14}{margin_line}{best_marker}")
+        typer.echo("")
+
+    # ── CSV export ────────────────────────────────────────────────────────────
+    if export:
+        export_path = Path(export)
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+
+        from wow_forecaster.recommendations.crafting_advisor import CraftingWindow as _CW
+
+        fieldnames = [
+            "rank", "recipe_id", "recipe_name", "profession_slug", "output_item_id",
+            "margin_status", "margin_slope_7d", "margin_pct_rank",
+            "best_window", "best_window_margin_gold", "best_window_margin_pct",
+            "current_output_price_gold", "current_craft_cost_gold", "current_margin_gold",
+            "ingredient_coverage_pct", "quantity_sum_7d", "volume_score", "opportunity_score",
+        ] + [f"margin_{w.name.lower()}_gold" for w in _CW]
+
+        with open(export_path, "w", newline="", encoding="utf-8") as f:
+            writer = _csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for i, opp in enumerate(ranked, start=1):
+                row: dict = {
+                    "rank": i,
+                    "recipe_id": opp.recipe_id,
+                    "recipe_name": opp.recipe_name,
+                    "profession_slug": opp.profession_slug,
+                    "output_item_id": opp.output_item_id,
+                    "margin_status": opp.margin_status,
+                    "margin_slope_7d": opp.margin_slope_7d,
+                    "margin_pct_rank": opp.margin_pct_rank,
+                    "best_window": opp.best_window.value,
+                    "best_window_margin_gold": opp.best_window_margin_gold,
+                    "best_window_margin_pct": opp.best_window_margin_pct,
+                    "current_output_price_gold": opp.current_output_price_gold,
+                    "current_craft_cost_gold": opp.current_craft_cost_gold,
+                    "current_margin_gold": opp.current_margin_gold,
+                    "ingredient_coverage_pct": opp.ingredient_coverage_pct,
+                    "quantity_sum_7d": opp.quantity_sum_7d,
+                    "volume_score": opp.volume_score,
+                    "opportunity_score": opp.opportunity_score,
+                }
+                for w in _CW:
+                    row[f"margin_{w.name.lower()}_gold"] = opp.windows.get(w)
+                writer.writerow(row)
+
+        typer.echo(f"[OK] Exported {len(ranked)} rows -> {export_path}")
+    else:
+        typer.echo(f"[OK] {len(ranked)} opportunities shown.")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

@@ -244,6 +244,23 @@ class MonitoringConfig(BaseModel):
     monitoring_output_dir: str = "data/outputs/monitoring"
 
 
+class CraftingConfig(BaseModel):
+    """Crafting margin compression/expansion detector configuration."""
+
+    model_config = ConfigDict(frozen=True)
+
+    target_professions: list[str] = [
+        "alchemy", "blacksmithing", "enchanting",
+        "jewelcrafting", "tailoring", "leatherworking", "inscription",
+    ]
+    min_ingredient_coverage: float = 0.5
+    compression_slope_threshold: float = -0.02   # margin_pct/day — below = compressing
+    expansion_slope_threshold: float = 0.02      # margin_pct/day — above = expanding
+    margin_history_days: int = 30
+    top_n_crafting: int = 10
+    min_volume_units: int = 50    # minimum quantity_sum over last 7 days; below = excluded
+
+
 class AppConfig(BaseModel):
     """Complete application configuration — the single source of truth.
 
@@ -265,6 +282,7 @@ class AppConfig(BaseModel):
     model:      ModelConfig      = ModelConfig()
     monitoring: MonitoringConfig = MonitoringConfig()
     governance: GovernanceConfig = GovernanceConfig()
+    crafting:   CraftingConfig   = CraftingConfig()
     debug: bool = False
 
 
@@ -380,5 +398,6 @@ def _build_app_config(raw: dict[str, Any]) -> AppConfig:
         model=ModelConfig(**raw.get("model", {})),
         monitoring=MonitoringConfig(**raw.get("monitoring", {})),
         governance=GovernanceConfig(**raw.get("governance", {})),
+        crafting=CraftingConfig(**raw.get("crafting", {})),
         debug=raw.get("debug", project.get("debug", False)),
     )

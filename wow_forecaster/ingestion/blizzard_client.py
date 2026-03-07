@@ -328,6 +328,142 @@ class BlizzardClient:
             is_fixture=False,
         )
 
+    # ── Static Game Data API (profession/recipe) ───────────────────────────────
+
+    def fetch_professions(self) -> list[dict]:
+        """Fetch the list of all WoW professions.
+
+        Endpoint::
+
+            GET /data/wow/profession/index
+                ?namespace=static-{region}&locale=en_US
+
+        Returns:
+            List of profession dicts with keys: id, name, slug (from href).
+
+        Raises:
+            RuntimeError: If client has no credentials.
+            httpx.HTTPStatusError: On non-2xx API response.
+        """
+        import httpx
+
+        if not self.client_id or not self.client_secret:
+            raise RuntimeError(
+                "BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET must be set in .env."
+            )
+        self._ensure_token()
+        base = self.BASE_URL_TEMPLATE.format(region=self.region)
+        resp = httpx.get(
+            f"{base}/data/wow/profession/index",
+            params={"namespace": f"static-{self.region}", "locale": "en_US"},
+            headers={"Authorization": f"Bearer {self._access_token}"},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("professions", [])
+
+    def fetch_profession(self, profession_id: int) -> dict:
+        """Fetch profession details including skill tiers.
+
+        Endpoint::
+
+            GET /data/wow/profession/{profession_id}
+                ?namespace=static-{region}&locale=en_US
+
+        Returns:
+            Profession dict with ``skill_tiers`` list (each has id, name).
+
+        Raises:
+            RuntimeError: If client has no credentials.
+            httpx.HTTPStatusError: On non-2xx API response.
+        """
+        import httpx
+
+        if not self.client_id or not self.client_secret:
+            raise RuntimeError(
+                "BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET must be set in .env."
+            )
+        self._ensure_token()
+        base = self.BASE_URL_TEMPLATE.format(region=self.region)
+        resp = httpx.get(
+            f"{base}/data/wow/profession/{profession_id}",
+            params={"namespace": f"static-{self.region}", "locale": "en_US"},
+            headers={"Authorization": f"Bearer {self._access_token}"},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def fetch_profession_skill_tier(
+        self, profession_id: int, skill_tier_id: int
+    ) -> dict:
+        """Fetch all recipe stubs for a profession skill tier.
+
+        Endpoint::
+
+            GET /data/wow/profession/{profession_id}/skill-tier/{skill_tier_id}
+                ?namespace=static-{region}&locale=en_US
+
+        Returns:
+            Dict with ``categories`` list, each containing ``recipes`` list
+            with ``{id, name}`` stubs.
+
+        Raises:
+            RuntimeError: If client has no credentials.
+            httpx.HTTPStatusError: On non-2xx API response.
+        """
+        import httpx
+
+        if not self.client_id or not self.client_secret:
+            raise RuntimeError(
+                "BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET must be set in .env."
+            )
+        self._ensure_token()
+        base = self.BASE_URL_TEMPLATE.format(region=self.region)
+        resp = httpx.get(
+            f"{base}/data/wow/profession/{profession_id}/skill-tier/{skill_tier_id}",
+            params={"namespace": f"static-{self.region}", "locale": "en_US"},
+            headers={"Authorization": f"Bearer {self._access_token}"},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def fetch_recipe(self, recipe_id: int) -> dict:
+        """Fetch full recipe details including required reagents.
+
+        Endpoint::
+
+            GET /data/wow/recipe/{recipe_id}
+                ?namespace=static-{region}&locale=en_US
+
+        Returns:
+            Recipe dict with keys: id, name, crafted_item (has id, quantity),
+            reagents (list of {reagent: {id, name}, quantity}).
+            Note: optional/finishing reagents may be absent or partial.
+
+        Raises:
+            RuntimeError: If client has no credentials.
+            httpx.HTTPStatusError: On non-2xx API response.
+        """
+        import httpx
+
+        if not self.client_id or not self.client_secret:
+            raise RuntimeError(
+                "BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET must be set in .env."
+            )
+        self._ensure_token()
+        base = self.BASE_URL_TEMPLATE.format(region=self.region)
+        resp = httpx.get(
+            f"{base}/data/wow/recipe/{recipe_id}",
+            params={"namespace": f"static-{self.region}", "locale": "en_US"},
+            headers={"Authorization": f"Bearer {self._access_token}"},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     # ── Fixture / stub mode ────────────────────────────────────────────────────
 
     def get_fixture_response(self, realm_slug: str) -> BlizzardAuctionResponse:
