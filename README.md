@@ -50,7 +50,7 @@ wow_forecaster/
 │                    # export (flat CSV/JSON for Power BI)
 ├── governance/      # Source policy registry, preflight checks, freshness validation
 ├── scheduler.py     # SchedulerDaemon (stdlib only) — hourly + daily automation
-└── cli.py           # Typer CLI: 29 commands
+└── cli.py           # Typer CLI: 30 commands
 
 config/
 ├── default.toml             # Static defaults (committed)
@@ -82,18 +82,19 @@ scripts/
 
 tests/
 ├── test_backtest/        # Splits, models, metrics (60 tests)
-├── test_cli/             # CLI smoke tests (46 tests)
-├── test_db/              # Schema + repositories (26 tests)
+├── test_cli/             # CLI smoke tests (54 tests)
+├── test_db/              # Schema + repositories + migrations (37 tests)
 ├── test_events/          # Seed loader, event imports (24 tests)
-├── test_features/        # Feature engineering, no-leakage (72 tests)
+├── test_features/        # Feature engineering, no-leakage (81 tests)
 ├── test_governance/      # Source policies, preflight, freshness (84 tests)
 ├── test_ingestion/       # Snapshots, event CSV, persistence (73 tests)
 ├── test_ml/              # Feature selector, LightGBM (44 tests)
 ├── test_models/          # Pydantic validation (61 tests)
 ├── test_monitoring/      # Drift, adaptive, orchestrator (73 tests)
 ├── test_pipeline/        # Pipeline interfaces, normalize (36 tests)
-├── test_recommendations/ # Scorer, ranker, item overlay (106 tests)
-├── test_reporting/       # Reader, formatters, export (79 tests)
+├── test_recipes/         # Recipe repo, seeder, margin calculator (21 tests)
+├── test_recommendations/ # Scorer, ranker, item overlay, crafting (133 tests)
+├── test_reporting/       # Reader, formatters, export (86 tests)
 ├── test_scheduler/       # Scheduler daemon (26 tests)
 └── test_taxonomy/        # Taxonomy integrity (30 tests)
 ```
@@ -309,7 +310,10 @@ wow-forecaster seed-recipes        [--expansion SLUG] [--all] [--professions SLU
 wow-forecaster build-margins       [--realm SLUG] [--days N]
 
 # Report top crafting opportunities with 6 temporal windows
-wow-forecaster report-crafting     [--realm SLUG] [--top-n N] [--export PATH]
+wow-forecaster report-crafting         [--realm SLUG] [--top-n N] [--export PATH]
+
+# Recipe seeding status: counts by expansion+profession, reagent coverage, margin snapshot freshness
+wow-forecaster report-recipe-status   [--expansion SLUG]
 ```
 
 **Crafting windows** (all valid buy <= sell pairs using existing 1d/7d/28d forecasts):
@@ -407,7 +411,7 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 942 tests
+# All 950 tests
 pytest
 
 # With coverage
@@ -415,6 +419,7 @@ pytest --cov=wow_forecaster --cov-report=term-missing
 
 # By group
 pytest tests/test_recommendations/  # Scorer, ranker, item overlay, crafting advisor (133 tests)
+pytest tests/test_cli/              # CLI smoke tests (54 tests)
 pytest tests/test_governance/       # Source policies, preflight, freshness (84 tests)
 pytest tests/test_reporting/        # Reader, formatters, export (86 tests)
 pytest tests/test_monitoring/       # Drift, adaptive, orchestrator (73 tests)
@@ -424,7 +429,6 @@ pytest tests/test_backtest/         # Backtest framework (60 tests)
 pytest tests/test_models/           # Pydantic validation (61 tests)
 pytest tests/test_pipeline/         # Pipeline interfaces, normalize (36 tests)
 pytest tests/test_ml/               # LightGBM training and inference (44 tests)
-pytest tests/test_cli/              # CLI smoke tests (46 tests)
 pytest tests/test_scheduler/        # Scheduler daemon (26 tests)
 pytest tests/test_db/               # Schema + repositories + migrations (37 tests)
 pytest tests/test_events/           # Seed loader, event imports (24 tests)

@@ -63,6 +63,10 @@ class TestCLIHelp:
             "validate-source-policies",
             "check-source-freshness",
             "start-scheduler",
+            "seed-recipes",
+            "build-margins",
+            "report-crafting",
+            "report-recipe-status",
         ],
     )
     def test_help_exits_zero(self, command):
@@ -262,3 +266,86 @@ class TestImportEventsWithRealFile:
         )
         assert result.exit_code == 1
         assert "Unsupported" in result.output
+
+
+# ── report-recipe-status ─────────────────────────────────────────────────────
+
+class TestReportRecipeStatus:
+    """report-recipe-status with an empty DB should exit 0 and say 'seed-recipes first'."""
+
+    def test_empty_db_exits_zero_and_prompts_seed(self, tmp_path):
+        db = str(tmp_path / "recipes.db")
+        runner.invoke(app, ["init-db", "--db-path", db])
+        result = runner.invoke(
+            app, ["report-recipe-status", "--db-path", db]
+        )
+        assert result.exit_code == 0, result.output
+        assert "seed-recipes" in result.output.lower() or "0" in result.output
+
+    def test_shows_totals_header(self, tmp_path):
+        db = str(tmp_path / "recipes.db")
+        runner.invoke(app, ["init-db", "--db-path", db])
+        result = runner.invoke(
+            app, ["report-recipe-status", "--db-path", db]
+        )
+        assert "Total recipes" in result.output
+        assert "Total reagent rows" in result.output
+        assert "Margin snapshots" in result.output
+
+    def test_populated_db_shows_per_profession_rows(self, tmp_path):
+        """Insert 2 recipes + reagents and verify they appear in the output."""
+        import sqlite3
+        from wow_forecaster.db.schema import apply_schema
+
+        db = str(tmp_path / "recipes.db")
+        conn = sqlite3.connect(db)
+        apply_schema(conn)
+        conn.execute(
+            """INSERT INTO recipes (recipe_id, profession_slug, output_item_id,
+               output_quantity, expansion_slug, source)
+               VALUES (1001, 'alchemy', 9999, 1, 'midnight', 'blizzard_api')"""
+        )
+        conn.execute(
+            """INSERT INTO recipes (recipe_id, profession_slug, output_item_id,
+               output_quantity, expansion_slug, source)
+               VALUES (1002, 'alchemy', 9998, 1, 'midnight', 'blizzard_api')"""
+        )
+        conn.execute(
+            """INSERT INTO recipe_reagents (recipe_id, ingredient_item_id, quantity, reagent_type)
+               VALUES (1001, 888, 2, 'required')"""
+        )
+        conn.commit()
+        conn.close()
+
+        result = runner.invoke(
+            app, ["report-recipe-status", "--db-path", db]
+        )
+        assert result.exit_code == 0, result.output
+        assert "alchemy" in result.output
+        assert "midnight" in result.output
+        # 2 recipes total
+        assert "2" in result.output
+
+    def test_expansion_filter(self, tmp_path):
+        """--expansion filters output to one expansion only."""
+        import sqlite3
+        from wow_forecaster.db.schema import apply_schema
+
+        db = str(tmp_path / "recipes.db")
+        conn = sqlite3.connect(db)
+        apply_schema(conn)
+        for rid, exp in [(1001, "midnight"), (1002, "tww")]:
+            conn.execute(
+                f"""INSERT INTO recipes (recipe_id, profession_slug, output_item_id,
+                   output_quantity, expansion_slug, source)
+                   VALUES ({rid}, 'alchemy', 9999, 1, '{exp}', 'blizzard_api')"""
+            )
+        conn.commit()
+        conn.close()
+
+        result = runner.invoke(
+            app, ["report-recipe-status", "--db-path", db, "--expansion", "midnight"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "midnight" in result.output
+        assert "tww" not in result.output

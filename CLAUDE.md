@@ -32,7 +32,7 @@ BLIZZARD_CLIENT_SECRET=...
 - [wow_forecaster/config.py](wow_forecaster/config.py) — AppConfig via load_config()
 - [wow_forecaster/db/schema.py](wow_forecaster/db/schema.py) — 21 tables, apply_schema() idempotent
 - [wow_forecaster/pipeline/base.py](wow_forecaster/pipeline/base.py) — PipelineStage ABC
-- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (29 commands)
+- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (30 commands)
 - [config/default.toml](config/default.toml) — static config
 - [config/sources.toml](config/sources.toml) — 3 source policies
 - [config/events/tww_events.json](config/events/tww_events.json) — TWW seed events
@@ -137,7 +137,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - opportunity_score = best_window_margin_pct × volume_score
 - Compression/expansion: linear regression slope of margin_pct over last N days; ±0.02/day thresholds
 - DB migration 0005: recipes, recipe_reagents, crafting_margin_snapshots (UNIQUE recipe_id+realm+obs_date)
-- CLI: seed-recipes (--expansion default=transfer_target, --all), build-margins (--realm, --days), report-crafting (--realm, --top-n, --export)
+- CLI: seed-recipes (--expansion default=transfer_target, --all), build-margins (--realm, --days), report-crafting (--realm, --top-n, --export), report-recipe-status (--expansion)
 - seed-recipes --expansion defaults to transfer_target config value ("midnight"); use --all for first-time full seed
 
 ### Automation (v1.0.0)
@@ -156,4 +156,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-942 tests passing
+950 tests passing

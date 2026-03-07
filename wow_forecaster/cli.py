@@ -3254,6 +3254,129 @@ def report_crafting(
         typer.echo(f"[OK] {len(ranked)} opportunities shown.")
 
 
+@app.command("report-recipe-status")
+def report_recipe_status(
+    expansion: Optional[str] = typer.Option(
+        None,
+        "--expansion",
+        help="Filter to a single expansion slug (e.g. 'midnight'). Default: all.",
+    ),
+    db_path: Optional[str] = typer.Option(None, "--db-path", help="Override DB path."),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path."),
+) -> None:
+    """Show recipe seeding status: counts by expansion + profession, reagent coverage, margin snapshots.
+
+    Use this to verify that seed-recipes and build-margins ran successfully.
+
+    Examples::
+
+        wow-forecaster report-recipe-status
+        wow-forecaster report-recipe-status --expansion midnight
+    """
+    config = _load_config_or_exit(config_path)
+    target_db = db_path or config.database.db_path
+
+    from wow_forecaster.db.connection import get_connection
+
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        # ── Totals ────────────────────────────────────────────────────────────
+        total_recipes = conn.execute("SELECT COUNT(*) FROM recipes;").fetchone()[0]
+        total_reagents = conn.execute("SELECT COUNT(*) FROM recipe_reagents;").fetchone()[0]
+        total_margins = conn.execute(
+            "SELECT COUNT(*) FROM crafting_margin_snapshots;"
+        ).fetchone()[0]
+        no_reagent_count = conn.execute(
+            """
+            SELECT COUNT(*) FROM recipes r
+            WHERE NOT EXISTS (
+                SELECT 1 FROM recipe_reagents rr WHERE rr.recipe_id = r.recipe_id
+            )
+            """
+        ).fetchone()[0]
+
+        typer.echo(f"\n  Total recipes        : {total_recipes}")
+        typer.echo(f"  Total reagent rows   : {total_reagents}")
+        typer.echo(f"  Recipes w/o reagents : {no_reagent_count}")
+        typer.echo(f"  Margin snapshots     : {total_margins}")
+
+        # ── Per expansion + profession breakdown ───────────────────────────────
+        params: list = []
+        where = ""
+        if expansion:
+            where = "WHERE r.expansion_slug = ?"
+            params.append(expansion)
+
+        rows = conn.execute(
+            f"""
+            SELECT
+                r.expansion_slug,
+                r.profession_slug,
+                COUNT(r.recipe_id)                                      AS recipes,
+                COUNT(rr.recipe_id)                                     AS with_reagents,
+                ROUND(COUNT(rr.recipe_id) * 100.0 / COUNT(r.recipe_id), 1) AS pct_covered
+            FROM recipes r
+            LEFT JOIN (
+                SELECT DISTINCT recipe_id FROM recipe_reagents
+            ) rr ON rr.recipe_id = r.recipe_id
+            {where}
+            GROUP BY r.expansion_slug, r.profession_slug
+            ORDER BY r.expansion_slug, r.profession_slug
+            """,
+            params,
+        ).fetchall()
+
+        if not rows:
+            typer.echo("\n  No recipes found. Run seed-recipes first.")
+            return
+
+        typer.echo("")
+        typer.echo(f"  {'Expansion':<18} {'Profession':<20} {'Recipes':>8} {'w/Reagents':>11} {'Coverage':>9}")
+        typer.echo("  " + "-" * 70)
+
+        current_exp = None
+        exp_total = 0
+        for row in rows:
+            exp, prof, recipe_cnt, with_reag, pct = row
+            if exp != current_exp:
+                if current_exp is not None:
+                    typer.echo(f"  {'':18} {'  subtotal':<20} {exp_total:>8}")
+                    typer.echo("")
+                current_exp = exp
+                exp_total = 0
+            typer.echo(
+                f"  {exp:<18} {prof:<20} {recipe_cnt:>8} {with_reag:>11} {pct:>8.1f}%"
+            )
+            exp_total += recipe_cnt
+
+        if current_exp is not None:
+            typer.echo(f"  {'':18} {'  subtotal':<20} {exp_total:>8}")
+
+        # ── Margin snapshot freshness ──────────────────────────────────────────
+        margin_rows = conn.execute(
+            """
+            SELECT realm_slug, MAX(obs_date) AS latest, COUNT(*) AS snapshots
+            FROM crafting_margin_snapshots
+            GROUP BY realm_slug
+            ORDER BY realm_slug
+            """
+        ).fetchall()
+
+        typer.echo("")
+        if margin_rows:
+            typer.echo(f"  {'Realm':<16} {'Latest obs_date':<18} {'Snapshots':>10}")
+            typer.echo("  " + "-" * 46)
+            for realm_slug, latest, snaps in margin_rows:
+                typer.echo(f"  {realm_slug:<16} {latest:<18} {snaps:>10}")
+        else:
+            typer.echo("  No margin snapshots found. Run build-margins first.")
+
+        typer.echo("")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
