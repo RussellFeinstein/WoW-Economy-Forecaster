@@ -141,8 +141,12 @@ class MarginCalculator:
         """Load all recipes with their required reagents as a flat structure."""
         recipes_raw = self._conn.execute(
             """
-            SELECT recipe_id, output_item_id, output_quantity
-            FROM recipes
+            SELECT r.recipe_id, r.output_item_id, r.output_quantity
+            FROM recipes r
+            WHERE EXISTS (
+                SELECT 1 FROM recipe_reagents rr
+                WHERE rr.recipe_id = r.recipe_id AND rr.reagent_type = 'required'
+            )
             """
         ).fetchall()
 

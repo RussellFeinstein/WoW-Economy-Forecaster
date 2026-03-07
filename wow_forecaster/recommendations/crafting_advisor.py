@@ -264,9 +264,13 @@ def rank_crafting_opportunities(
 def _load_recipes(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
         """
-        SELECT recipe_id, profession_slug, output_item_id, output_quantity, recipe_name
-        FROM recipes
-        ORDER BY profession_slug, recipe_id
+        SELECT r.recipe_id, r.profession_slug, r.output_item_id, r.output_quantity, r.recipe_name
+        FROM recipes r
+        WHERE EXISTS (
+            SELECT 1 FROM recipe_reagents rr
+            WHERE rr.recipe_id = r.recipe_id AND rr.reagent_type = 'required'
+        )
+        ORDER BY r.profession_slug, r.recipe_id
         """
     ).fetchall()
     return [
