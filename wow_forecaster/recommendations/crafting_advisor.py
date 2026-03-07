@@ -75,6 +75,9 @@ class CraftingOpportunity:
     # Window margins: window -> margin_gold (None if not computable)
     windows: dict[CraftingWindow, float | None] = field(default_factory=dict)
 
+    # Projected sell price per window (denominator for accurate margin %)
+    window_sell_prices: dict[CraftingWindow, float | None] = field(default_factory=dict)
+
     # Best window (highest margin)
     best_window: CraftingWindow = CraftingWindow.NOW_NOW
     best_window_margin_gold: float | None = None
@@ -177,7 +180,7 @@ def build_crafting_opportunities(
         current_margin_pct = current.get("margin_pct")
 
         # Build window projections
-        windows = _compute_windows(
+        windows, window_sell_prices = _compute_windows(
             recipe=recipe,
             current_output_price=current_output,
             current_craft_cost=current_cost,
@@ -189,20 +192,26 @@ def build_crafting_opportunities(
         )
 
         best_window, best_margin_gold = _find_best_window(windows, current_output)
+        best_window_sell_price = window_sell_prices.get(best_window)
         best_margin_pct = (
-            best_margin_gold / current_output
-            if best_margin_gold is not None and current_output and current_output > 0
+            best_margin_gold / best_window_sell_price
+            if best_margin_gold is not None and best_window_sell_price and best_window_sell_price > 0
             else None
         )
 
-        # Compression/expansion detection
+        # Compression/expansion detection.
+        # Skip slope/percentile when output price is near zero — margin_pct is dominated
+        # by the tiny denominator and produces meaningless signals.
         rec_history = history.get(rid, [])
-        slope, pct_rank, status = _compute_margin_status(
-            rec_history,
-            current_margin_pct,
-            compression_slope_threshold,
-            expansion_slope_threshold,
-        )
+        if current_output is not None and current_output < 0.1:
+            slope, pct_rank, status = None, None, "unknown"
+        else:
+            slope, pct_rank, status = _compute_margin_status(
+                rec_history,
+                current_margin_pct,
+                compression_slope_threshold,
+                expansion_slope_threshold,
+            )
 
         # Final score
         score = (
@@ -218,6 +227,7 @@ def build_crafting_opportunities(
                 profession_slug=recipe["profession_slug"],
                 output_item_id=output_item_id,
                 windows=windows,
+                window_sell_prices=window_sell_prices,
                 best_window=best_window,
                 best_window_margin_gold=best_margin_gold,
                 best_window_margin_pct=best_margin_pct,
@@ -432,8 +442,12 @@ def _compute_windows(
     realm_slug: str,
     conn: sqlite3.Connection,
     run_date: date,
-) -> dict[CraftingWindow, float | None]:
-    """Compute margin_gold for each of the 6 temporal windows."""
+) -> tuple[dict[CraftingWindow, float | None], dict[CraftingWindow, float | None]]:
+    """Compute margin_gold and projected sell price for each of the 6 temporal windows.
+
+    Returns:
+        (windows, window_sell_prices) — both keyed by CraftingWindow.
+    """
     output_item_id = recipe["output_item_id"]
     output_archetype = item_archetype_map.get(output_item_id)
     reagents = _load_reagents_for_recipe(conn, recipe["recipe_id"])
@@ -476,18 +490,20 @@ def _compute_windows(
         return current_output_price  # fallback
 
     windows: dict[CraftingWindow, float | None] = {}
+    window_sell_prices: dict[CraftingWindow, float | None] = {}
     for window, (buy_h, sell_h) in _WINDOW_HORIZONS.items():
         sell_price = compute_output_price(sell_h)
         craft_cost = (
             current_craft_cost if buy_h == 0
             else compute_craft_cost(buy_h)
         )
+        window_sell_prices[window] = sell_price
         if sell_price is not None and craft_cost is not None:
             windows[window] = sell_price - craft_cost
         else:
             windows[window] = None
 
-    return windows
+    return windows, window_sell_prices
 
 
 def _load_reagents_for_recipe(

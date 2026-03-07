@@ -3200,8 +3200,12 @@ def report_crafting(
             if m is None:
                 margin_line = "  n/a"
             else:
-                pct = (m / opp.current_output_price_gold * 100) if opp.current_output_price_gold else 0
-                margin_line = f"  {m:>8.1f}g ({pct:.0f}%)"
+                sell_price = opp.window_sell_prices.get(w)
+                if sell_price and sell_price > 0:
+                    pct = m / sell_price * 100
+                    margin_line = f"  {m:>8.1f}g ({pct:.0f}%)"
+                else:
+                    margin_line = f"  {m:>8.1f}g"
             best_marker = " <- BEST" if w == opp.best_window else ""
             typer.echo(f"      {w.value:<14}{margin_line}{best_marker}")
         typer.echo("")
