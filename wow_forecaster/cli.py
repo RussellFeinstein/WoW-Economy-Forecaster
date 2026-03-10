@@ -621,6 +621,9 @@ def run_hourly_refresh(
         fixture_note = " (fixture mode — set API keys in .env for live data)"
     typer.echo(f"{status_tag} Hourly refresh {result.status}.{fixture_note}")
 
+    if result.status == "failed":
+        raise typer.Exit(code=1)
+
 
 @app.command("train-model")
 def train_model(
@@ -2534,6 +2537,86 @@ def report_status_cmd(
 
     typer.echo("")
     typer.echo("[OK] report-status complete.")
+
+
+@app.command("check-data-health")
+def check_data_health_cmd(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Realm slug. Uses first config default if omitted.",
+    ),
+    lookback_days: int = typer.Option(
+        14,
+        "--lookback-days",
+        help="Days to check for coverage gaps (default 14).",
+    ),
+    stale_hours: float = typer.Option(
+        4.0,
+        "--stale-hours",
+        help="Hours without a successful ingest before marking stale (default 4).",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Check data collection health: gaps, freshness, and coverage.
+
+    \b
+    Queries the DB directly (not output JSON files) for an authoritative
+    view of collection status.  Shows:
+      - Last successful hourly and daily-forecast run timestamps.
+      - Per-realm: first/last observation dates, days of coverage, and
+        any calendar dates in the lookback window that have no data.
+      - [STALE] flag when the last successful ingest is older than
+        --stale-hours.
+
+    \b
+    Exit codes:
+      0 -- all realms have recent data (within --stale-hours)
+      1 -- one or more realms are stale or have never been ingested
+
+    \b
+    Examples:
+        wow-forecaster check-data-health
+        wow-forecaster check-data-health --lookback-days 30
+        wow-forecaster check-data-health --stale-hours 6
+    """
+    import sqlite3 as _sqlite3
+    from pathlib import Path as _Path
+
+    from wow_forecaster.reporting.health import (
+        collect_health_report,
+        format_health_report,
+    )
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_realm = realm or config.realms.defaults[0]
+    db_path = _Path(config.database.db_path)
+
+    conn = _sqlite3.connect(str(db_path))
+    conn.row_factory = _sqlite3.Row
+    try:
+        report = collect_health_report(
+            conn           = conn,
+            realm_slugs    = [target_realm],
+            lookback_days  = lookback_days,
+            stale_threshold_hours = stale_hours,
+        )
+    finally:
+        conn.close()
+
+    typer.echo(format_health_report(report))
+
+    if report.is_stale:
+        typer.echo("[STALE] check-data-health: one or more realms need fresh data.")
+        raise typer.Exit(code=1)
+
+    typer.echo("[OK] check-data-health complete.")
 
 
 # ── Governance commands ───────────────────────────────────────────────────────

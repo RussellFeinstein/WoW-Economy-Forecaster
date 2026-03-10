@@ -32,7 +32,7 @@ BLIZZARD_CLIENT_SECRET=...
 - [wow_forecaster/config.py](wow_forecaster/config.py) — AppConfig via load_config()
 - [wow_forecaster/db/schema.py](wow_forecaster/db/schema.py) — 21 tables, apply_schema() idempotent
 - [wow_forecaster/pipeline/base.py](wow_forecaster/pipeline/base.py) — PipelineStage ABC
-- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (33 commands)
+- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (34 commands)
 - [config/default.toml](config/default.toml) — static config
 - [config/sources.toml](config/sources.toml) — 3 source policies
 - [config/events/tww_events.json](config/events/tww_events.json) — TWW seed events
@@ -110,10 +110,11 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Adaptive CI chain: drift check → uncertainty_mult in drift_check_results → ForecastStage reads it → widens CI
 - DB migration 0004: drift_check_results + model_health_snapshots (18 tables + migration 0005 adds 3 more = 21 total)
 
-### Reporting (v0.7.0)
-- CLI commands: report-top-items, report-forecasts, report-volatility, report-drift, report-status
+### Reporting (v0.7.0 / v2.1.0)
+- CLI commands: report-top-items, report-forecasts, report-volatility, report-drift, report-status, check-data-health
 - --export PATH writes flat CSV for Power BI (sc_* score component columns)
 - [dashboard/app.py](dashboard/app.py) — 5-tab Streamlit UI (optional dep group)
+- check-data-health (v2.1.0): wow_forecaster/reporting/health.py; collect_health_report() + format_health_report(); DB-backed gap detection — days of coverage, calendar-date gaps, last ingest age; exits 1 when stale; fix: run-hourly-refresh now exits 1 on "failed" status
 
 ### Source Governance (v0.8.0 / v1.9.0)
 - [config/sources.toml](config/sources.toml) — blizzard_api, blizzard_news_manual, manual_event_csv (3 policies)
@@ -166,4 +167,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-1090 tests passing
+1111 tests passing

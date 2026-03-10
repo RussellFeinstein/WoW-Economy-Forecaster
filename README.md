@@ -50,7 +50,7 @@ wow_forecaster/
 │                    # export (flat CSV/JSON for Power BI)
 ├── governance/      # Source policy registry, preflight checks, freshness validation
 ├── scheduler.py     # SchedulerDaemon (stdlib only) — hourly + daily automation
-└── cli.py           # Typer CLI: 33 commands
+└── cli.py           # Typer CLI: 34 commands
 
 config/
 ├── default.toml             # Static defaults (committed)
@@ -285,6 +285,10 @@ wow-forecaster report-status       [--realm SLUG] [--export PATH]
 wow-forecaster report-feature-importance [--realm SLUG] [--horizon 1d|7d|28d] \
                                          [--top-n N] [--importance-type gain|split] \
                                          [--export PATH]
+
+# DB-backed data collection health: coverage, gaps, freshness (exits 1 if stale)
+wow-forecaster check-data-health       [--realm SLUG] [--lookback-days 14] \
+                                       [--stale-hours 4]
 ```
 
 **Common options for all report commands:**
@@ -423,7 +427,7 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 1090 tests
+# All 1111 tests
 pytest
 
 # With coverage
@@ -433,7 +437,7 @@ pytest --cov=wow_forecaster --cov-report=term-missing
 pytest tests/test_recommendations/  # Scorer, ranker, item overlay, crafting advisor (160 tests)
 pytest tests/test_cli/              # CLI smoke tests (54 tests)
 pytest tests/test_governance/       # Source policies, preflight, freshness, pruner (100 tests)
-pytest tests/test_reporting/        # Reader, formatters, export, TSM export (104 tests)
+pytest tests/test_reporting/        # Reader, formatters, export, TSM export, health (125 tests)
 pytest tests/test_monitoring/       # Drift, adaptive, orchestrator (73 tests)
 pytest tests/test_ingestion/        # Ingestion + snapshots (73 tests)
 pytest tests/test_features/         # Feature engineering (81 tests)
