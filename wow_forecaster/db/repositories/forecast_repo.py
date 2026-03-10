@@ -35,8 +35,8 @@ class ForecastOutputRepository(BaseRepository):
                 run_id, archetype_id, item_id, realm_slug,
                 forecast_horizon, target_date, predicted_price_gold,
                 confidence_lower, confidence_upper, confidence_pct,
-                model_slug, features_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                model_slug, features_hash, ci_quality
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """,
             (
                 forecast.run_id,
@@ -51,6 +51,7 @@ class ForecastOutputRepository(BaseRepository):
                 forecast.confidence_pct,
                 forecast.model_slug,
                 forecast.features_hash,
+                forecast.ci_quality,
             ),
         )
         return self.last_insert_rowid()
@@ -279,6 +280,7 @@ def _row_to_forecast(row: sqlite3.Row) -> ForecastOutput:
         confidence_pct=row["confidence_pct"],
         model_slug=row["model_slug"],
         features_hash=row["features_hash"],
+        ci_quality=row["ci_quality"] if row["ci_quality"] else "good",
     )
 
 

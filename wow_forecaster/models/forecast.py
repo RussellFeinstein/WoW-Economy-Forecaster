@@ -25,6 +25,8 @@ RecommendationAction = Literal["buy", "sell", "hold", "avoid"]
 
 RiskLevel = Literal["low", "medium", "high", "critical"]
 
+CiQuality = Literal["good", "wide", "unreliable"]
+
 
 class ForecastOutput(BaseModel):
     """Point forecast with confidence interval for an archetype or item.
@@ -47,6 +49,8 @@ class ForecastOutput(BaseModel):
         confidence_pct: Confidence level of the interval, e.g. ``0.80`` for 80%.
         model_slug: Identifier of the model that produced this forecast.
         features_hash: SHA-256 of the feature vector for reproducibility.
+        ci_quality: CI quality classification — ``"good"`` (width < 50%),
+            ``"wide"`` (50–200%), or ``"unreliable"`` (≥ 200%).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -64,6 +68,7 @@ class ForecastOutput(BaseModel):
     confidence_pct: float = 0.80
     model_slug: str
     features_hash: Optional[str] = None
+    ci_quality: CiQuality = "good"
 
     @model_validator(mode="after")
     def validate_forecast_consistency(self) -> "ForecastOutput":

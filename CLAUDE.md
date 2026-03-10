@@ -91,7 +91,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - BacktestConfig: horizons_days=[1,3], min_train_rows=14
 - DB tables: backtest_runs, backtest_fold_results (migration 0002)
 
-### ML + Recommendations (v0.5.0)
+### ML + Recommendations (v0.5.0 / v1.10.0 / v1.11.0)
 - [wow_forecaster/ml/feature_selector.py](wow_forecaster/ml/feature_selector.py) — TRAINING_FEATURE_COLS (40)
 - [wow_forecaster/ml/lgbm_model.py](wow_forecaster/ml/lgbm_model.py) — LightGBMForecaster: fit/predict/save/load; global cross-archetype model
 - ForecastHorizon: 1d/7d/28d; TARGET_COL_MAP = {1: 1d, 7: 7d, 28: 28d}
@@ -99,6 +99,8 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - event_boost clamp: [-100, 100] (negative impacts penalize score)
 - top_n_per_category deduplication: best-scoring horizon per archetype_id (tie: shorter wins)
 - DB migration 0003: adds score, score_components, category_tag to recommendation_outputs
+- Risk levels (v1.10.0): determine_risk_level() in scorer.py — LOW/MEDIUM/HIGH/CRITICAL tiers independent of action; AVOID only at CRITICAL (uncertainty ≥ 95%); risk_level persisted in recommendation_outputs (migration 0006)
+- CI floor/cap (v1.11.0): compute_confidence_interval() in cold_start.py accepts current_price; floor = 5% of current, cap = 10× current; prevents 0.0 lower bounds and absurd upper bounds; ci_quality field ("good"/"wide"/"unreliable") on ForecastOutput (migration 0007)
 
 ### Monitoring + Orchestration (v0.6.0)
 - [wow_forecaster/pipeline/orchestrator.py](wow_forecaster/pipeline/orchestrator.py) — HourlyOrchestrator: 7-step pipeline
@@ -162,4 +164,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-1034 tests passing
+1054 tests passing

@@ -29,6 +29,19 @@ produce well-calibrated predictions.  Two mechanisms handle this:
    CI widening is applied AFTER blending so the interval is centred on
    the blended prediction, not the raw model output.
 
+4. CI floor and cap (when current_price is provided):
+   - Floor: ci_lower is never less than 5% of current_price.
+     Prevents 0.0 lower bounds that arise when ci_half > predicted.
+   - Cap: ci_upper is never more than 10× current_price.
+     Prevents absurd upper bounds from extreme cold-start widening.
+   - After floor/cap, lower is re-clamped to ≤ upper to maintain the
+     invariant (can only happen if current_price × 0.05 > cap).
+
+5. CI quality classification (classify_ci_quality):
+   Labels the final CI as "good", "wide", or "unreliable" based on the
+   width relative to the predicted price.  Stored alongside the forecast
+   so downstream consumers can filter or highlight low-confidence rows.
+
 Uncertainty note
 ----------------
 CIs produced here are HEURISTIC, not model-derived.  They do NOT come from
@@ -62,6 +75,7 @@ def compute_confidence_interval(
     is_cold_start: bool,
     transfer_confidence: float | None,
     confidence_pct: float = 0.80,
+    current_price: float | None = None,
 ) -> tuple[float, float]:
     """Compute heuristic confidence interval for a price forecast.
 
@@ -74,9 +88,12 @@ def compute_confidence_interval(
         transfer_confidence: Confidence of the transfer mapping (0.0–1.0).
                            None means no transfer mapping exists.
         confidence_pct:    Target CI level (default 0.80 = 80% two-sided).
+        current_price:     Current market price_mean in gold.  When provided,
+                           applies a 5% floor on ci_lower and a 10× cap on
+                           ci_upper to prevent degenerate bounds.
 
     Returns:
-        Tuple ``(lower, upper)`` in gold, both non-negative.
+        Tuple ``(lower, upper)`` in gold, both non-negative, lower <= upper.
     """
     z = _Z_LOOKUP.get(confidence_pct, _DEFAULT_Z)
 
@@ -98,7 +115,50 @@ def compute_confidence_interval(
 
     lower = max(0.0, predicted - ci_half)
     upper = predicted + ci_half
+
+    # Apply current-price-based floor and cap to prevent degenerate bounds.
+    # Floor: ci_lower never below 5% of current (prevents 0.0 lower bounds).
+    # Cap:   ci_upper never above 10× current (prevents absurdly wide CIs).
+    if current_price is not None and current_price > 0:
+        lower = max(lower, current_price * 0.05)
+        upper = min(upper, current_price * 10.0)
+        # Re-clamp in case floor > cap (can only happen if current_price is
+        # orders of magnitude larger than predicted; keep lower <= upper).
+        lower = min(lower, upper)
+
     return lower, upper
+
+
+def classify_ci_quality(
+    ci_lower: float,
+    ci_upper: float,
+    predicted: float,
+) -> str:
+    """Classify the quality of a confidence interval by its relative width.
+
+    Width = (ci_upper − ci_lower) / predicted_price.
+
+    Thresholds:
+        "good"       : width < 50%   — tightly calibrated forecast
+        "wide"       : 50% ≤ width < 200% — usable but uncertain
+        "unreliable" : width ≥ 200%  — treat with caution; may be cold-start
+
+    Args:
+        ci_lower:  Lower confidence bound in gold.
+        ci_upper:  Upper confidence bound in gold.
+        predicted: Central price estimate in gold.
+
+    Returns:
+        One of ``"good"``, ``"wide"``, or ``"unreliable"``.
+    """
+    if predicted <= 0:
+        return "unreliable"
+    width_pct = (ci_upper - ci_lower) / predicted
+    if width_pct < 0.50:
+        return "good"
+    if width_pct < 2.00:
+        return "wide"
+    return "unreliable"
 
 
 def blend_cold_start_prediction(

@@ -31,6 +31,7 @@ from typing import Any
 
 from wow_forecaster.ml.cold_start import (
     blend_cold_start_prediction,
+    classify_ci_quality,
     cold_start_model_slug,
     compute_confidence_interval,
 )
@@ -138,12 +139,14 @@ def run_inference(
                 source_price, blend_conf = cold_start_blend[int(archetype_id)]
                 pred = blend_cold_start_prediction(pred, source_price, blend_conf)
 
+            price_mean = raw_row.get("price_mean")
             ci_lower, ci_upper = compute_confidence_interval(
                 predicted=pred,
                 rolling_std_7d=float(rolling_std) if rolling_std is not None else None,
                 is_cold_start=is_cold_start,
                 transfer_confidence=float(xfer_conf) if xfer_conf is not None else None,
                 confidence_pct=confidence_pct,
+                current_price=float(price_mean) if price_mean is not None else None,
             )
 
             # Apply drift-based uncertainty widening from adaptive monitoring layer.
@@ -154,6 +157,8 @@ def run_inference(
                 new_half = ci_half * uncertainty_multiplier
                 ci_lower = max(0.0, center - new_half)
                 ci_upper = center + new_half
+
+            ci_quality = classify_ci_quality(ci_lower, ci_upper, pred)
 
             base_slug  = f"lgbm_{horizon_days}d_{LightGBMForecaster.MODEL_VERSION}"
             model_slug = cold_start_model_slug(base_slug, is_cold_start, has_transfer)
@@ -172,6 +177,7 @@ def run_inference(
                     confidence_pct=confidence_pct,
                     model_slug=model_slug,
                     features_hash=feat_hash,
+                    ci_quality=ci_quality,
                 )
             )
 

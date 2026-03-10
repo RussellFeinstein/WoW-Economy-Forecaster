@@ -243,6 +243,19 @@ def migration_0006_add_risk_level(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def migration_0007_add_ci_quality(conn: sqlite3.Connection) -> None:
+    """Add ci_quality column to forecast_outputs (Task 1.2 — CI bounds fix)."""
+    existing = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(forecast_outputs);").fetchall()
+    }
+    if "ci_quality" not in existing:
+        conn.execute(
+            "ALTER TABLE forecast_outputs ADD COLUMN ci_quality TEXT NOT NULL DEFAULT 'good';"
+        )
+    conn.commit()
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 # Add new migrations here. They will run once, in order.
 
@@ -270,6 +283,10 @@ MIGRATIONS: dict[str, tuple[MigrationFn, str]] = {
     "0006_recommendation_risk_level": (
         migration_0006_add_risk_level,
         "Add risk_level column to recommendation_outputs",
+    ),
+    "0007_forecast_ci_quality": (
+        migration_0007_add_ci_quality,
+        "Add ci_quality column to forecast_outputs",
     ),
 }
 
