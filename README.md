@@ -411,7 +411,7 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 950 tests
+# All 968 tests
 pytest
 
 # With coverage

@@ -166,6 +166,18 @@ def build_crafting_opportunities(
         conn, all_price_item_ids, realm_slug, run_date
     )
 
+    # Collect archetype IDs for all recipe-linked items (needed for trend-ratio scaling)
+    all_archetype_ids = list({
+        arch_id
+        for item_id in all_price_item_ids
+        if (arch_id := item_archetype_map.get(item_id)) is not None
+    })
+
+    # Batch-load 7-day rolling prices per archetype (denominator for trend-ratio scaling)
+    archetype_current_prices = _fetch_archetype_prices_bulk(
+        conn, all_archetype_ids, realm_slug, run_date
+    )
+
     # Load volume (quantity_sum) for output items over last 7 days
     volume_map = _fetch_output_volumes(conn, output_item_ids, realm_slug, run_date)
 
@@ -205,6 +217,7 @@ def build_crafting_opportunities(
             item_archetype_map=item_archetype_map,
             forecasts=forecasts,
             current_price_map=current_price_map,
+            archetype_current_prices=archetype_current_prices,
         )
 
         best_window, best_margin_gold = _find_best_window(windows, current_output)
@@ -486,26 +499,58 @@ def _compute_windows(
     item_archetype_map: dict[int, int],
     forecasts: dict[tuple[int, str], float],
     current_price_map: dict[int, float],
+    archetype_current_prices: dict[int, float] | None = None,
 ) -> tuple[dict[CraftingWindow, float | None], dict[CraftingWindow, float | None]]:
     """Compute margin_gold and projected sell price for each of the 6 temporal windows.
+
+    For future horizons (horizon_days > 0), item prices are projected using
+    trend-ratio scaling: item_forecast = item_current × (archetype_forecast /
+    archetype_current). This preserves item-specific price levels while applying
+    the archetype's directional trend. Falls back to the raw archetype forecast
+    when the ratio cannot be computed, then to the item's current price.
 
     Returns:
         (windows, window_sell_prices) — both keyed by CraftingWindow.
     """
     output_item_id = recipe["output_item_id"]
-    output_archetype = item_archetype_map.get(output_item_id)
     output_quantity = max(recipe.get("output_quantity", 1), 1)
+    _arch_currents = archetype_current_prices or {}
 
     def forecast_price(item_id: int, horizon_days: int) -> float | None:
-        """Get forecasted price for an item at a given horizon."""
+        """Get forecasted price for an item at a given horizon.
+
+        For horizon_days == 0: return current item price directly.
+        For horizon_days > 0: apply archetype trend-ratio to preserve item-
+        specific price levels. Falls back to archetype forecast, then current price.
+        """
         if horizon_days == 0:
             return current_price_map.get(item_id)
+
+        item_current = current_price_map.get(item_id)
         archetype_id = item_archetype_map.get(item_id)
         label = _HORIZON_LABEL.get(horizon_days)
+
         if archetype_id and label:
-            return forecasts.get((archetype_id, label))
-        # Fallback: use pre-loaded current price
-        return current_price_map.get(item_id)
+            archetype_forecast = forecasts.get((archetype_id, label))
+            archetype_current = _arch_currents.get(archetype_id)
+
+            # Preferred path: scale item's actual price by archetype trend ratio.
+            # This preserves intra-archetype price differentiation (e.g., rare herb
+            # at 80g vs common herb at 20g, both in mat.herb.common archetype).
+            if (
+                item_current is not None
+                and archetype_forecast is not None
+                and archetype_current is not None
+                and archetype_current > 0
+            ):
+                return item_current * (archetype_forecast / archetype_current)
+
+            # Fallback: archetype forecast level (loses item-specific differentiation)
+            if archetype_forecast is not None:
+                return archetype_forecast
+
+        # Final fallback: assume no price change from current
+        return item_current
 
     def compute_craft_cost(buy_horizon: int) -> float | None:
         """Sum ingredient costs at the given buy horizon."""
@@ -523,13 +568,16 @@ def _compute_windows(
         return total / output_quantity
 
     def compute_output_price(sell_horizon: int) -> float | None:
-        """Get expected output price at the given sell horizon."""
+        """Get expected output price at the given sell horizon.
+
+        For sell_horizon == 0, returns the current margin snapshot price (which
+        may differ from current_price_map if the snapshot is slightly dated).
+        For future horizons, delegates to forecast_price() so trend-ratio scaling
+        is applied consistently for both reagents and output items.
+        """
         if sell_horizon == 0:
             return current_output_price
-        label = _HORIZON_LABEL.get(sell_horizon)
-        if output_archetype and label:
-            return forecasts.get((output_archetype, label))
-        return current_output_price  # fallback
+        return forecast_price(output_item_id, sell_horizon)
 
     windows: dict[CraftingWindow, float | None] = {}
     window_sell_prices: dict[CraftingWindow, float | None] = {}
@@ -602,6 +650,44 @@ def _fetch_item_prices_bulk(
         GROUP BY item_id
         """,
         [realm_slug, start_ts, end_ts] + list(item_ids),
+    ).fetchall()
+    return {row[0]: float(row[1]) for row in rows if row[1] is not None}
+
+
+def _fetch_archetype_prices_bulk(
+    conn: sqlite3.Connection,
+    archetype_ids: list[int],
+    realm_slug: str,
+    run_date: date,
+) -> dict[int, float]:
+    """Batch-load 7-day quantity-weighted mean prices for archetypes in a single query.
+
+    Used as the denominator in trend-ratio scaling: archetype_forecast / archetype_current.
+    Mirrors _fetch_item_prices_bulk() but groups by archetype_id via JOIN items.
+
+    Returns dict: archetype_id -> avg_price_gold.
+    """
+    if not archetype_ids:
+        return {}
+    start_ts = (run_date - timedelta(days=6)).isoformat()
+    end_ts = (run_date + timedelta(days=1)).isoformat()
+    placeholders = ",".join("?" * len(archetype_ids))
+    rows = conn.execute(
+        f"""
+        SELECT i.archetype_id,
+               SUM(mon.price_gold * COALESCE(mon.quantity_listed, 1))
+                   / NULLIF(SUM(COALESCE(mon.quantity_listed, 1)), 0)
+        FROM market_observations_normalized mon
+        JOIN items i ON mon.item_id = i.item_id
+        WHERE mon.realm_slug = ?
+          AND mon.is_outlier = 0
+          AND mon.observed_at >= ?
+          AND mon.observed_at <  ?
+          AND mon.price_gold > 0
+          AND i.archetype_id IN ({placeholders})
+        GROUP BY i.archetype_id
+        """,
+        [realm_slug, start_ts, end_ts] + list(archetype_ids),
     ).fetchall()
     return {row[0]: float(row[1]) for row in rows if row[1] is not None}
 

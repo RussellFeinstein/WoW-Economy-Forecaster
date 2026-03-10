@@ -133,6 +133,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - [wow_forecaster/recipes/margin_calculator.py](wow_forecaster/recipes/margin_calculator.py) — MarginCalculator.compute_margins(): daily craft cost vs output price → crafting_margin_snapshots
 - [wow_forecaster/recommendations/crafting_advisor.py](wow_forecaster/recommendations/crafting_advisor.py) — CraftingWindow(6 windows), build_crafting_opportunities(), rank_crafting_opportunities()
 - CraftingWindow: NOW_NOW, NOW_7D, NOW_28D, _7D_7D, _7D_28D, _28D_28D — all (buy≤sell) pairs using 1d/7d/28d forecasts
+- Future window price projection (v1.5.7): trend-ratio scaling — item_forecast = item_current × (archetype_forecast / archetype_rolling_current); preserves intra-archetype item price differentiation; falls back to raw archetype forecast then current price
 - Volume gate: hard filter (quantity_sum_7d < min_volume_units=50 excluded) + volume_score = clamp(qty/500, 0, 1)
 - opportunity_score = best_window_margin_pct × volume_score
 - Compression/expansion: linear regression slope of margin_pct over last N days; ±0.02/day thresholds
@@ -156,4 +157,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-950 tests passing
+968 tests passing
