@@ -11,6 +11,7 @@ from wow_forecaster.db.schema import apply_schema
 from wow_forecaster.models.forecast import ForecastOutput
 from wow_forecaster.pipeline.forecast import (
     _fetch_archetype_prices,
+    _fetch_cold_start_blend_data,
     _fetch_item_archetypes,
     _fetch_item_prices,
     _fetch_recipe_item_ids,
@@ -373,3 +374,109 @@ class TestFetchItemForecastsInAdvisor:
         margin_now_7d = windows.get("now->+7d")
         assert margin_now_7d is not None
         assert abs(margin_now_7d - (75.0 - 20.0)) < 1.0
+
+
+def _insert_mapping(
+    conn,
+    source_archetype_id: int,
+    target_archetype_id: int,
+    confidence: float = 0.8,
+    source_expansion: str = "tww",
+    target_expansion: str = "midnight",
+) -> None:
+    conn.execute(
+        "INSERT INTO archetype_mappings "
+        "(source_archetype_id, target_archetype_id, source_expansion, target_expansion, "
+        " confidence_score, mapping_rationale) "
+        "VALUES (?, ?, ?, ?, ?, 'test');",
+        (source_archetype_id, target_archetype_id, source_expansion, target_expansion, confidence),
+    )
+
+
+class TestFetchColdStartBlendData:
+    """Tests for _fetch_cold_start_blend_data()."""
+
+    def test_returns_blend_entry_when_source_has_price(self):
+        """Returns (price, confidence) keyed by target archetype_id."""
+        conn = _make_db()
+        _insert_archetype(conn, 1, "tww.herb")
+        _insert_archetype(conn, 2, "mid.herb")
+        _insert_item(conn, 100, archetype_id=1)
+        _insert_price(conn, 100, "2026-03-06", 50.0, qty=100)
+        _insert_mapping(conn, source_archetype_id=1, target_archetype_id=2, confidence=0.8)
+        conn.commit()
+
+        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight")
+        assert 2 in result
+        source_price, confidence = result[2]
+        assert abs(source_price - 50.0) < 1.0
+        assert confidence == pytest.approx(0.8)
+
+    def test_omits_entry_when_source_has_no_price(self):
+        """If source archetype has no recent price data, target is omitted from result."""
+        conn = _make_db()
+        _insert_archetype(conn, 1, "tww.herb")
+        _insert_archetype(conn, 2, "mid.herb")
+        # No price for source archetype
+        _insert_mapping(conn, source_archetype_id=1, target_archetype_id=2, confidence=0.8)
+        conn.commit()
+
+        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight")
+        assert result == {}
+
+    def test_empty_when_no_mappings(self):
+        """Returns empty dict when archetype_mappings has no rows."""
+        conn = _make_db()
+        conn.commit()
+        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight")
+        assert result == {}
+
+    def test_filters_by_expansion_pair(self):
+        """Only mappings matching source_expansion + target_expansion are returned."""
+        conn = _make_db()
+        _insert_archetype(conn, 1, "src.herb")
+        _insert_archetype(conn, 2, "tgt.herb")
+        _insert_item(conn, 100, archetype_id=1)
+        _insert_price(conn, 100, "2026-03-06", 60.0, qty=100)
+        # Mapping for different expansion pair
+        _insert_mapping(conn, 1, 2, confidence=0.9, source_expansion="dragonflight", target_expansion="tww")
+        conn.commit()
+
+        # Query for tww→midnight should return nothing
+        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight")
+        assert result == {}
+
+    def test_omits_zero_confidence_mappings(self):
+        """Mappings with confidence_score = 0 are excluded (WHERE clause guard)."""
+        conn = _make_db()
+        _insert_archetype(conn, 1, "tww.mat")
+        _insert_archetype(conn, 2, "mid.mat")
+        _insert_item(conn, 100, archetype_id=1)
+        _insert_price(conn, 100, "2026-03-06", 50.0, qty=100)
+        _insert_mapping(conn, 1, 2, confidence=0.0)
+        conn.commit()
+
+        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight")
+        assert result == {}
+
+    def test_multiple_mappings_returned(self):
+        """Multiple TWW→Midnight mappings all appear in result."""
+        conn = _make_db()
+        _insert_archetype(conn, 1, "tww.herb")
+        _insert_archetype(conn, 2, "mid.herb")
+        _insert_archetype(conn, 3, "tww.ore")
+        _insert_archetype(conn, 4, "mid.ore")
+        _insert_item(conn, 100, archetype_id=1)
+        _insert_item(conn, 200, archetype_id=3)
+        _insert_price(conn, 100, "2026-03-06", 50.0, qty=100)
+        _insert_price(conn, 200, "2026-03-06", 30.0, qty=100)
+        _insert_mapping(conn, 1, 2, confidence=0.8)
+        _insert_mapping(conn, 3, 4, confidence=0.7)
+        conn.commit()
+
+        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight")
+        assert set(result.keys()) == {2, 4}
+        assert abs(result[2][0] - 50.0) < 1.0
+        assert abs(result[4][0] - 30.0) < 1.0
+        assert result[2][1] == pytest.approx(0.8)
+        assert result[4][1] == pytest.approx(0.7)

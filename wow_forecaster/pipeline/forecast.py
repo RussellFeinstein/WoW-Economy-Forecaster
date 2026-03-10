@@ -147,19 +147,29 @@ class ForecastStage(PipelineStage):
                 realm, list(forecasters.keys()), inf_path,
             )
 
-            # Read drift-based uncertainty multiplier from last drift check.
-            # Returns 1.0 if no drift data exists yet (no adjustment).
+            # Read drift-based uncertainty multiplier and cold-start blend data.
             with get_connection(
                 self.db_path,
                 wal_mode=self.config.database.wal_mode,
                 busy_timeout_ms=self.config.database.busy_timeout_ms,
             ) as conn:
                 uncertainty_mult = get_latest_uncertainty_multiplier(conn, realm)
+                blend_data = _fetch_cold_start_blend_data(
+                    conn,
+                    realm_slug=realm,
+                    source_expansion=self.config.expansions.active,
+                    target_expansion=self.config.expansions.transfer_target,
+                )
 
             if uncertainty_mult != 1.0:
                 logger.info(
                     "realm=%s: applying drift CI multiplier=%.2f",
                     realm, uncertainty_mult,
+                )
+            if blend_data:
+                logger.info(
+                    "realm=%s: cold-start blend data available for %d archetypes.",
+                    realm, len(blend_data),
                 )
 
             try:
@@ -170,6 +180,7 @@ class ForecastStage(PipelineStage):
                     inference_parquet_path=inf_path,
                     realm_slug=realm,
                     uncertainty_multiplier=uncertainty_mult,
+                    cold_start_blend=blend_data or None,
                 )
             except Exception as exc:
                 logger.error("Inference failed for realm=%s: %s", realm, exc, exc_info=True)
@@ -417,3 +428,59 @@ def _fetch_archetype_prices(
         [realm_slug, start_ts, end_ts] + list(archetype_ids),
     ).fetchall()
     return {int(r[0]): float(r[1]) for r in rows if r[1] is not None}
+
+
+def _fetch_cold_start_blend_data(
+    conn: sqlite3.Connection,
+    realm_slug: str,
+    source_expansion: str,
+    target_expansion: str,
+) -> dict[int, tuple[float, float]]:
+    """Fetch blend data for cold-start prediction anchoring.
+
+    Queries archetype_mappings for TWW→Midnight archetype pairs, then fetches
+    the 7-day rolling mean price for each source (TWW) archetype.  The result
+    is keyed by target (Midnight) archetype_id so ``run_inference()`` can look
+    up blend data by the archetype it is currently scoring.
+
+    Args:
+        conn:              Open DB connection.
+        realm_slug:        Realm to fetch source archetype prices for.
+        source_expansion:  Expansion slug of the source (e.g. ``"tww"``).
+        target_expansion:  Expansion slug of the target (e.g. ``"midnight"``).
+
+    Returns:
+        Dict mapping target_archetype_id → (source_rolling_price, confidence).
+        Entries are omitted when the source archetype has no recent price data.
+    """
+    # Fetch all mappings between expansions with confidence scores
+    mapping_rows = conn.execute(
+        """
+        SELECT source_archetype_id, target_archetype_id, confidence_score
+        FROM archetype_mappings
+        WHERE source_expansion = ? AND target_expansion = ?
+          AND confidence_score > 0
+        """,
+        [source_expansion, target_expansion],
+    ).fetchall()
+
+    if not mapping_rows:
+        return {}
+
+    # Build lookup: source_archetype_id → (target_archetype_id, confidence)
+    source_to_target: dict[int, tuple[int, float]] = {
+        int(r[0]): (int(r[1]), float(r[2])) for r in mapping_rows
+    }
+    source_ids = list(source_to_target.keys())
+
+    # Fetch 7-day rolling prices for source archetypes
+    source_prices = _fetch_archetype_prices(conn, source_ids, realm_slug, date.today())
+
+    # Build result: target_archetype_id → (source_price, confidence)
+    result: dict[int, tuple[float, float]] = {}
+    for source_id, (target_id, confidence) in source_to_target.items():
+        source_price = source_prices.get(source_id)
+        if source_price is not None and source_price > 0:
+            result[target_id] = (source_price, confidence)
+
+    return result

@@ -1,5 +1,5 @@
 """
-Confidence-interval widening for cold-start Midnight archetypes.
+Cold-start handling for Midnight archetypes with insufficient price history.
 
 Cold-start items (is_cold_start=True) lack sufficient price history to
 produce well-calibrated predictions.  Two mechanisms handle this:
@@ -8,26 +8,33 @@ produce well-calibrated predictions.  Two mechanisms handle this:
    The feature ``is_cold_start_int=1`` signals to LightGBM that the row
    belongs to a thin series.  The model self-regulates via this feature.
 
-2. CI widening (this module): the heuristic confidence interval is
-   multiplied by a factor derived from ``transfer_confidence``:
+2. Prediction blending (blend_cold_start_prediction): for cold-start
+   archetypes with a transfer mapping, the model prediction is blended
+   with the mapped source-expansion archetype's recent rolling price:
+
+     blended = conf × model_prediction + (1 − conf) × source_price
+
+   conf = 1.0 → pure model prediction (no anchor needed).
+   conf = 0.0 → pure source price (no model data trusted at all).
+   Typical conf ≈ 0.60–0.90 → majority-weighted toward model with
+   source-price anchor proportional to mapping uncertainty.
+
+3. CI widening (compute_confidence_interval): the heuristic confidence
+   interval is multiplied by a factor derived from transfer_confidence:
 
      transfer_confidence = 0.90  → widening = 1.5 / 0.90 ≈ 1.67×
      transfer_confidence = 0.60  → widening = 1.5 / 0.60 = 2.50×
      transfer_confidence = None  → widening = 3.00× (no mapping at all)
 
-   Minimum CI half-width is always ≥ 5% of the predicted price.
-
-V1 limitation
--------------
-Full prediction blending (source-archetype prediction × transfer_confidence)
-is a planned V2 feature.  It requires source predictions to be available at
-inference time as a lookup table — adding complexity not yet warranted.
+   CI widening is applied AFTER blending so the interval is centred on
+   the blended prediction, not the raw model output.
 
 Uncertainty note
 ----------------
 CIs produced here are HEURISTIC, not model-derived.  They do NOT come from
-quantile regression or conformal prediction.  V2 should use LightGBM with
-``objective="quantile"`` to generate model-calibrated intervals.
+quantile regression or conformal prediction.  A future improvement would
+use LightGBM with ``objective="quantile"`` to generate model-calibrated
+intervals.
 """
 
 from __future__ import annotations
@@ -92,6 +99,44 @@ def compute_confidence_interval(
     lower = max(0.0, predicted - ci_half)
     upper = predicted + ci_half
     return lower, upper
+
+
+def blend_cold_start_prediction(
+    model_prediction: float,
+    source_price: float,
+    transfer_confidence: float,
+) -> float:
+    """Blend a cold-start model prediction with the mapped source-expansion price.
+
+    For cold-start Midnight archetypes, the global model has limited in-domain
+    training data and may produce poorly-calibrated predictions.  Blending with
+    the analogous TWW archetype's recent rolling price anchors the forecast
+    proportionally to the mapping confidence.
+
+    Formula:
+        blended = transfer_confidence × model_prediction
+                + (1 − transfer_confidence) × source_price
+
+    Edge cases:
+        transfer_confidence ≥ 1.0  → returns model_prediction unchanged.
+        transfer_confidence ≤ 0.0  → returns source_price unchanged.
+        source_price <= 0           → returns model_prediction unchanged
+                                     (source price unavailable/invalid).
+
+    Args:
+        model_prediction:    Raw LightGBM prediction in gold.
+        source_price:        Recent rolling mean price of the mapped source
+                             archetype (e.g. TWW equivalent) in gold.
+        transfer_confidence: Mapping confidence in [0.0, 1.0].
+
+    Returns:
+        Blended price in gold, non-negative.
+    """
+    if source_price <= 0.0:
+        return max(0.0, model_prediction)
+    conf = max(0.0, min(1.0, transfer_confidence))
+    blended = conf * model_prediction + (1.0 - conf) * source_price
+    return max(0.0, blended)
 
 
 def cold_start_model_slug(

@@ -411,7 +411,7 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 985 tests
+# All 1008 tests
 pytest
 
 # With coverage
@@ -427,8 +427,8 @@ pytest tests/test_ingestion/        # Ingestion + snapshots (73 tests)
 pytest tests/test_features/         # Feature engineering (81 tests)
 pytest tests/test_backtest/         # Backtest framework (60 tests)
 pytest tests/test_models/           # Pydantic validation (61 tests)
-pytest tests/test_pipeline/         # Pipeline interfaces, normalize (36 tests)
-pytest tests/test_ml/               # LightGBM training and inference (44 tests)
+pytest tests/test_pipeline/         # Pipeline interfaces, normalize, item forecasts (59 tests)
+pytest tests/test_ml/               # LightGBM training, inference, cold-start blending (61 tests)
 pytest tests/test_scheduler/        # Scheduler daemon (26 tests)
 pytest tests/test_db/               # Schema + repositories + migrations (37 tests)
 pytest tests/test_events/           # Seed loader, event imports (24 tests)

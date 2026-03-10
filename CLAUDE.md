@@ -136,6 +136,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Future window price projection (v1.5.7+): trend-ratio scaling — item_forecast = item_current × (archetype_forecast / archetype_rolling_current); preserves intra-archetype item price differentiation; falls back to raw archetype forecast then current price
 - Item-level forecasts (v1.6.0): ForecastStage._generate_item_forecasts() writes item_id-keyed rows to forecast_outputs (item_id set, archetype_id=None) for all recipe-linked items; crafting_advisor._fetch_item_forecasts() prefers these over archetype-level forecasts (priority: item forecast → trend-ratio → archetype forecast → current price)
 - forecast_outputs.item_id was previously always NULL; now populated for recipe items after each run-daily-forecast
+- Cold-start prediction blending (v1.7.0): ForecastStage._execute() calls _fetch_cold_start_blend_data() to build (source_price, confidence) pairs from archetype_mappings; run_inference() calls cold_start.blend_cold_start_prediction() BEFORE CI computation; blended = confidence × model_pred + (1-confidence) × source_price; model_slug gets _transfer suffix for blended archetypes
 - Volume gate: hard filter (quantity_sum_7d < min_volume_units=50 excluded) + volume_score = clamp(qty/500, 0, 1)
 - opportunity_score = best_window_margin_pct × volume_score
 - Compression/expansion: linear regression slope of margin_pct over last N days; ±0.02/day thresholds
@@ -159,4 +160,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-985 tests passing
+1008 tests passing

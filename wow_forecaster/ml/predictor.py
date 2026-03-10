@@ -29,7 +29,11 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from wow_forecaster.ml.cold_start import cold_start_model_slug, compute_confidence_interval
+from wow_forecaster.ml.cold_start import (
+    blend_cold_start_prediction,
+    cold_start_model_slug,
+    compute_confidence_interval,
+)
 from wow_forecaster.ml.feature_selector import TRAINING_FEATURE_COLS, encode_row
 from wow_forecaster.ml.lgbm_model import LightGBMForecaster
 from wow_forecaster.models.forecast import ForecastOutput
@@ -48,6 +52,7 @@ def run_inference(
     realm_slug: str,
     target_date: date | None = None,
     uncertainty_multiplier: float = 1.0,
+    cold_start_blend: dict[int, tuple[float, float]] | None = None,
 ) -> list[ForecastOutput]:
     """Generate ForecastOutput for all archetypes in the inference Parquet.
 
@@ -62,6 +67,11 @@ def run_inference(
         uncertainty_multiplier:  Drift-based CI widening factor from
                                  ``get_latest_uncertainty_multiplier()``.
                                  1.0 = no adjustment; >1.0 widens CI symmetrically.
+        cold_start_blend:        Optional dict mapping target archetype_id to
+                                 (source_price, transfer_confidence) for cold-start
+                                 prediction blending.  Built by
+                                 ``pipeline.forecast._fetch_cold_start_blend_data()``.
+                                 None or missing key = no blending for that archetype.
 
     Returns:
         List of ForecastOutput objects (one per archetype × horizon).
@@ -116,6 +126,17 @@ def run_inference(
             has_transfer  = bool(raw_row.get("has_transfer_mapping", False))
             rolling_std   = raw_row.get("price_roll_std_7d")
             xfer_conf     = raw_row.get("transfer_confidence")
+
+            # Blend cold-start prediction with mapped source-expansion price.
+            # Blending is applied BEFORE CI computation so the CI is centred
+            # on the blended prediction rather than the raw model output.
+            if (
+                is_cold_start
+                and cold_start_blend
+                and int(archetype_id) in cold_start_blend
+            ):
+                source_price, blend_conf = cold_start_blend[int(archetype_id)]
+                pred = blend_cold_start_prediction(pred, source_price, blend_conf)
 
             ci_lower, ci_upper = compute_confidence_interval(
                 predicted=pred,
