@@ -122,6 +122,7 @@ def _scored_forecast(
         score=score,
         components=components,
         action=action,
+        risk_level="low",
         reasoning="Moderate upward forecast: +10.0% expected 7d return",
         category_tag=category,
         archetype_sub_tag=None,

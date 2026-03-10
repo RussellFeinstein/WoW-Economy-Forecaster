@@ -37,6 +37,7 @@ from wow_forecaster.recommendations.scorer import (
     build_reasoning,
     compute_score,
     determine_action,
+    determine_risk_level,
 )
 
 _HORIZON_MAP: dict[str, int] = {
@@ -65,6 +66,7 @@ class ScoredForecast:
     score:         float
     components:    ScoreComponents
     action:        str
+    risk_level:    str
     reasoning:     str
     category_tag:       str
     archetype_sub_tag:  str | None
@@ -135,6 +137,11 @@ def build_scored_forecasts(
             volatility_cv=components.volatility_cv,
         )
 
+        risk_level = determine_risk_level(
+            uncertainty_pct=components.uncertainty_pct,
+            volatility_cv=components.volatility_cv,
+        )
+
         reasoning = build_reasoning(
             components=components,
             action=action,
@@ -155,6 +162,7 @@ def build_scored_forecasts(
                 score=round(components.total, 2),
                 components=components,
                 action=action,
+                risk_level=risk_level,
                 reasoning=reasoning,
                 category_tag=category_tag,
                 archetype_sub_tag=archetype_sub_tag,
@@ -285,6 +293,7 @@ def build_recommendation_outputs(
                 RecommendationOutput(
                     forecast_id=sf.forecast.forecast_id,
                     action=sf.action,
+                    risk_level=sf.risk_level,
                     reasoning=sf.reasoning,
                     priority=rank,
                     expires_at=expires,

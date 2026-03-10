@@ -230,6 +230,19 @@ def migration_0005_add_crafting_tables(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def migration_0006_add_risk_level(conn: sqlite3.Connection) -> None:
+    """Add risk_level column to recommendation_outputs (Task 1.1 — decouple action from risk)."""
+    existing = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(recommendation_outputs);").fetchall()
+    }
+    if "risk_level" not in existing:
+        conn.execute(
+            "ALTER TABLE recommendation_outputs ADD COLUMN risk_level TEXT DEFAULT 'low';"
+        )
+    conn.commit()
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 # Add new migrations here. They will run once, in order.
 
@@ -253,6 +266,10 @@ MIGRATIONS: dict[str, tuple[MigrationFn, str]] = {
     "0005_crafting_tables": (
         migration_0005_add_crafting_tables,
         "Add recipes, recipe_reagents, and crafting_margin_snapshots tables",
+    ),
+    "0006_recommendation_risk_level": (
+        migration_0006_add_risk_level,
+        "Add risk_level column to recommendation_outputs",
     ),
 }
 

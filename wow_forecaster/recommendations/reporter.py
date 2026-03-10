@@ -59,7 +59,7 @@ def write_forecast_csv(
     fieldnames = [
         "archetype_id", "realm_slug", "horizon", "target_date",
         "current_price", "predicted_price", "ci_lower", "ci_upper",
-        "roi_pct", "score", "action", "model_slug",
+        "roi_pct", "score", "action", "risk_level", "model_slug",
     ]
 
     with csv_path.open("w", newline="", encoding="utf-8") as f:
@@ -80,6 +80,7 @@ def write_forecast_csv(
                     "roi_pct":        roi_pct,
                     "score":          sf.score,
                     "action":         sf.action,
+                    "risk_level":     sf.risk_level,
                     "model_slug":     sf.forecast.model_slug,
                 }
             )
@@ -116,8 +117,8 @@ def write_recommendation_csv(
 
     fieldnames = [
         "rank", "category", "archetype_id", "realm_slug", "horizon",
-        "current_price", "predicted_price", "roi_pct", "score", "action",
-        "top_items", "reasoning",
+        "current_price", "predicted_price", "roi_pct", "score",
+        "action", "risk_level", "top_items", "reasoning",
     ]
 
     with csv_path.open("w", newline="", encoding="utf-8") as f:
@@ -145,6 +146,7 @@ def write_recommendation_csv(
                         "roi_pct":        roi_pct,
                         "score":          sf.score,
                         "action":         sf.action,
+                        "risk_level":     sf.risk_level,
                         "top_items":      top_items,
                         "reasoning":      sf.reasoning,
                     }

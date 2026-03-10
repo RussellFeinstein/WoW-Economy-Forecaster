@@ -23,6 +23,8 @@ VALID_HORIZONS: frozenset[str] = frozenset({"1d", "7d", "28d"})
 
 RecommendationAction = Literal["buy", "sell", "hold", "avoid"]
 
+RiskLevel = Literal["low", "medium", "high", "critical"]
+
 
 class ForecastOutput(BaseModel):
     """Point forecast with confidence interval for an archetype or item.
@@ -108,6 +110,7 @@ class RecommendationOutput(BaseModel):
     rec_id: Optional[int] = None
     forecast_id: int
     action: RecommendationAction
+    risk_level: RiskLevel = "low"
     reasoning: str
     priority: int = 5
     expires_at: Optional[datetime] = None

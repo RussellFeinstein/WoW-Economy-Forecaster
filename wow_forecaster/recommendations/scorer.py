@@ -39,12 +39,23 @@ uncertainty_penalty (0–100):
     CI width / predicted_price.
     CI width = 100% of predicted → penalty 100 (max uncertainty).
 
+Risk level (independent of action)
+------------------------------------
+    CRITICAL : uncertainty_pct >= 0.95  (forecast is noise; action = avoid)
+    HIGH     : uncertainty_pct >= 0.80  OR  volatility_cv >= 0.80
+    MEDIUM   : uncertainty_pct >= 0.50  OR  volatility_cv >= 0.50
+    LOW      : everything else
+
 Action determination (priority order)
 --------------------------------------
-    1. AVOID : uncertainty_pct >= 0.80  OR  volatility_cv >= 0.80
+    1. AVOID : risk_level == "critical"  (uncertainty_pct >= 0.95)
     2. BUY   : roi >= 0.10
     3. SELL  : roi <= -0.10
     4. HOLD  : all other cases
+
+HIGH and MEDIUM risk archetypes still receive BUY/SELL/HOLD actions so that
+profitable signals are not suppressed.  The risk_level column surfaces
+uncertainty separately from the directional recommendation.
 """
 
 from __future__ import annotations
@@ -212,6 +223,30 @@ def compute_score(
     )
 
 
+def determine_risk_level(
+    uncertainty_pct: float,
+    volatility_cv:   float,
+) -> str:
+    """Classify forecast risk independent of directional signal.
+
+    Thresholds (first match wins):
+        CRITICAL : uncertainty_pct >= 0.95  — forecast is noise; avoid
+        HIGH     : uncertainty_pct >= 0.80  OR  volatility_cv >= 0.80
+        MEDIUM   : uncertainty_pct >= 0.50  OR  volatility_cv >= 0.50
+        LOW      : everything else
+
+    Returns:
+        One of "critical", "high", "medium", "low".
+    """
+    if uncertainty_pct >= 0.95:
+        return "critical"
+    if uncertainty_pct >= 0.80 or volatility_cv >= 0.80:
+        return "high"
+    if uncertainty_pct >= 0.50 or volatility_cv >= 0.50:
+        return "medium"
+    return "low"
+
+
 def determine_action(
     roi:             float,
     uncertainty_pct: float,
@@ -220,15 +255,18 @@ def determine_action(
     """Determine the trading action from score components.
 
     Rules (evaluated in order — first match wins):
-        1. AVOID : uncertainty >= 80%  OR  volatility CV >= 80%
+        1. AVOID : uncertainty_pct >= 0.95  (critical risk only)
         2. BUY   : roi >= 10%
         3. SELL  : roi <= -10%
         4. HOLD  : everything else
 
+    Note: HIGH risk (uncertainty 80–95%) no longer forces AVOID so that
+    profitable archetypes surface with a BUY action + risk_level=high.
+
     Returns:
         One of "avoid", "buy", "sell", "hold".
     """
-    if uncertainty_pct >= 0.80 or volatility_cv >= 0.80:
+    if uncertainty_pct >= 0.95:
         return "avoid"
     if roi >= 0.10:
         return "buy"
