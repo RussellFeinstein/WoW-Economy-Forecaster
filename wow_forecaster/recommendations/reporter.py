@@ -130,10 +130,16 @@ def write_recommendation_csv(
                     f"{sf.components.roi:+.2%}"
                     if sf.components.roi is not None else ""
                 )
-                top_items = "|".join(
-                    f"{dr.name} ({dr.discount_pct:+.1%})"
-                    for dr in sf.item_discounts
-                )
+                if sf.top_item_rois:
+                    top_items = "|".join(
+                        f"{r.name} ({r.roi_pct:+.1%})" for r in sf.top_item_rois
+                    )
+                elif sf.item_discounts:
+                    top_items = "|".join(
+                        f"{dr.name} ({dr.discount_pct:+.1%})" for dr in sf.item_discounts
+                    )
+                else:
+                    top_items = ""
                 writer.writerow(
                     {
                         "rank":           rank,
@@ -215,17 +221,31 @@ def write_recommendation_json(
                     "uncertainty":   sf.components.uncertainty_penalty,
                 },
                 "model_slug":      sf.forecast.model_slug,
-                "recommended_items": [
-                    {
-                        "item_id":         dr.item_id,
-                        "name":            dr.name,
-                        "item_price_gold": round(dr.item_price_gold, 2),
-                        "discount_pct":    round(dr.discount_pct, 4),
-                        "price_z_score":   dr.price_z_score,
-                        "obs_count":       dr.obs_count,
-                    }
-                    for dr in sf.item_discounts
-                ],
+                "recommended_items": (
+                    [
+                        {
+                            "item_id":        r.item_id,
+                            "name":           r.name,
+                            "current_price":  round(r.current_price, 2),
+                            "forecast_price": round(r.forecast_price, 2),
+                            "roi_pct":        round(r.roi_pct, 4),
+                            "obs_count":      r.obs_count,
+                        }
+                        for r in sf.top_item_rois
+                    ]
+                    if sf.top_item_rois else
+                    [
+                        {
+                            "item_id":         dr.item_id,
+                            "name":            dr.name,
+                            "item_price_gold": round(dr.item_price_gold, 2),
+                            "discount_pct":    round(dr.discount_pct, 4),
+                            "price_z_score":   dr.price_z_score,
+                            "obs_count":       dr.obs_count,
+                        }
+                        for dr in sf.item_discounts
+                    ]
+                ),
             }
             for rank, sf in enumerate(items, start=1)
         ]

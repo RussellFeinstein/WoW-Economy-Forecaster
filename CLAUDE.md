@@ -91,7 +91,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - BacktestConfig: horizons_days=[1,3], min_train_rows=14
 - DB tables: backtest_runs, backtest_fold_results (migration 0002)
 
-### ML + Recommendations (v0.5.0 / v1.10.0 / v1.11.0)
+### ML + Recommendations (v0.5.0 / v1.10.0 / v1.11.0 / v1.12.0)
 - [wow_forecaster/ml/feature_selector.py](wow_forecaster/ml/feature_selector.py) — TRAINING_FEATURE_COLS (40)
 - [wow_forecaster/ml/lgbm_model.py](wow_forecaster/ml/lgbm_model.py) — LightGBMForecaster: fit/predict/save/load; global cross-archetype model
 - ForecastHorizon: 1d/7d/28d; TARGET_COL_MAP = {1: 1d, 7: 7d, 28: 28d}
@@ -101,6 +101,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - DB migration 0003: adds score, score_components, category_tag to recommendation_outputs
 - Risk levels (v1.10.0): determine_risk_level() in scorer.py — LOW/MEDIUM/HIGH/CRITICAL tiers independent of action; AVOID only at CRITICAL (uncertainty ≥ 95%); risk_level persisted in recommendation_outputs (migration 0006)
 - CI floor/cap (v1.11.0): compute_confidence_interval() in cold_start.py accepts current_price; floor = 5% of current, cap = 10× current; prevents 0.0 lower bounds and absurd upper bounds; ci_quality field ("good"/"wide"/"unreliable") on ForecastOutput (migration 0007)
+- Item-level forecasting extended (v1.12.0): _generate_item_forecasts() now covers union of recipe-linked items AND all items with ≥14 distinct observation days; ItemForecastRoi dataclass + fetch_item_rois() in item_overlay.py; enrich_with_top_item_rois() in ranker.py; top_items column in recommendations CSV/JSON prefers ROI-based items over discount-based fallback
 
 ### Monitoring + Orchestration (v0.6.0)
 - [wow_forecaster/pipeline/orchestrator.py](wow_forecaster/pipeline/orchestrator.py) — HourlyOrchestrator: 7-step pipeline
@@ -139,7 +140,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - [wow_forecaster/recommendations/crafting_advisor.py](wow_forecaster/recommendations/crafting_advisor.py) — CraftingWindow(6 windows), build_crafting_opportunities(), rank_crafting_opportunities()
 - CraftingWindow: NOW_NOW, NOW_7D, NOW_28D, _7D_7D, _7D_28D, _28D_28D — all (buy≤sell) pairs using 1d/7d/28d forecasts
 - Future window price projection (v1.5.7+): trend-ratio scaling — item_forecast = item_current × (archetype_forecast / archetype_rolling_current); preserves intra-archetype item price differentiation; falls back to raw archetype forecast then current price
-- Item-level forecasts (v1.6.0): ForecastStage._generate_item_forecasts() writes item_id-keyed rows to forecast_outputs (item_id set, archetype_id=None) for all recipe-linked items; crafting_advisor._fetch_item_forecasts() prefers these over archetype-level forecasts (priority: item forecast → trend-ratio → archetype forecast → current price)
+- Item-level forecasts (v1.6.0 / v1.12.0): ForecastStage._generate_item_forecasts() writes item_id-keyed rows to forecast_outputs (item_id set, archetype_id=None); v1.6.0: recipe-linked items only; v1.12.0: extended to union of recipe items + any item with ≥14 distinct observation days; crafting_advisor._fetch_item_forecasts() prefers these over archetype-level forecasts (priority: item forecast → trend-ratio → archetype forecast → current price)
 - forecast_outputs.item_id was previously always NULL; now populated for recipe items after each run-daily-forecast
 - Cold-start prediction blending (v1.7.0): ForecastStage._execute() calls _fetch_cold_start_blend_data() to build (source_price, confidence) pairs from archetype_mappings; run_inference() calls cold_start.blend_cold_start_prediction() BEFORE CI computation; blended = confidence × model_pred + (1-confidence) × source_price; model_slug gets _transfer suffix for blended archetypes
 - Volume gate: hard filter (quantity_sum_7d < min_volume_units=50 excluded) + volume_score = clamp(qty/500, 0, 1)
@@ -164,4 +165,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-1054 tests passing
+1072 tests passing

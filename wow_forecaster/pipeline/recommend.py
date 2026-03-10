@@ -69,6 +69,7 @@ class RecommendStage(PipelineStage):
             build_recommendation_outputs,
             build_scored_forecasts,
             enrich_with_item_discounts,
+            enrich_with_top_item_rois,
             top_n_per_category as rank_top_n,
         )
         from wow_forecaster.recommendations.reporter import (
@@ -140,6 +141,7 @@ class RecommendStage(PipelineStage):
                 for rec in rec_outputs:
                     repo.insert_recommendation(rec)
                 enrich_with_item_discounts(top_by_cat, conn)
+                enrich_with_top_item_rois(top_by_cat, conn)
 
             total_recs += len(rec_outputs)
 
@@ -223,6 +225,7 @@ def _load_recent_forecasts(conn, realm_slug: str, run_id: int | None):
                     confidence_pct=r["confidence_pct"],
                     model_slug=r["model_slug"],
                     features_hash=r["features_hash"],
+                    ci_quality=r["ci_quality"] if r["ci_quality"] else "good",
                 )
             )
         except Exception as exc:

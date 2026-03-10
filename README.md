@@ -419,14 +419,14 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 1054 tests
+# All 1072 tests
 pytest
 
 # With coverage
 pytest --cov=wow_forecaster --cov-report=term-missing
 
 # By group
-pytest tests/test_recommendations/  # Scorer, ranker, item overlay, crafting advisor (133 tests)
+pytest tests/test_recommendations/  # Scorer, ranker, item overlay, crafting advisor (160 tests)
 pytest tests/test_cli/              # CLI smoke tests (54 tests)
 pytest tests/test_governance/       # Source policies, preflight, freshness, pruner (100 tests)
 pytest tests/test_reporting/        # Reader, formatters, export (86 tests)
@@ -435,8 +435,8 @@ pytest tests/test_ingestion/        # Ingestion + snapshots (73 tests)
 pytest tests/test_features/         # Feature engineering (81 tests)
 pytest tests/test_backtest/         # Backtest framework (60 tests)
 pytest tests/test_models/           # Pydantic validation (61 tests)
-pytest tests/test_pipeline/         # Pipeline interfaces, normalize, item forecasts (59 tests)
-pytest tests/test_ml/               # LightGBM training, inference, cold-start blending (61 tests)
+pytest tests/test_pipeline/         # Pipeline interfaces, normalize, item forecasts (68 tests)
+pytest tests/test_ml/               # LightGBM training, inference, cold-start blending (81 tests)
 pytest tests/test_scheduler/        # Scheduler daemon (26 tests)
 pytest tests/test_db/               # Schema + repositories + migrations (37 tests)
 pytest tests/test_events/           # Seed loader, event imports (24 tests)
