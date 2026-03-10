@@ -20,10 +20,16 @@ ScoreComponents.total:
   - Follows the weighted formula.
   - Can be negative when penalties dominate.
 
+determine_risk_level():
+  - "critical" when uncertainty_pct >= 0.95.
+  - "high" when uncertainty_pct >= 0.80 OR volatility_cv >= 0.80.
+  - "medium" when uncertainty_pct >= 0.50 OR volatility_cv >= 0.50.
+  - "low" otherwise.
+
 determine_action():
-  - "avoid" when uncertainty_pct >= 0.80.
-  - "avoid" when volatility_cv >= 0.80.
-  - "buy" when roi >= 0.10 (and not high uncertainty/volatility).
+  - "avoid" when uncertainty_pct >= 0.95 (critical only; was 0.80).
+  - HIGH risk (0.80–0.95) no longer forces avoid — profitable signals surface.
+  - "buy" when roi >= 0.10 (even at high uncertainty/volatility).
   - "sell" when roi <= -0.10.
   - "hold" otherwise.
   - Rules applied in priority order (avoid before buy).
@@ -43,6 +49,7 @@ from wow_forecaster.recommendations.scorer import (
     build_reasoning,
     compute_score,
     determine_action,
+    determine_risk_level,
 )
 
 
@@ -365,16 +372,52 @@ class TestScoreComponentsTotal:
 
 # ── determine_action ──────────────────────────────────────────────────────────
 
+class TestDetermineRiskLevel:
+    def test_critical_at_95pct_uncertainty(self):
+        assert determine_risk_level(uncertainty_pct=0.95, volatility_cv=0.0) == "critical"
+
+    def test_critical_above_95pct(self):
+        assert determine_risk_level(uncertainty_pct=1.0, volatility_cv=0.0) == "critical"
+
+    def test_high_at_80pct_uncertainty(self):
+        assert determine_risk_level(uncertainty_pct=0.80, volatility_cv=0.0) == "high"
+
+    def test_high_via_volatility_cv(self):
+        assert determine_risk_level(uncertainty_pct=0.10, volatility_cv=0.80) == "high"
+
+    def test_medium_at_50pct_uncertainty(self):
+        assert determine_risk_level(uncertainty_pct=0.50, volatility_cv=0.0) == "medium"
+
+    def test_medium_via_volatility_cv(self):
+        assert determine_risk_level(uncertainty_pct=0.10, volatility_cv=0.50) == "medium"
+
+    def test_low_below_all_thresholds(self):
+        assert determine_risk_level(uncertainty_pct=0.10, volatility_cv=0.10) == "low"
+
+    def test_critical_takes_priority_over_high(self):
+        # volatility_cv >= 0.80 alone is HIGH; but uncertainty >= 0.95 is CRITICAL
+        assert determine_risk_level(uncertainty_pct=0.95, volatility_cv=0.85) == "critical"
+
+    def test_boundary_just_below_critical(self):
+        assert determine_risk_level(uncertainty_pct=0.949, volatility_cv=0.0) == "high"
+
+
 class TestDetermineAction:
-    def test_avoid_high_uncertainty(self):
-        assert determine_action(roi=0.20, uncertainty_pct=0.80, volatility_cv=0.10) == "avoid"
+    def test_avoid_critical_uncertainty(self):
+        # Only CRITICAL (>= 0.95) triggers avoid now
+        assert determine_action(roi=0.20, uncertainty_pct=0.95, volatility_cv=0.10) == "avoid"
 
-    def test_avoid_high_volatility(self):
-        assert determine_action(roi=0.20, uncertainty_pct=0.10, volatility_cv=0.80) == "avoid"
+    def test_buy_at_high_uncertainty(self):
+        # HIGH risk (0.80) no longer suppresses buy signals
+        assert determine_action(roi=0.20, uncertainty_pct=0.80, volatility_cv=0.10) == "buy"
 
-    def test_avoid_takes_priority_over_buy(self):
-        # roi >= 0.10 AND uncertainty >= 0.80 -> avoid wins
-        assert determine_action(roi=0.50, uncertainty_pct=0.85, volatility_cv=0.10) == "avoid"
+    def test_buy_at_high_volatility(self):
+        # HIGH volatility no longer suppresses buy signals
+        assert determine_action(roi=0.20, uncertainty_pct=0.10, volatility_cv=0.80) == "buy"
+
+    def test_avoid_takes_priority_over_buy_at_critical(self):
+        # roi >= 0.10 AND uncertainty >= 0.95 -> avoid wins
+        assert determine_action(roi=0.50, uncertainty_pct=0.95, volatility_cv=0.10) == "avoid"
 
     def test_buy_10pct_roi(self):
         assert determine_action(roi=0.10, uncertainty_pct=0.10, volatility_cv=0.10) == "buy"
@@ -394,11 +437,12 @@ class TestDetermineAction:
     def test_hold_exactly_zero_roi(self):
         assert determine_action(roi=0.0, uncertainty_pct=0.10, volatility_cv=0.10) == "hold"
 
-    def test_boundary_avoid_at_exactly_80pct(self):
-        assert determine_action(roi=0.0, uncertainty_pct=0.80, volatility_cv=0.0) == "avoid"
+    def test_boundary_avoid_at_exactly_95pct(self):
+        assert determine_action(roi=0.0, uncertainty_pct=0.95, volatility_cv=0.0) == "avoid"
 
-    def test_hold_just_below_avoid_threshold(self):
-        assert determine_action(roi=0.0, uncertainty_pct=0.799, volatility_cv=0.0) == "hold"
+    def test_buy_just_below_avoid_threshold(self):
+        # 0.949 uncertainty + positive ROI -> buy (not avoid)
+        assert determine_action(roi=0.15, uncertainty_pct=0.949, volatility_cv=0.0) == "buy"
 
 
 # ── build_reasoning ───────────────────────────────────────────────────────────

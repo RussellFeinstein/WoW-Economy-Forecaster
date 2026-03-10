@@ -11,7 +11,9 @@ deterministic, testable sequence:
   Step 5 — Adaptive:      Map drift level to uncertainty multiplier + retrain flag.
             (Steps 4–5 are interleaved per-realm for fresh drift state.)
   Step 6 — Provenance:    Build source attribution summary per realm.
-  Step 7 — Write outputs: Persist to DB + write monitoring JSON files.
+  Step 7 — Retention:     Prune raw API data older than retention.raw_snapshot_days
+                          (API ToS section 2.r compliance — 30-day TTL).
+  Step 8 — Write outputs: Persist to DB + write monitoring JSON files.
 
 Failure isolation
 -----------------
@@ -212,8 +214,12 @@ class HourlyOrchestrator:
         else:
             logger.info("[3/4] Drift check skipped (check_drift=False).")
 
-        # ── Step 5: Write monitoring outputs ──────────────────────────────────
-        logger.info("[4/4] Writing monitoring outputs ...")
+        # ── Step 5: Retention prune (API ToS §2.r) ───────────────────────────
+        logger.info("[4/5] Retention prune (raw data > %d days) ...", self.config.retention.raw_snapshot_days)
+        self._run_prune()
+
+        # ── Step 6: Write monitoring outputs ──────────────────────────────────
+        logger.info("[5/5] Writing monitoring outputs ...")
         output_dir = Path(self.config.monitoring.monitoring_output_dir)
         for realm, drift_result in result.drift_results.items():
             try:
@@ -482,6 +488,33 @@ class HourlyOrchestrator:
             logger.error("Drift/provenance check failed for realm=%s: %s", realm_slug, exc, exc_info=True)
 
         return drift_result, prov
+
+    def _run_prune(self) -> None:
+        """Prune raw API data that has exceeded the retention window.
+
+        Non-fatal: logs errors but does not interrupt orchestration.
+        Enforces Blizzard API ToS §2.r (30-day raw data TTL).
+        """
+        try:
+            from wow_forecaster.governance.pruner import SnapshotPruner
+
+            pruner = SnapshotPruner(
+                raw_dir=self.config.data.raw_dir,
+                db_path=self.db_path,
+                retention_days=self.config.retention.raw_snapshot_days,
+                busy_timeout_ms=self.config.database.busy_timeout_ms,
+                wal_mode=self.config.database.wal_mode,
+            )
+            result = pruner.prune(dry_run=False)
+            if result.files_deleted or result.raw_rows_deleted:
+                logger.info(
+                    "Retention prune: deleted %d files, %d raw rows, %d norm rows",
+                    result.files_deleted, result.raw_rows_deleted, result.norm_rows_deleted,
+                )
+            for err in result.errors:
+                logger.warning("Retention prune error: %s", err)
+        except Exception as exc:
+            logger.warning("Retention prune raised unexpectedly: %s", exc)
 
     def _persist_run_start(
         self, run_slug: str, realms: list[str]

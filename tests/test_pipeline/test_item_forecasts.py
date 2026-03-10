@@ -14,6 +14,7 @@ from wow_forecaster.pipeline.forecast import (
     _fetch_cold_start_blend_data,
     _fetch_item_archetypes,
     _fetch_item_prices,
+    _fetch_items_with_history,
     _fetch_recipe_item_ids,
     _generate_item_forecasts,
 )
@@ -480,3 +481,185 @@ class TestFetchColdStartBlendData:
         assert abs(result[4][0] - 30.0) < 1.0
         assert result[2][1] == pytest.approx(0.8)
         assert result[4][1] == pytest.approx(0.7)
+
+
+# ── Helpers for history-based tests ──────────────────────────────────────────
+
+
+def _insert_price_on_date(
+    conn, item_id: int, obs_date: str, price: float = 50.0, qty: int = 100,
+    realm_slug: str = "us",
+) -> None:
+    """Insert a price observation on a specific calendar date."""
+    obs_id = conn.execute(
+        "INSERT INTO market_observations_raw "
+        "(item_id, realm_slug, faction, observed_at, source, is_processed) "
+        "VALUES (?, ?, 'neutral', ?, 'test', 1) RETURNING obs_id;",
+        (item_id, realm_slug, f"{obs_date}T12:00:00Z"),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO market_observations_normalized "
+        "(obs_id, item_id, realm_slug, observed_at, price_gold, quantity_listed, is_outlier) "
+        "VALUES (?, ?, ?, ?, ?, ?, 0);",
+        (obs_id, item_id, realm_slug, f"{obs_date}T12:00:00Z", price, qty),
+    )
+
+
+class TestFetchItemsWithHistory:
+    """Tests for _fetch_items_with_history()."""
+
+    def test_returns_items_meeting_threshold(self):
+        """Item with ≥14 distinct days appears in result."""
+        conn = _make_db()
+        _insert_item(conn, 100)
+        for day in range(14):
+            obs_date = f"2026-02-{day + 1:02d}"
+            _insert_price_on_date(conn, 100, obs_date)
+        conn.commit()
+
+        result = _fetch_items_with_history(conn, "us", min_days=14)
+        assert 100 in result
+
+    def test_excludes_items_below_threshold(self):
+        """Item with < 14 distinct days is excluded."""
+        conn = _make_db()
+        _insert_item(conn, 100)
+        for day in range(13):
+            obs_date = f"2026-02-{day + 1:02d}"
+            _insert_price_on_date(conn, 100, obs_date)
+        conn.commit()
+
+        result = _fetch_items_with_history(conn, "us", min_days=14)
+        assert 100 not in result
+
+    def test_multiple_obs_same_day_count_as_one(self):
+        """Two observations on the same day count as 1 distinct day."""
+        conn = _make_db()
+        _insert_item(conn, 100)
+        # 13 distinct days + 2 obs on day 1 = still only 13 distinct days
+        for day in range(13):
+            obs_date = f"2026-02-{day + 1:02d}"
+            _insert_price_on_date(conn, 100, obs_date)
+        # Extra obs on day 1 — does not add a new distinct day
+        obs_id = conn.execute(
+            "INSERT INTO market_observations_raw "
+            "(item_id, realm_slug, faction, observed_at, source, is_processed) "
+            "VALUES (?, 'us', 'neutral', '2026-02-01T18:00:00Z', 'test', 1) RETURNING obs_id;",
+            (100,),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO market_observations_normalized "
+            "(obs_id, item_id, realm_slug, observed_at, price_gold, quantity_listed, is_outlier) "
+            "VALUES (?, ?, 'us', '2026-02-01T18:00:00Z', 50.0, 100, 0);",
+            (obs_id, 100),
+        )
+        conn.commit()
+
+        result = _fetch_items_with_history(conn, "us", min_days=14)
+        assert 100 not in result
+
+    def test_realm_isolation(self):
+        """Observations for a different realm do not count."""
+        conn = _make_db()
+        _insert_item(conn, 100)
+        for day in range(14):
+            obs_date = f"2026-02-{day + 1:02d}"
+            _insert_price_on_date(conn, 100, obs_date, realm_slug="eu")
+        conn.commit()
+
+        result = _fetch_items_with_history(conn, "us", min_days=14)
+        assert 100 not in result
+
+    def test_empty_when_no_observations(self):
+        conn = _make_db()
+        conn.commit()
+        assert _fetch_items_with_history(conn, "us") == []
+
+    def test_outliers_excluded_from_count(self):
+        """Outlier observations do not contribute to the distinct-day count."""
+        conn = _make_db()
+        _insert_item(conn, 100)
+        # 13 non-outlier days + 5 outlier days = still only 13 valid days
+        for day in range(13):
+            _insert_price_on_date(conn, 100, f"2026-02-{day + 1:02d}")
+        for day in range(5):
+            obs_date = f"2026-03-{day + 1:02d}"
+            obs_id = conn.execute(
+                "INSERT INTO market_observations_raw "
+                "(item_id, realm_slug, faction, observed_at, source, is_processed) "
+                "VALUES (?, 'us', 'neutral', ?, 'test', 1) RETURNING obs_id;",
+                (100, f"{obs_date}T12:00:00Z"),
+            ).fetchone()[0]
+            conn.execute(
+                "INSERT INTO market_observations_normalized "
+                "(obs_id, item_id, realm_slug, observed_at, price_gold, quantity_listed, is_outlier) "
+                "VALUES (?, ?, 'us', ?, 50.0, 100, 1);",
+                (obs_id, 100, f"{obs_date}T12:00:00Z"),
+            )
+        conn.commit()
+
+        result = _fetch_items_with_history(conn, "us", min_days=14)
+        assert 100 not in result
+
+
+class TestGenerateItemForecastsExtended:
+    """Tests for the expanded _generate_item_forecasts() (history-based items)."""
+
+    def test_non_recipe_item_with_history_gets_forecast(self):
+        """An item with 14+ days of history (but not in any recipe) gets a forecast."""
+        conn = _make_db()
+        _insert_archetype(conn, 10)
+        _insert_item(conn, 999, archetype_id=10)
+        # 14 distinct days of price history
+        for day in range(14):
+            _insert_price_on_date(conn, 999, f"2026-02-{day + 1:02d}")
+        # Also need a recent price for trend-ratio (within 7 days of today)
+        _insert_price(conn, 999, "2026-03-06", 50.0)
+        conn.commit()
+
+        arch_forecasts = [
+            _make_archetype_forecast(10, "7d", predicted=60.0, ci_lower=54.0, ci_upper=66.0),
+        ]
+
+        results = _generate_item_forecasts(conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us")
+        item_ids = {fc.item_id for fc in results}
+        assert 999 in item_ids
+
+    def test_recipe_item_without_history_still_gets_forecast(self):
+        """Recipe items always get forecasts regardless of history length."""
+        conn = _make_db()
+        _insert_archetype(conn, 10)
+        _insert_item(conn, 100, archetype_id=10)
+        _insert_recipe(conn, 1, 100)
+        # Only 1 day of price data — below 14-day threshold
+        _insert_price(conn, 100, "2026-03-06", 50.0)
+        conn.commit()
+
+        arch_forecasts = [
+            _make_archetype_forecast(10, "7d", predicted=60.0, ci_lower=54.0, ci_upper=66.0),
+        ]
+
+        results = _generate_item_forecasts(conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us")
+        item_ids = {fc.item_id for fc in results}
+        assert 100 in item_ids
+
+    def test_item_in_both_sets_not_duplicated(self):
+        """An item that is both recipe-linked AND has ≥14 days appears only once per horizon."""
+        conn = _make_db()
+        _insert_archetype(conn, 10)
+        _insert_item(conn, 100, archetype_id=10)
+        _insert_recipe(conn, 1, 100)
+        # 14+ days of history
+        for day in range(14):
+            _insert_price_on_date(conn, 100, f"2026-02-{day + 1:02d}")
+        _insert_price(conn, 100, "2026-03-06", 50.0)
+        conn.commit()
+
+        arch_forecasts = [
+            _make_archetype_forecast(10, "7d", predicted=60.0, ci_lower=54.0, ci_upper=66.0),
+        ]
+
+        results = _generate_item_forecasts(conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us")
+        # item 100 should appear exactly once for horizon "7d"
+        count_7d = sum(1 for fc in results if fc.item_id == 100 and fc.forecast_horizon == "7d")
+        assert count_7d == 1

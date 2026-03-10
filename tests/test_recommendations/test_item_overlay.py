@@ -15,6 +15,16 @@ fetch_item_discounts():
   - Respects min_obs threshold (items with too few obs excluded).
   - Respects top_n limit.
   - Returns at most top_n rows when more items exist.
+
+fetch_item_rois():
+  - Returns empty list when no item-level forecasts exist.
+  - Computes roi_pct correctly: (forecast - current) / current.
+  - Buy action: highest ROI first.
+  - Sell action: lowest ROI first.
+  - Respects top_n limit.
+  - Only returns items in the given archetype.
+  - Realm isolation: different realm returns nothing.
+  - Uses the most recent forecast when multiple exist.
 """
 
 from __future__ import annotations
@@ -26,7 +36,9 @@ import pytest
 
 from wow_forecaster.recommendations.item_overlay import (
     ItemDiscountRow,
+    ItemForecastRoi,
     fetch_item_discounts,
+    fetch_item_rois,
 )
 
 
@@ -374,3 +386,213 @@ class TestPriceZScore:
                                     archetype_mean_gold=100.0)
         assert all(hasattr(r, "price_z_score") for r in rows)
         assert all(isinstance(r.price_z_score, float) for r in rows)
+
+
+# ── Fixtures and helpers for fetch_item_rois tests ────────────────────────────
+
+@pytest.fixture
+def roi_conn() -> sqlite3.Connection:
+    """In-memory DB with schema for fetch_item_rois tests (includes forecast_outputs)."""
+    from wow_forecaster.db.schema import apply_schema
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA foreign_keys = OFF;")
+    apply_schema(db)
+    db.commit()
+    return db
+
+
+def _insert_item_roi(conn, item_id: int, name: str, archetype_id: int) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO item_categories (slug, display_name, archetype_tag) "
+        "VALUES ('test.cat', 'Test', 'test');"
+    )
+    cat_id = conn.execute(
+        "SELECT category_id FROM item_categories WHERE slug='test.cat';"
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT OR IGNORE INTO economic_archetypes "
+        "(archetype_id, slug, display_name, category_tag, sub_tag, "
+        " is_transferable, transfer_confidence) "
+        "VALUES (?, 'test.arch', 'Test', 'mat', NULL, 1, 0.8);",
+        (archetype_id,),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO items "
+        "(item_id, name, category_id, expansion_slug, quality, archetype_id) "
+        "VALUES (?, ?, ?, 'midnight', 'common', ?);",
+        (item_id, name, cat_id, archetype_id),
+    )
+
+
+def _insert_obs_roi(conn, item_id: int, price: float, observed_at: str, realm: str = "us") -> None:
+    conn.execute(
+        "INSERT INTO market_observations_raw "
+        "(item_id, realm_slug, faction, observed_at, source, is_processed) "
+        "VALUES (?, ?, 'neutral', ?, 'test', 1);",
+        (item_id, realm, observed_at),
+    )
+    obs_id = conn.execute("SELECT last_insert_rowid();").fetchone()[0]
+    conn.execute(
+        "INSERT INTO market_observations_normalized "
+        "(obs_id, item_id, realm_slug, observed_at, price_gold, quantity_listed, is_outlier) "
+        "VALUES (?, ?, ?, ?, ?, 1, 0);",
+        (obs_id, item_id, realm, observed_at, price),
+    )
+
+
+def _insert_run(conn, run_slug: str = "test-run") -> int:
+    row = conn.execute(
+        "INSERT INTO run_metadata "
+        "(run_slug, pipeline_stage, status, config_snapshot, started_at) "
+        "VALUES (?, 'forecast', 'success', '{}', '2026-03-09T00:00:00') "
+        "RETURNING run_id;",
+        (run_slug,),
+    ).fetchone()
+    return int(row[0])
+
+
+def _insert_item_forecast(
+    conn,
+    item_id: int,
+    realm_slug: str,
+    horizon: str,
+    predicted: float,
+    run_id: int,
+    created_at: str = "2026-03-09T12:00:00Z",
+) -> None:
+    conn.execute(
+        "INSERT INTO forecast_outputs "
+        "(run_id, archetype_id, item_id, realm_slug, forecast_horizon, target_date, "
+        " predicted_price_gold, confidence_lower, confidence_upper, confidence_pct, "
+        " model_slug, created_at) "
+        "VALUES (?, NULL, ?, ?, ?, '2026-03-16', ?, ?, ?, 0.80, 'item_ratio_lgbm_7d', ?);",
+        (run_id, item_id, realm_slug, horizon,
+         predicted, predicted * 0.9, predicted * 1.1, created_at),
+    )
+
+
+class TestFetchItemRois:
+    """Tests for fetch_item_rois()."""
+
+    def test_empty_when_no_forecasts(self, roi_conn):
+        _insert_item_roi(roi_conn, 1, "Item A", archetype_id=10)
+        _insert_obs_roi(roi_conn, 1, 50.0, _now_iso())
+        roi_conn.commit()
+
+        result = fetch_item_rois(roi_conn, archetype_id=10, realm_slug="us", horizon="7d")
+        assert result == []
+
+    def test_empty_when_no_current_price(self, roi_conn):
+        _insert_item_roi(roi_conn, 1, "Item A", archetype_id=10)
+        run_id = _insert_run(roi_conn)
+        _insert_item_forecast(roi_conn, 1, "us", "7d", 75.0, run_id)
+        roi_conn.commit()
+
+        result = fetch_item_rois(roi_conn, archetype_id=10, realm_slug="us", horizon="7d")
+        assert result == []
+
+    def test_roi_computed_correctly(self, roi_conn):
+        """roi_pct = (forecast - current) / current."""
+        _insert_item_roi(roi_conn, 1, "Item A", archetype_id=10)
+        _insert_obs_roi(roi_conn, 1, 50.0, _now_iso())
+        run_id = _insert_run(roi_conn)
+        _insert_item_forecast(roi_conn, 1, "us", "7d", 75.0, run_id)
+        roi_conn.commit()
+
+        result = fetch_item_rois(roi_conn, archetype_id=10, realm_slug="us", horizon="7d")
+        assert len(result) == 1
+        row = result[0]
+        assert isinstance(row, ItemForecastRoi)
+        assert row.item_id == 1
+        assert row.name == "Item A"
+        assert row.forecast_price == pytest.approx(75.0)
+        # ROI = (75 - 50) / 50 = 0.50
+        assert row.roi_pct == pytest.approx(0.50)
+
+    def test_buy_action_highest_roi_first(self, roi_conn):
+        """Buy action: items sorted by roi_pct descending."""
+        for item_id, cur, fc in [(1, 50.0, 60.0), (2, 50.0, 80.0), (3, 50.0, 55.0)]:
+            _insert_item_roi(roi_conn, item_id, f"Item {item_id}", archetype_id=10)
+            _insert_obs_roi(roi_conn, item_id, cur, _now_iso())
+        run_id = _insert_run(roi_conn)
+        for item_id, _, fc in [(1, 50.0, 60.0), (2, 50.0, 80.0), (3, 50.0, 55.0)]:
+            _insert_item_forecast(roi_conn, item_id, "us", "7d", fc, run_id)
+        roi_conn.commit()
+
+        result = fetch_item_rois(roi_conn, archetype_id=10, realm_slug="us",
+                                 horizon="7d", action="buy")
+        rois = [r.roi_pct for r in result]
+        assert rois == sorted(rois, reverse=True)
+        assert result[0].item_id == 2  # 60% ROI is highest
+
+    def test_sell_action_lowest_roi_first(self, roi_conn):
+        """Sell action: items sorted by roi_pct ascending (most bearish first)."""
+        for item_id, cur, fc in [(1, 50.0, 40.0), (2, 50.0, 30.0), (3, 50.0, 45.0)]:
+            _insert_item_roi(roi_conn, item_id, f"Item {item_id}", archetype_id=10)
+            _insert_obs_roi(roi_conn, item_id, cur, _now_iso())
+        run_id = _insert_run(roi_conn)
+        for item_id, _, fc in [(1, 50.0, 40.0), (2, 50.0, 30.0), (3, 50.0, 45.0)]:
+            _insert_item_forecast(roi_conn, item_id, "us", "7d", fc, run_id)
+        roi_conn.commit()
+
+        result = fetch_item_rois(roi_conn, archetype_id=10, realm_slug="us",
+                                 horizon="7d", action="sell")
+        rois = [r.roi_pct for r in result]
+        assert rois == sorted(rois)
+        assert result[0].item_id == 2  # most negative ROI
+
+    def test_top_n_limits_results(self, roi_conn):
+        for item_id in range(1, 8):
+            _insert_item_roi(roi_conn, item_id, f"Item {item_id}", archetype_id=10)
+            _insert_obs_roi(roi_conn, item_id, 50.0, _now_iso())
+        run_id = _insert_run(roi_conn)
+        for item_id in range(1, 8):
+            _insert_item_forecast(roi_conn, item_id, "us", "7d", 60.0 + item_id, run_id)
+        roi_conn.commit()
+
+        result = fetch_item_rois(roi_conn, archetype_id=10, realm_slug="us",
+                                 horizon="7d", top_n=3)
+        assert len(result) == 3
+
+    def test_archetype_isolation(self, roi_conn):
+        """Items in a different archetype are not returned."""
+        _insert_item_roi(roi_conn, 1, "Item A", archetype_id=10)
+        _insert_item_roi(roi_conn, 2, "Item B", archetype_id=20)
+        for item_id in (1, 2):
+            _insert_obs_roi(roi_conn, item_id, 50.0, _now_iso())
+        run_id = _insert_run(roi_conn)
+        for item_id in (1, 2):
+            _insert_item_forecast(roi_conn, item_id, "us", "7d", 70.0, run_id)
+        roi_conn.commit()
+
+        result = fetch_item_rois(roi_conn, archetype_id=10, realm_slug="us", horizon="7d")
+        assert all(r.item_id == 1 for r in result)
+
+    def test_realm_isolation(self, roi_conn):
+        """Observations and forecasts for a different realm are not returned."""
+        _insert_item_roi(roi_conn, 1, "Item A", archetype_id=10)
+        _insert_obs_roi(roi_conn, 1, 50.0, _now_iso(), realm="eu")
+        run_id = _insert_run(roi_conn)
+        _insert_item_forecast(roi_conn, 1, "eu", "7d", 70.0, run_id)
+        roi_conn.commit()
+
+        result = fetch_item_rois(roi_conn, archetype_id=10, realm_slug="us", horizon="7d")
+        assert result == []
+
+    def test_most_recent_forecast_used(self, roi_conn):
+        """When multiple forecasts exist for the same item, the most recent wins."""
+        _insert_item_roi(roi_conn, 1, "Item A", archetype_id=10)
+        _insert_obs_roi(roi_conn, 1, 50.0, _now_iso())
+        run_id = _insert_run(roi_conn)
+        _insert_item_forecast(roi_conn, 1, "us", "7d", 60.0, run_id,
+                               created_at="2026-03-08T12:00:00Z")
+        _insert_item_forecast(roi_conn, 1, "us", "7d", 90.0, run_id,
+                               created_at="2026-03-09T12:00:00Z")
+        roi_conn.commit()
+
+        result = fetch_item_rois(roi_conn, archetype_id=10, realm_slug="us", horizon="7d")
+        assert len(result) == 1
+        # Should use the more recent forecast: 90g → ROI = (90-50)/50 = 0.80
+        assert result[0].forecast_price == pytest.approx(90.0)
+        assert result[0].roi_pct == pytest.approx(0.80)

@@ -32,7 +32,7 @@ BLIZZARD_CLIENT_SECRET=...
 - [wow_forecaster/config.py](wow_forecaster/config.py) — AppConfig via load_config()
 - [wow_forecaster/db/schema.py](wow_forecaster/db/schema.py) — 21 tables, apply_schema() idempotent
 - [wow_forecaster/pipeline/base.py](wow_forecaster/pipeline/base.py) — PipelineStage ABC
-- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (31 commands)
+- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (33 commands)
 - [config/default.toml](config/default.toml) — static config
 - [config/sources.toml](config/sources.toml) — 3 source policies
 - [config/events/tww_events.json](config/events/tww_events.json) — TWW seed events
@@ -91,7 +91,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - BacktestConfig: horizons_days=[1,3], min_train_rows=14
 - DB tables: backtest_runs, backtest_fold_results (migration 0002)
 
-### ML + Recommendations (v0.5.0)
+### ML + Recommendations (v0.5.0 / v1.10.0 / v1.11.0 / v1.12.0 / v2.0.0)
 - [wow_forecaster/ml/feature_selector.py](wow_forecaster/ml/feature_selector.py) — TRAINING_FEATURE_COLS (40)
 - [wow_forecaster/ml/lgbm_model.py](wow_forecaster/ml/lgbm_model.py) — LightGBMForecaster: fit/predict/save/load; global cross-archetype model
 - ForecastHorizon: 1d/7d/28d; TARGET_COL_MAP = {1: 1d, 7: 7d, 28: 28d}
@@ -99,6 +99,10 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - event_boost clamp: [-100, 100] (negative impacts penalize score)
 - top_n_per_category deduplication: best-scoring horizon per archetype_id (tie: shorter wins)
 - DB migration 0003: adds score, score_components, category_tag to recommendation_outputs
+- Risk levels (v1.10.0): determine_risk_level() in scorer.py — LOW/MEDIUM/HIGH/CRITICAL tiers independent of action; AVOID only at CRITICAL (uncertainty ≥ 95%); risk_level persisted in recommendation_outputs (migration 0006)
+- CI floor/cap (v1.11.0): compute_confidence_interval() in cold_start.py accepts current_price; floor = 5% of current, cap = 10× current; prevents 0.0 lower bounds and absurd upper bounds; ci_quality field ("good"/"wide"/"unreliable") on ForecastOutput (migration 0007)
+- Item-level forecasting extended (v1.12.0): _generate_item_forecasts() now covers union of recipe-linked items AND all items with ≥14 distinct observation days; ItemForecastRoi dataclass + fetch_item_rois() in item_overlay.py; enrich_with_top_item_rois() in ranker.py; top_items column in recommendations CSV/JSON prefers ROI-based items over discount-based fallback
+- TSM export (v2.0.0): export-tsm CLI command; wow_forecaster/reporting/tsm_export.py; TsmExportRow + fetch_tsm_export_items() + build_tsm_import_string() + write_tsm_export(); filters item-level forecasts by ROI >= min_roi_pct and ci_quality='good'; outputs i:XXXXX,... string for TradeSkillMaster paste import
 
 ### Monitoring + Orchestration (v0.6.0)
 - [wow_forecaster/pipeline/orchestrator.py](wow_forecaster/pipeline/orchestrator.py) — HourlyOrchestrator: 7-step pipeline
@@ -111,10 +115,13 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - --export PATH writes flat CSV for Power BI (sc_* score component columns)
 - [dashboard/app.py](dashboard/app.py) — 5-tab Streamlit UI (optional dep group)
 
-### Source Governance (v0.8.0)
+### Source Governance (v0.8.0 / v1.9.0)
 - [config/sources.toml](config/sources.toml) — blizzard_api, blizzard_news_manual, manual_event_csv (3 policies)
 - [wow_forecaster/governance/preflight.py](wow_forecaster/governance/preflight.py) — 3-check preflight before each ingest
-- CLI: list-sources, validate-source-policies, check-source-freshness
+- [wow_forecaster/governance/pruner.py](wow_forecaster/governance/pruner.py) — SnapshotPruner: deletes raw JSON + market_observations_raw rows > retention_days (API ToS §2.r)
+- RetentionConfig in config.py; `[retention] raw_snapshot_days=30` in default.toml
+- HourlyOrchestrator calls pruner as step 7 after every successful ingest run (non-fatal)
+- CLI: list-sources, validate-source-policies, check-source-freshness, prune-snapshots (--days N, --dry-run)
 
 ### Seed Events (v0.9.0)
 - build-events must run before build-datasets
@@ -134,7 +141,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - [wow_forecaster/recommendations/crafting_advisor.py](wow_forecaster/recommendations/crafting_advisor.py) — CraftingWindow(6 windows), build_crafting_opportunities(), rank_crafting_opportunities()
 - CraftingWindow: NOW_NOW, NOW_7D, NOW_28D, _7D_7D, _7D_28D, _28D_28D — all (buy≤sell) pairs using 1d/7d/28d forecasts
 - Future window price projection (v1.5.7+): trend-ratio scaling — item_forecast = item_current × (archetype_forecast / archetype_rolling_current); preserves intra-archetype item price differentiation; falls back to raw archetype forecast then current price
-- Item-level forecasts (v1.6.0): ForecastStage._generate_item_forecasts() writes item_id-keyed rows to forecast_outputs (item_id set, archetype_id=None) for all recipe-linked items; crafting_advisor._fetch_item_forecasts() prefers these over archetype-level forecasts (priority: item forecast → trend-ratio → archetype forecast → current price)
+- Item-level forecasts (v1.6.0 / v1.12.0): ForecastStage._generate_item_forecasts() writes item_id-keyed rows to forecast_outputs (item_id set, archetype_id=None); v1.6.0: recipe-linked items only; v1.12.0: extended to union of recipe items + any item with ≥14 distinct observation days; crafting_advisor._fetch_item_forecasts() prefers these over archetype-level forecasts (priority: item forecast → trend-ratio → archetype forecast → current price)
 - forecast_outputs.item_id was previously always NULL; now populated for recipe items after each run-daily-forecast
 - Cold-start prediction blending (v1.7.0): ForecastStage._execute() calls _fetch_cold_start_blend_data() to build (source_price, confidence) pairs from archetype_mappings; run_inference() calls cold_start.blend_cold_start_prediction() BEFORE CI computation; blended = confidence × model_pred + (1-confidence) × source_price; model_slug gets _transfer suffix for blended archetypes
 - Volume gate: hard filter (quantity_sum_7d < min_volume_units=50 excluded) + volume_score = clamp(qty/500, 0, 1)
@@ -152,7 +159,6 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 ## What's NOT Implemented Yet
 - top_n_per_category V2 (Pareto-frontier, user-profile weighting, blocklist, A/B test support); cross-horizon dedup done in v0.9.1
 - Governance: cooldown enforcement not wired — preflight.py has check but orchestrator.py never passes last_call_at
-- Governance: prune-snapshots via retention.raw_snapshot_days (field modelled, no CLI/deletion logic)
 - Live news ingestion: BlizzardNewsClient.fetch_recent_news() exists but IngestStage._fetch_news() always uses fixture mode
 - News-to-event: extract_wow_events() not implemented (news items → WoWEvent candidates)
 
@@ -160,4 +166,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-1008 tests passing
+1090 tests passing

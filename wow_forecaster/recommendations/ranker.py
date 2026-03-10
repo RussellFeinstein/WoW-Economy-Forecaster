@@ -37,6 +37,7 @@ from wow_forecaster.recommendations.scorer import (
     build_reasoning,
     compute_score,
     determine_action,
+    determine_risk_level,
 )
 
 _HORIZON_MAP: dict[str, int] = {
@@ -65,6 +66,7 @@ class ScoredForecast:
     score:         float
     components:    ScoreComponents
     action:        str
+    risk_level:    str
     reasoning:     str
     category_tag:       str
     archetype_sub_tag:  str | None
@@ -73,6 +75,7 @@ class ScoredForecast:
     current_price:      float | None
     horizon_days:       int
     item_discounts:     list = field(default_factory=list)  # list[ItemDiscountRow]
+    top_item_rois:      list = field(default_factory=list)  # list[ItemForecastRoi]
 
 
 def build_scored_forecasts(
@@ -135,6 +138,11 @@ def build_scored_forecasts(
             volatility_cv=components.volatility_cv,
         )
 
+        risk_level = determine_risk_level(
+            uncertainty_pct=components.uncertainty_pct,
+            volatility_cv=components.volatility_cv,
+        )
+
         reasoning = build_reasoning(
             components=components,
             action=action,
@@ -155,6 +163,7 @@ def build_scored_forecasts(
                 score=round(components.total, 2),
                 components=components,
                 action=action,
+                risk_level=risk_level,
                 reasoning=reasoning,
                 category_tag=category_tag,
                 archetype_sub_tag=archetype_sub_tag,
@@ -254,6 +263,40 @@ def enrich_with_item_discounts(
             )
 
 
+def enrich_with_top_item_rois(
+    top_by_category: dict[str, list[ScoredForecast]],
+    conn:            sqlite3.Connection,
+    lookback_days:   int = 3,
+    top_n:           int = 5,
+) -> None:
+    """Attach item-level forecast ROI rows to each winning ScoredForecast.
+
+    Calls fetch_item_rois() for every ScoredForecast in *top_by_category*
+    and stores the results in ``ScoredForecast.top_item_rois``.  Archetypes
+    with no item-level forecasts are silently skipped (top_item_rois remains
+    an empty list, and item_discounts is used as the fallback in reports).
+
+    Args:
+        top_by_category: Output from top_n_per_category().
+        conn:            Open DB connection (row_factory = sqlite3.Row).
+        lookback_days:   Observation lookback window (default 3 days).
+        top_n:           Max items to surface per archetype (default 5).
+    """
+    from wow_forecaster.recommendations.item_overlay import fetch_item_rois
+
+    for items in top_by_category.values():
+        for sf in items:
+            sf.top_item_rois = fetch_item_rois(
+                conn=conn,
+                archetype_id=sf.archetype_id,
+                realm_slug=sf.realm_slug,
+                horizon=sf.forecast.forecast_horizon,
+                action=sf.action,
+                lookback_days=lookback_days,
+                top_n=top_n,
+            )
+
+
 def build_recommendation_outputs(
     top_by_category:      dict[str, list[ScoredForecast]],
     default_horizon_days: int = 7,
@@ -285,6 +328,7 @@ def build_recommendation_outputs(
                 RecommendationOutput(
                     forecast_id=sf.forecast.forecast_id,
                     action=sf.action,
+                    risk_level=sf.risk_level,
                     reasoning=sf.reasoning,
                     priority=rank,
                     expires_at=expires,

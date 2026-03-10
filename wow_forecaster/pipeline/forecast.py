@@ -23,8 +23,16 @@ computes item-specific predictions using the trend-ratio method:
 
 This preserves each item's current price level while applying the archetype's
 directional trend.  Results are stored in forecast_outputs with item_id set
-and archetype_id = None.  The crafting advisor prefers these over archetype
-forecasts when pricing specific reagents and output items.
+and archetype_id = None.
+
+Coverage (union of two sets):
+  • All recipe-linked items (output items and required reagents) — always
+    included so the crafting advisor can price crafting windows precisely.
+  • All items with ≥ 14 distinct observation days — broader coverage so the
+    recommendation overlay can surface per-item ROIs within each archetype.
+
+Items in both sets are de-duplicated.  Items without a current price
+observation or without an archetype mapping are skipped.
 
 Look-ahead bias guard
 ---------------------
@@ -224,12 +232,18 @@ def _generate_item_forecasts(
     run_id: int,
     archetype_forecasts: list[ForecastOutput],
     realm_slug: str,
+    min_history_days: int = 14,
 ) -> list[ForecastOutput]:
-    """Generate item-level forecasts for all recipe-linked items.
+    """Generate item-level forecasts for recipe-linked items and items with history.
 
     Uses trend-ratio scaling: item_forecast = item_current × (archetype_forecast
     / archetype_current).  This preserves each item's specific price level while
     applying the archetype's directional trend for future horizons.
+
+    Coverage is the union of:
+      • Recipe-linked items (output items + required reagents) — always included.
+      • Items with ≥ min_history_days distinct observation days — enables per-item
+        ROI surfacing in recommendation reports.
 
     Items without a current price observation or without an archetype mapping
     are skipped.  Results are stored with item_id set and archetype_id = None so
@@ -240,6 +254,8 @@ def _generate_item_forecasts(
         run_id:             FK for provenance in forecast_outputs.
         archetype_forecasts: Archetype-level ForecastOutputs just written to DB.
         realm_slug:         Realm to fetch current prices for.
+        min_history_days:   Min distinct observation days required for non-recipe
+                            items to be included (default 14).
 
     Returns:
         List of item-level ForecastOutput objects (not yet persisted by caller).
@@ -262,13 +278,15 @@ def _generate_item_forecasts(
         "lgbm",
     )
 
-    # Fetch recipe-linked item IDs (output items + required reagents)
+    # Union of recipe-linked items and items with sufficient price history
     recipe_item_ids = _fetch_recipe_item_ids(conn)
-    if not recipe_item_ids:
+    history_item_ids = _fetch_items_with_history(conn, realm_slug, min_history_days)
+    all_item_ids = list(set(recipe_item_ids) | set(history_item_ids))
+    if not all_item_ids:
         return []
 
-    # Fetch item → archetype mapping for recipe items
-    item_archetype_map = _fetch_item_archetypes(conn, recipe_item_ids)
+    # Fetch item → archetype mapping for all candidate items
+    item_archetype_map = _fetch_item_archetypes(conn, all_item_ids)
     if not item_archetype_map:
         return []
 
@@ -329,9 +347,12 @@ def _generate_item_forecasts(
             )
 
     logger.info(
-        "Generated %d item-level forecasts for %d recipe-linked items (realm=%s).",
+        "Generated %d item-level forecasts for %d items "
+        "(%d recipe-linked, %d history-based) (realm=%s).",
         len(item_forecasts),
         len(item_archetype_map),
+        len(recipe_item_ids),
+        len(history_item_ids),
         realm_slug,
     )
     return item_forecasts
@@ -347,6 +368,39 @@ def _fetch_recipe_item_ids(conn: sqlite3.Connection) -> list[int]:
         FROM recipe_reagents
         WHERE reagent_type = 'required'
         """
+    ).fetchall()
+    return [int(r[0]) for r in rows if r[0] is not None]
+
+
+def _fetch_items_with_history(
+    conn: sqlite3.Connection,
+    realm_slug: str,
+    min_days: int = 14,
+) -> list[int]:
+    """Return item IDs with at least min_days distinct observation days.
+
+    Uses COUNT(DISTINCT DATE(observed_at)) so a single day with many snapshots
+    counts as one day.  Outlier rows are excluded.
+
+    Args:
+        conn:       Open DB connection.
+        realm_slug: Realm to query.
+        min_days:   Minimum number of distinct calendar days required.
+
+    Returns:
+        List of item_ids that satisfy the history threshold.
+    """
+    rows = conn.execute(
+        """
+        SELECT item_id
+        FROM market_observations_normalized
+        WHERE realm_slug = ?
+          AND is_outlier = 0
+          AND price_gold > 0
+        GROUP BY item_id
+        HAVING COUNT(DISTINCT DATE(observed_at)) >= ?
+        """,
+        (realm_slug, min_days),
     ).fetchall()
     return [int(r[0]) for r in rows if r[0] is not None]
 

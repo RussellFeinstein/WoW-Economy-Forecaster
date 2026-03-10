@@ -192,6 +192,15 @@ preflight_checks_enabled = true
 # If false, disabled sources raise a hard error — useful to catch stale config.
 block_disabled_sources = true
 
+# ── Data Retention (Blizzard API ToS §2.r) ────────────────────────────────────
+
+[retention]
+# Days to retain raw Blizzard API data (files + DB rows).
+# Blizzard API ToS §2.r requires deletion of raw API data within 30 days.
+# The prune-snapshots command and the hourly orchestrator enforce this.
+# Derived artefacts (Parquet features, model weights) are NOT pruned.
+raw_snapshot_days = 30
+
 # ── Crafting Margin Detector ───────────────────────────────────────────────────
 
 [crafting]

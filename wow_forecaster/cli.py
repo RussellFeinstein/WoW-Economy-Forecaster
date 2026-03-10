@@ -3554,6 +3554,180 @@ def report_feature_importance(
     typer.echo("")
 
 
+@app.command("prune-snapshots")
+def prune_snapshots(
+    days: int = typer.Option(
+        0,
+        "--days",
+        help=(
+            "Retain data for this many days; older data is deleted. "
+            "0 = use retention.raw_snapshot_days from config (default 30)."
+        ),
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Report what would be deleted without actually deleting anything.",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Delete raw Blizzard API data older than the retention window.
+
+    Enforces Blizzard Developer API ToS section 2.r, which requires that
+    raw API data be deleted within 30 days of acquisition.
+
+    Deletes:
+      - Raw JSON snapshot files under data/raw/snapshots/blizzard_api/
+      - market_observations_raw DB rows (and their normalized FK children)
+
+    Derived artefacts (Parquet features, model weights, recommendations)
+    are NOT deleted -- the 30-day TTL only applies to raw API data.
+
+    Use --dry-run to preview deletions without committing them.
+    """
+    from wow_forecaster.governance.pruner import SnapshotPruner
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    retention_days = days if days > 0 else config.retention.raw_snapshot_days
+
+    typer.echo(
+        f"Pruning raw data older than {retention_days} days"
+        + (" [DRY RUN]" if dry_run else "")
+        + " ..."
+    )
+
+    pruner = SnapshotPruner(
+        raw_dir=config.data.raw_dir,
+        db_path=config.database.db_path,
+        retention_days=retention_days,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+        wal_mode=config.database.wal_mode,
+    )
+
+    result = pruner.prune(dry_run=dry_run)
+
+    if result.errors:
+        for err in result.errors:
+            typer.echo(f"  [WARN] {err}", err=True)
+
+    typer.echo(f"  Cutoff date:   {result.cutoff_date}")
+    typer.echo(f"  Files deleted: {result.files_deleted}")
+    typer.echo(f"  Dirs removed:  {result.dirs_removed}")
+    typer.echo(f"  Raw DB rows:   {result.raw_rows_deleted}")
+    typer.echo(f"  Norm DB rows:  {result.norm_rows_deleted}")
+
+    if dry_run:
+        typer.echo("")
+        typer.echo("[DRY RUN] No data was deleted. Re-run without --dry-run to delete.")
+    elif result.errors:
+        typer.echo("")
+        typer.echo(f"[PARTIAL] Prune completed with {len(result.errors)} error(s).")
+        raise typer.Exit(code=1)
+    else:
+        typer.echo("")
+        typer.echo("[OK] Prune complete.")
+
+
+@app.command("export-tsm")
+def export_tsm_cmd(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Realm slug. Uses first config default if omitted.",
+    ),
+    horizon: str = typer.Option(
+        "1d",
+        "--horizon",
+        help="Forecast horizon to export (1d, 7d, 28d).",
+    ),
+    min_roi: float = typer.Option(
+        0.10,
+        "--min-roi",
+        help="Minimum ROI for inclusion (default 0.10 = 10%%).",
+    ),
+    output: Optional[str] = typer.Option(
+        None,
+        "--output",
+        help="Write TSM import string to this file path.",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Export item buy signals as a TSM import string.
+
+    \b
+    Reads item-level forecasts from the DB, filters to buy signals with
+    ROI >= --min-roi, and prints a comma-separated i:XXXX string you can
+    paste into TradeSkillMaster's group import or shopping dialog.
+
+    \b
+    Only items with item-level forecast coverage are included.  Run
+    'run-daily-forecast' to generate item-level forecasts first.
+
+    \b
+    Examples:
+        wow-forecaster export-tsm
+        wow-forecaster export-tsm --horizon 7d --min-roi 0.15
+        wow-forecaster export-tsm --output tsm_export.txt
+    """
+    import sqlite3 as _sqlite3
+    from pathlib import Path as _Path
+
+    from wow_forecaster.reporting.tsm_export import (
+        build_tsm_import_string,
+        fetch_tsm_export_items,
+        write_tsm_export,
+    )
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    target_realm = realm or config.realms.defaults[0]
+    db_path = _Path(config.database.db_path)
+
+    conn = _sqlite3.connect(str(db_path))
+    conn.row_factory = _sqlite3.Row
+    try:
+        items = fetch_tsm_export_items(
+            conn=conn,
+            realm_slug=target_realm,
+            horizon=horizon,
+            min_roi_pct=min_roi,
+        )
+    finally:
+        conn.close()
+
+    if not items:
+        typer.echo(
+            f"\n[INFO] No buy signals found for realm={target_realm} "
+            f"horizon={horizon} min_roi={min_roi:.0%}"
+        )
+        typer.echo("       Run 'wow-forecaster run-daily-forecast' first.")
+        raise typer.Exit(code=0)
+
+    tsm_string = build_tsm_import_string(items)
+    typer.echo(f"\n  TSM Export -- {target_realm} [{horizon}] >= {min_roi:.0%} ROI")
+    typer.echo(f"  Items: {len(items)}")
+    typer.echo("")
+    typer.echo(f"  {tsm_string}")
+    typer.echo("")
+
+    if output:
+        p = write_tsm_export(items, _Path(output))
+        typer.echo(f"  Written to: {p}")
+
+    typer.echo("[OK] export-tsm complete.")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

@@ -267,6 +267,7 @@ CREATE TABLE IF NOT EXISTS forecast_outputs (
     confidence_pct       REAL    NOT NULL DEFAULT 0.80,
     model_slug           TEXT    NOT NULL,
     features_hash        TEXT,
+    ci_quality           TEXT    NOT NULL DEFAULT 'good',
     created_at           TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 """

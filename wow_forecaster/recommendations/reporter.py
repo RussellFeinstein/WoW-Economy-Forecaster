@@ -59,7 +59,7 @@ def write_forecast_csv(
     fieldnames = [
         "archetype_id", "realm_slug", "horizon", "target_date",
         "current_price", "predicted_price", "ci_lower", "ci_upper",
-        "roi_pct", "score", "action", "model_slug",
+        "roi_pct", "score", "action", "risk_level", "model_slug",
     ]
 
     with csv_path.open("w", newline="", encoding="utf-8") as f:
@@ -80,6 +80,7 @@ def write_forecast_csv(
                     "roi_pct":        roi_pct,
                     "score":          sf.score,
                     "action":         sf.action,
+                    "risk_level":     sf.risk_level,
                     "model_slug":     sf.forecast.model_slug,
                 }
             )
@@ -116,8 +117,8 @@ def write_recommendation_csv(
 
     fieldnames = [
         "rank", "category", "archetype_id", "realm_slug", "horizon",
-        "current_price", "predicted_price", "roi_pct", "score", "action",
-        "top_items", "reasoning",
+        "current_price", "predicted_price", "roi_pct", "score",
+        "action", "risk_level", "top_items", "reasoning",
     ]
 
     with csv_path.open("w", newline="", encoding="utf-8") as f:
@@ -129,10 +130,16 @@ def write_recommendation_csv(
                     f"{sf.components.roi:+.2%}"
                     if sf.components.roi is not None else ""
                 )
-                top_items = "|".join(
-                    f"{dr.name} ({dr.discount_pct:+.1%})"
-                    for dr in sf.item_discounts
-                )
+                if sf.top_item_rois:
+                    top_items = "|".join(
+                        f"{r.name} ({r.roi_pct:+.1%})" for r in sf.top_item_rois
+                    )
+                elif sf.item_discounts:
+                    top_items = "|".join(
+                        f"{dr.name} ({dr.discount_pct:+.1%})" for dr in sf.item_discounts
+                    )
+                else:
+                    top_items = ""
                 writer.writerow(
                     {
                         "rank":           rank,
@@ -145,6 +152,7 @@ def write_recommendation_csv(
                         "roi_pct":        roi_pct,
                         "score":          sf.score,
                         "action":         sf.action,
+                        "risk_level":     sf.risk_level,
                         "top_items":      top_items,
                         "reasoning":      sf.reasoning,
                     }
@@ -213,17 +221,31 @@ def write_recommendation_json(
                     "uncertainty":   sf.components.uncertainty_penalty,
                 },
                 "model_slug":      sf.forecast.model_slug,
-                "recommended_items": [
-                    {
-                        "item_id":         dr.item_id,
-                        "name":            dr.name,
-                        "item_price_gold": round(dr.item_price_gold, 2),
-                        "discount_pct":    round(dr.discount_pct, 4),
-                        "price_z_score":   dr.price_z_score,
-                        "obs_count":       dr.obs_count,
-                    }
-                    for dr in sf.item_discounts
-                ],
+                "recommended_items": (
+                    [
+                        {
+                            "item_id":        r.item_id,
+                            "name":           r.name,
+                            "current_price":  round(r.current_price, 2),
+                            "forecast_price": round(r.forecast_price, 2),
+                            "roi_pct":        round(r.roi_pct, 4),
+                            "obs_count":      r.obs_count,
+                        }
+                        for r in sf.top_item_rois
+                    ]
+                    if sf.top_item_rois else
+                    [
+                        {
+                            "item_id":         dr.item_id,
+                            "name":            dr.name,
+                            "item_price_gold": round(dr.item_price_gold, 2),
+                            "discount_pct":    round(dr.discount_pct, 4),
+                            "price_z_score":   dr.price_z_score,
+                            "obs_count":       dr.obs_count,
+                        }
+                        for dr in sf.item_discounts
+                    ]
+                ),
             }
             for rank, sf in enumerate(items, start=1)
         ]

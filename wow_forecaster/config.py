@@ -265,6 +265,20 @@ class CraftingConfig(BaseModel):
     allowed_expansions: list[str] = []
 
 
+class RetentionConfig(BaseModel):
+    """Data retention settings for API ToS §2.r compliance.
+
+    Attributes:
+        raw_snapshot_days: Number of days to retain raw Blizzard API data.
+            Files and DB rows older than this are deleted by ``prune-snapshots``.
+            Blizzard API ToS §2.r requires deletion within 30 days.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    raw_snapshot_days: int = 30
+
+
 class AppConfig(BaseModel):
     """Complete application configuration — the single source of truth.
 
@@ -287,6 +301,7 @@ class AppConfig(BaseModel):
     monitoring: MonitoringConfig = MonitoringConfig()
     governance: GovernanceConfig = GovernanceConfig()
     crafting:   CraftingConfig   = CraftingConfig()
+    retention:  RetentionConfig  = RetentionConfig()
     debug: bool = False
 
 
@@ -403,5 +418,6 @@ def _build_app_config(raw: dict[str, Any]) -> AppConfig:
         monitoring=MonitoringConfig(**raw.get("monitoring", {})),
         governance=GovernanceConfig(**raw.get("governance", {})),
         crafting=CraftingConfig(**raw.get("crafting", {})),
+        retention=RetentionConfig(**raw.get("retention", {})),
         debug=raw.get("debug", project.get("debug", False)),
     )

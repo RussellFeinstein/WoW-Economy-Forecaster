@@ -35,8 +35,8 @@ class ForecastOutputRepository(BaseRepository):
                 run_id, archetype_id, item_id, realm_slug,
                 forecast_horizon, target_date, predicted_price_gold,
                 confidence_lower, confidence_upper, confidence_pct,
-                model_slug, features_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                model_slug, features_hash, ci_quality
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """,
             (
                 forecast.run_id,
@@ -51,6 +51,7 @@ class ForecastOutputRepository(BaseRepository):
                 forecast.confidence_pct,
                 forecast.model_slug,
                 forecast.features_hash,
+                forecast.ci_quality,
             ),
         )
         return self.last_insert_rowid()
@@ -58,8 +59,8 @@ class ForecastOutputRepository(BaseRepository):
     def insert_recommendation(self, rec: RecommendationOutput) -> int:
         """Insert a recommendation output and return its ``rec_id``.
 
-        Persists all fields including ``score``, ``score_components``, and
-        ``category_tag`` (added in migration 0003).
+        Persists all fields including ``score``, ``score_components``,
+        ``category_tag`` (migration 0003), and ``risk_level`` (migration 0006).
 
         Args:
             rec: The ``RecommendationOutput`` to persist.
@@ -70,13 +71,14 @@ class ForecastOutputRepository(BaseRepository):
         self.execute(
             """
             INSERT INTO recommendation_outputs (
-                forecast_id, action, reasoning, priority, expires_at,
+                forecast_id, action, risk_level, reasoning, priority, expires_at,
                 score, score_components, category_tag
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
             """,
             (
                 rec.forecast_id,
                 rec.action,
+                rec.risk_level,
                 rec.reasoning,
                 rec.priority,
                 rec.expires_at.isoformat() if rec.expires_at else None,
@@ -278,6 +280,7 @@ def _row_to_forecast(row: sqlite3.Row) -> ForecastOutput:
         confidence_pct=row["confidence_pct"],
         model_slug=row["model_slug"],
         features_hash=row["features_hash"],
+        ci_quality=row["ci_quality"] if row["ci_quality"] else "good",
     )
 
 

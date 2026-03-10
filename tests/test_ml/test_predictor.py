@@ -324,3 +324,83 @@ class TestRunInferenceBlending:
         assert by_arch[1].predicted_price_gold == pytest.approx(model_pred, abs=0.01)
         # Cold-start archetype: blended prediction
         assert by_arch[2].predicted_price_gold == pytest.approx(expected_blended, abs=0.01)
+
+
+class TestRunInferenceCiQuality:
+    """Tests verifying ci_quality is computed and attached to ForecastOutput."""
+
+    def test_ci_quality_present_on_all_outputs(self, tmp_path):
+        """Every ForecastOutput must have a ci_quality field."""
+        parquet_path = tmp_path / "inference_us_test.parquet"
+        _write_parquet([_archetype_row(archetype_id=10, price=100.0)], parquet_path)
+
+        outputs = run_inference(
+            config=_make_config(),
+            run=_make_run(),
+            forecasters={7: _make_forecaster(110.0)},
+            inference_parquet_path=parquet_path,
+            realm_slug="us",
+        )
+
+        assert len(outputs) == 1
+        assert outputs[0].ci_quality in ("good", "wide", "unreliable")
+
+    def test_good_quality_for_tight_ci(self, tmp_path):
+        """Small rolling_std relative to price → narrow CI → 'good' quality."""
+        parquet_path = tmp_path / "inference_us_test.parquet"
+        # rolling_std=1 on price=100 → ci_half=1.28 → width=2.56/100=2.6% → good
+        row = _archetype_row(archetype_id=20, price=100.0, rolling_std=1.0)
+        _write_parquet([row], parquet_path)
+
+        outputs = run_inference(
+            config=_make_config(),
+            run=_make_run(),
+            forecasters={7: _make_forecaster(100.0)},
+            inference_parquet_path=parquet_path,
+            realm_slug="us",
+        )
+
+        assert outputs[0].ci_quality == "good"
+
+    def test_cold_start_wide_ci_classified_correctly(self, tmp_path):
+        """Cold-start without transfer and no rolling_std gets wide/unreliable CI."""
+        parquet_path = tmp_path / "inference_us_test.parquet"
+        row = _archetype_row(
+            archetype_id=30,
+            price=100.0,
+            is_cold_start=True,
+            has_transfer_mapping=False,
+            transfer_confidence=None,
+            rolling_std=None,   # forces default 20% × 3.0× widening
+        )
+        _write_parquet([row], parquet_path)
+
+        outputs = run_inference(
+            config=_make_config(),
+            run=_make_run(),
+            forecasters={7: _make_forecaster(100.0)},
+            inference_parquet_path=parquet_path,
+            realm_slug="us",
+        )
+
+        # Default: 20%*100*3.0 = 60 ci_half → width=120/100=120% → wide
+        assert outputs[0].ci_quality in ("wide", "unreliable")
+
+    def test_floor_applied_so_lower_not_zero(self, tmp_path):
+        """CI lower bound must not be 0 when current_price is available."""
+        parquet_path = tmp_path / "inference_us_test.parquet"
+        # large rolling_std → without floor, lower would be 0
+        row = _archetype_row(archetype_id=40, price=100.0, rolling_std=200.0)
+        _write_parquet([row], parquet_path)
+
+        outputs = run_inference(
+            config=_make_config(),
+            run=_make_run(),
+            forecasters={7: _make_forecaster(5.0)},  # small predicted
+            inference_parquet_path=parquet_path,
+            realm_slug="us",
+        )
+
+        assert len(outputs) == 1
+        # Floor = 5% of current_price (100) = 5.0
+        assert outputs[0].confidence_lower >= 5.0
