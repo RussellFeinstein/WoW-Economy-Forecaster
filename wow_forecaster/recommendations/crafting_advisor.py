@@ -140,8 +140,9 @@ def build_crafting_opportunities(
     # Load most recent margin snapshot per recipe
     current_margins = _fetch_current_margins(conn, recipe_ids, realm_slug, run_date)
 
-    # Load forecast prices (archetype-level) for +7d and +28d horizons
+    # Load forecast prices: archetype-level and item-level (prefer item-level when available)
     forecasts = _fetch_forecasts(conn, realm_slug)
+    item_forecasts = _fetch_item_forecasts(conn, realm_slug)
 
     # Load archetype_id for output items (to link to forecasts)
     item_archetype_map = _fetch_item_archetype_map(conn)
@@ -218,6 +219,7 @@ def build_crafting_opportunities(
             forecasts=forecasts,
             current_price_map=current_price_map,
             archetype_current_prices=archetype_current_prices,
+            item_forecasts=item_forecasts,
         )
 
         best_window, best_margin_gold = _find_best_window(windows, current_output)
@@ -412,6 +414,38 @@ def _fetch_forecasts(
     return {(row[0], row[1]): row[2] for row in rows}
 
 
+def _fetch_item_forecasts(
+    conn: sqlite3.Connection,
+    realm_slug: str,
+) -> dict[tuple[int, str], float]:
+    """Fetch the most recent item-level forecast per (item_id, horizon).
+
+    Item-level forecasts are written by ForecastStage._generate_item_forecasts()
+    using trend-ratio scaling.  They are preferred over archetype-level forecasts
+    in _compute_windows() because they preserve each item's specific price level.
+
+    Returns dict: (item_id, horizon_label) -> predicted_price_gold.
+    """
+    rows = conn.execute(
+        """
+        SELECT fo.item_id, fo.forecast_horizon, fo.predicted_price_gold
+        FROM forecast_outputs fo
+        INNER JOIN (
+            SELECT item_id, forecast_horizon, MAX(created_at) AS latest
+            FROM forecast_outputs
+            WHERE realm_slug = ? AND item_id IS NOT NULL
+            GROUP BY item_id, forecast_horizon
+        ) latest ON fo.item_id         = latest.item_id
+                 AND fo.forecast_horizon = latest.forecast_horizon
+                 AND fo.created_at       = latest.latest
+                 AND fo.realm_slug       = ?
+        """,
+        (realm_slug, realm_slug),
+    ).fetchall()
+
+    return {(row[0], row[1]): row[2] for row in rows}
+
+
 def _fetch_item_archetype_map(conn: sqlite3.Connection) -> dict[int, int]:
     """Return item_id -> archetype_id for all items with an archetype."""
     rows = conn.execute(
@@ -500,14 +534,15 @@ def _compute_windows(
     forecasts: dict[tuple[int, str], float],
     current_price_map: dict[int, float],
     archetype_current_prices: dict[int, float] | None = None,
+    item_forecasts: dict[tuple[int, str], float] | None = None,
 ) -> tuple[dict[CraftingWindow, float | None], dict[CraftingWindow, float | None]]:
     """Compute margin_gold and projected sell price for each of the 6 temporal windows.
 
-    For future horizons (horizon_days > 0), item prices are projected using
-    trend-ratio scaling: item_forecast = item_current × (archetype_forecast /
-    archetype_current). This preserves item-specific price levels while applying
-    the archetype's directional trend. Falls back to the raw archetype forecast
-    when the ratio cannot be computed, then to the item's current price.
+    Price lookup priority for future horizons (horizon_days > 0):
+      1. Item-level forecast (from forecast_outputs with item_id set) — most precise.
+      2. Trend-ratio scaling: item_current × (archetype_forecast / archetype_current).
+      3. Raw archetype forecast (loses item-specific price level).
+      4. Item's current price (assumes no change).
 
     Returns:
         (windows, window_sell_prices) — both keyed by CraftingWindow.
@@ -515,28 +550,34 @@ def _compute_windows(
     output_item_id = recipe["output_item_id"]
     output_quantity = max(recipe.get("output_quantity", 1), 1)
     _arch_currents = archetype_current_prices or {}
+    _item_fc = item_forecasts or {}
 
     def forecast_price(item_id: int, horizon_days: int) -> float | None:
         """Get forecasted price for an item at a given horizon.
 
-        For horizon_days == 0: return current item price directly.
-        For horizon_days > 0: apply archetype trend-ratio to preserve item-
-        specific price levels. Falls back to archetype forecast, then current price.
+        Priority: item-level forecast → trend-ratio → archetype forecast → current price.
         """
         if horizon_days == 0:
             return current_price_map.get(item_id)
 
+        label = _HORIZON_LABEL.get(horizon_days)
+
+        # Priority 1: item-level forecast (persisted by ForecastStage for recipe items)
+        if label:
+            item_fc = _item_fc.get((item_id, label))
+            if item_fc is not None:
+                return item_fc
+
         item_current = current_price_map.get(item_id)
         archetype_id = item_archetype_map.get(item_id)
-        label = _HORIZON_LABEL.get(horizon_days)
 
         if archetype_id and label:
             archetype_forecast = forecasts.get((archetype_id, label))
             archetype_current = _arch_currents.get(archetype_id)
 
-            # Preferred path: scale item's actual price by archetype trend ratio.
-            # This preserves intra-archetype price differentiation (e.g., rare herb
-            # at 80g vs common herb at 20g, both in mat.herb.common archetype).
+            # Priority 2: trend-ratio scaling — preserves intra-archetype differentiation.
+            # e.g., rare herb at 80g vs common herb at 20g in the same archetype
+            # project to different future prices, not both to the archetype mean.
             if (
                 item_current is not None
                 and archetype_forecast is not None
@@ -545,11 +586,11 @@ def _compute_windows(
             ):
                 return item_current * (archetype_forecast / archetype_current)
 
-            # Fallback: archetype forecast level (loses item-specific differentiation)
+            # Priority 3: archetype forecast level (loses item-specific differentiation)
             if archetype_forecast is not None:
                 return archetype_forecast
 
-        # Final fallback: assume no price change from current
+        # Priority 4: assume no price change from current
         return item_current
 
     def compute_craft_cost(buy_horizon: int) -> float | None:

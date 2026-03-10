@@ -11,6 +11,20 @@ For each realm:
   3. Batch-predict prices for all archetypes in the inference Parquet.
   4. Compute heuristic CIs (rolling_std × z, widened for cold-start items).
   5. Persist ForecastOutput rows to forecast_outputs SQLite table.
+  6. Generate and persist item-level forecasts for recipe-linked items
+     (output items and required reagents) via trend-ratio scaling.
+
+Item-level forecasts
+--------------------
+After archetype-level forecasts are written, _generate_item_forecasts()
+computes item-specific predictions using the trend-ratio method:
+
+    item_forecast = item_current × (archetype_forecast / archetype_current)
+
+This preserves each item's current price level while applying the archetype's
+directional trend.  Results are stored in forecast_outputs with item_id set
+and archetype_id = None.  The crafting advisor prefers these over archetype
+forecasts when pricing specific reagents and output items.
 
 Look-ahead bias guard
 ---------------------
@@ -31,12 +45,18 @@ Returns total number of ForecastOutput rows written to DB.
 from __future__ import annotations
 
 import logging
+import sqlite3
+from datetime import date, timedelta
 from pathlib import Path
 
+from wow_forecaster.models.forecast import ForecastOutput
 from wow_forecaster.models.meta import RunMetadata
 from wow_forecaster.pipeline.base import PipelineStage
 
 logger = logging.getLogger(__name__)
+
+# Horizon label → days offset for target_date computation
+_HORIZON_DAYS: dict[str, int] = {"1d": 1, "7d": 7, "28d": 28}
 
 
 class ForecastStage(PipelineStage):
@@ -155,7 +175,7 @@ class ForecastStage(PipelineStage):
                 logger.error("Inference failed for realm=%s: %s", realm, exc, exc_info=True)
                 continue
 
-            # Persist to DB
+            # Persist archetype-level forecasts and generate item-level forecasts
             with get_connection(
                 self.db_path,
                 wal_mode=self.config.database.wal_mode,
@@ -167,13 +187,233 @@ class ForecastStage(PipelineStage):
                     # Attach the DB-assigned forecast_id (needed by RecommendStage)
                     object.__setattr__(fc, "forecast_id", fc_id)
 
+                # Generate and persist item-level forecasts for recipe-linked items
+                item_outputs = _generate_item_forecasts(conn, run.run_id, outputs, realm)
+                for ifc in item_outputs:
+                    repo.insert_forecast(ifc)
+
             total_outputs += len(outputs)
             logger.info(
-                "realm=%s: %d forecast rows persisted.", realm, len(outputs)
+                "realm=%s: %d archetype + %d item forecast rows persisted.",
+                realm, len(outputs), len(item_outputs),
             )
 
         logger.info(
-            "ForecastStage complete: %d ForecastOutput rows across %d realm(s).",
+            "ForecastStage complete: %d archetype ForecastOutput rows across %d realm(s).",
             total_outputs, len(realms),
         )
         return total_outputs
+
+
+# ── Item-level forecast generation ─────────────────────────────────────────────
+
+
+def _generate_item_forecasts(
+    conn: sqlite3.Connection,
+    run_id: int,
+    archetype_forecasts: list[ForecastOutput],
+    realm_slug: str,
+) -> list[ForecastOutput]:
+    """Generate item-level forecasts for all recipe-linked items.
+
+    Uses trend-ratio scaling: item_forecast = item_current × (archetype_forecast
+    / archetype_current).  This preserves each item's specific price level while
+    applying the archetype's directional trend for future horizons.
+
+    Items without a current price observation or without an archetype mapping
+    are skipped.  Results are stored with item_id set and archetype_id = None so
+    the crafting advisor can prefer them over archetype-level forecasts.
+
+    Args:
+        conn:               Open DB connection (within an active transaction).
+        run_id:             FK for provenance in forecast_outputs.
+        archetype_forecasts: Archetype-level ForecastOutputs just written to DB.
+        realm_slug:         Realm to fetch current prices for.
+
+    Returns:
+        List of item-level ForecastOutput objects (not yet persisted by caller).
+    """
+    if not archetype_forecasts:
+        return []
+
+    # Build archetype forecast lookup: (archetype_id, horizon_label) → ForecastOutput
+    arch_fc_map: dict[tuple[int, str], ForecastOutput] = {}
+    for fc in archetype_forecasts:
+        if fc.archetype_id is not None:
+            arch_fc_map[(fc.archetype_id, fc.forecast_horizon)] = fc
+
+    if not arch_fc_map:
+        return []
+
+    # Determine the base model_slug from archetype forecasts for provenance
+    base_model_slug = next(
+        (fc.model_slug for fc in archetype_forecasts if fc.archetype_id is not None),
+        "lgbm",
+    )
+
+    # Fetch recipe-linked item IDs (output items + required reagents)
+    recipe_item_ids = _fetch_recipe_item_ids(conn)
+    if not recipe_item_ids:
+        return []
+
+    # Fetch item → archetype mapping for recipe items
+    item_archetype_map = _fetch_item_archetypes(conn, recipe_item_ids)
+    if not item_archetype_map:
+        return []
+
+    # Fetch 7-day rolling mean prices per item and per archetype
+    run_date = date.today()
+    item_ids_with_arch = list(item_archetype_map.keys())
+    archetype_ids = list(set(item_archetype_map.values()))
+
+    item_current_prices = _fetch_item_prices(conn, item_ids_with_arch, realm_slug, run_date)
+    archetype_current_prices = _fetch_archetype_prices(conn, archetype_ids, realm_slug, run_date)
+
+    item_forecasts: list[ForecastOutput] = []
+    for item_id, archetype_id in item_archetype_map.items():
+        item_current = item_current_prices.get(item_id)
+        if item_current is None:
+            continue  # No recent price data — skip rather than invent a forecast
+
+        archetype_current = archetype_current_prices.get(archetype_id)
+
+        for horizon_label in ("1d", "7d", "28d"):
+            arch_fc = arch_fc_map.get((archetype_id, horizon_label))
+            if arch_fc is None:
+                continue
+
+            # Trend-ratio: scale item's current price by archetype trend direction
+            if archetype_current is not None and archetype_current > 0:
+                ratio = arch_fc.predicted_price_gold / archetype_current
+                predicted = max(0.0, item_current * ratio)
+                ci_lower = max(0.0, item_current * (arch_fc.confidence_lower / archetype_current))
+                ci_upper = item_current * (arch_fc.confidence_upper / archetype_current)
+            else:
+                # Fallback: archetype forecast level (no item-level differentiation)
+                predicted = arch_fc.predicted_price_gold
+                ci_lower = arch_fc.confidence_lower
+                ci_upper = arch_fc.confidence_upper
+
+            # Ensure CI ordering is valid after any floating-point rounding
+            ci_lower = min(ci_lower, predicted)
+            ci_upper = max(ci_upper, predicted)
+
+            target_date = date.today() + timedelta(days=_HORIZON_DAYS[horizon_label])
+
+            item_forecasts.append(
+                ForecastOutput(
+                    run_id=run_id,
+                    archetype_id=None,
+                    item_id=item_id,
+                    realm_slug=realm_slug,
+                    forecast_horizon=horizon_label,  # type: ignore[arg-type]
+                    target_date=target_date,
+                    predicted_price_gold=predicted,
+                    confidence_lower=ci_lower,
+                    confidence_upper=ci_upper,
+                    confidence_pct=arch_fc.confidence_pct,
+                    model_slug=f"item_ratio_{base_model_slug}",
+                    features_hash=None,
+                )
+            )
+
+    logger.info(
+        "Generated %d item-level forecasts for %d recipe-linked items (realm=%s).",
+        len(item_forecasts),
+        len(item_archetype_map),
+        realm_slug,
+    )
+    return item_forecasts
+
+
+def _fetch_recipe_item_ids(conn: sqlite3.Connection) -> list[int]:
+    """Return all item IDs that appear as recipe outputs or required reagents."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT output_item_id AS item_id FROM recipes
+        UNION
+        SELECT DISTINCT ingredient_item_id AS item_id
+        FROM recipe_reagents
+        WHERE reagent_type = 'required'
+        """
+    ).fetchall()
+    return [int(r[0]) for r in rows if r[0] is not None]
+
+
+def _fetch_item_archetypes(
+    conn: sqlite3.Connection,
+    item_ids: list[int],
+) -> dict[int, int]:
+    """Return item_id → archetype_id for items that have an archetype assigned."""
+    if not item_ids:
+        return {}
+    placeholders = ",".join("?" * len(item_ids))
+    rows = conn.execute(
+        f"SELECT item_id, archetype_id FROM items "
+        f"WHERE item_id IN ({placeholders}) AND archetype_id IS NOT NULL;",
+        item_ids,
+    ).fetchall()
+    return {int(r[0]): int(r[1]) for r in rows}
+
+
+def _fetch_item_prices(
+    conn: sqlite3.Connection,
+    item_ids: list[int],
+    realm_slug: str,
+    run_date: date,
+) -> dict[int, float]:
+    """7-day quantity-weighted mean price per item from market_observations_normalized."""
+    if not item_ids:
+        return {}
+    start_ts = (run_date - timedelta(days=6)).isoformat()
+    end_ts = (run_date + timedelta(days=1)).isoformat()
+    placeholders = ",".join("?" * len(item_ids))
+    rows = conn.execute(
+        f"""
+        SELECT item_id,
+               SUM(price_gold * COALESCE(quantity_listed, 1))
+                   / NULLIF(SUM(COALESCE(quantity_listed, 1)), 0)
+        FROM market_observations_normalized
+        WHERE realm_slug = ?
+          AND is_outlier = 0
+          AND observed_at >= ?
+          AND observed_at <  ?
+          AND price_gold > 0
+          AND item_id IN ({placeholders})
+        GROUP BY item_id
+        """,
+        [realm_slug, start_ts, end_ts] + list(item_ids),
+    ).fetchall()
+    return {int(r[0]): float(r[1]) for r in rows if r[1] is not None}
+
+
+def _fetch_archetype_prices(
+    conn: sqlite3.Connection,
+    archetype_ids: list[int],
+    realm_slug: str,
+    run_date: date,
+) -> dict[int, float]:
+    """7-day quantity-weighted mean price per archetype from market_observations_normalized."""
+    if not archetype_ids:
+        return {}
+    start_ts = (run_date - timedelta(days=6)).isoformat()
+    end_ts = (run_date + timedelta(days=1)).isoformat()
+    placeholders = ",".join("?" * len(archetype_ids))
+    rows = conn.execute(
+        f"""
+        SELECT i.archetype_id,
+               SUM(mon.price_gold * COALESCE(mon.quantity_listed, 1))
+                   / NULLIF(SUM(COALESCE(mon.quantity_listed, 1)), 0)
+        FROM market_observations_normalized mon
+        JOIN items i ON mon.item_id = i.item_id
+        WHERE mon.realm_slug = ?
+          AND mon.is_outlier = 0
+          AND mon.observed_at >= ?
+          AND mon.observed_at <  ?
+          AND mon.price_gold > 0
+          AND i.archetype_id IN ({placeholders})
+        GROUP BY i.archetype_id
+        """,
+        [realm_slug, start_ts, end_ts] + list(archetype_ids),
+    ).fetchall()
+    return {int(r[0]): float(r[1]) for r in rows if r[1] is not None}
