@@ -32,7 +32,7 @@ BLIZZARD_CLIENT_SECRET=...
 - [wow_forecaster/config.py](wow_forecaster/config.py) — AppConfig via load_config()
 - [wow_forecaster/db/schema.py](wow_forecaster/db/schema.py) — 21 tables, apply_schema() idempotent
 - [wow_forecaster/pipeline/base.py](wow_forecaster/pipeline/base.py) — PipelineStage ABC
-- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (31 commands)
+- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (32 commands)
 - [config/default.toml](config/default.toml) — static config
 - [config/sources.toml](config/sources.toml) — 3 source policies
 - [config/events/tww_events.json](config/events/tww_events.json) — TWW seed events
@@ -111,10 +111,13 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - --export PATH writes flat CSV for Power BI (sc_* score component columns)
 - [dashboard/app.py](dashboard/app.py) — 5-tab Streamlit UI (optional dep group)
 
-### Source Governance (v0.8.0)
+### Source Governance (v0.8.0 / v1.9.0)
 - [config/sources.toml](config/sources.toml) — blizzard_api, blizzard_news_manual, manual_event_csv (3 policies)
 - [wow_forecaster/governance/preflight.py](wow_forecaster/governance/preflight.py) — 3-check preflight before each ingest
-- CLI: list-sources, validate-source-policies, check-source-freshness
+- [wow_forecaster/governance/pruner.py](wow_forecaster/governance/pruner.py) — SnapshotPruner: deletes raw JSON + market_observations_raw rows > retention_days (API ToS §2.r)
+- RetentionConfig in config.py; `[retention] raw_snapshot_days=30` in default.toml
+- HourlyOrchestrator calls pruner as step 7 after every successful ingest run (non-fatal)
+- CLI: list-sources, validate-source-policies, check-source-freshness, prune-snapshots (--days N, --dry-run)
 
 ### Seed Events (v0.9.0)
 - build-events must run before build-datasets
@@ -152,7 +155,6 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 ## What's NOT Implemented Yet
 - top_n_per_category V2 (Pareto-frontier, user-profile weighting, blocklist, A/B test support); cross-horizon dedup done in v0.9.1
 - Governance: cooldown enforcement not wired — preflight.py has check but orchestrator.py never passes last_call_at
-- Governance: prune-snapshots via retention.raw_snapshot_days (field modelled, no CLI/deletion logic)
 - Live news ingestion: BlizzardNewsClient.fetch_recent_news() exists but IngestStage._fetch_news() always uses fixture mode
 - News-to-event: extract_wow_events() not implemented (news items → WoWEvent candidates)
 
@@ -160,4 +162,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-1008 tests passing
+1024 tests passing

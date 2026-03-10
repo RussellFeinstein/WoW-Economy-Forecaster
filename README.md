@@ -50,7 +50,7 @@ wow_forecaster/
 │                    # export (flat CSV/JSON for Power BI)
 ├── governance/      # Source policy registry, preflight checks, freshness validation
 ├── scheduler.py     # SchedulerDaemon (stdlib only) — hourly + daily automation
-└── cli.py           # Typer CLI: 31 commands
+└── cli.py           # Typer CLI: 32 commands
 
 config/
 ├── default.toml             # Static defaults (committed)
@@ -302,6 +302,9 @@ wow-forecaster validate-source-policies
 
 # Check freshness of each source's last successful snapshot
 wow-forecaster check-source-freshness  [--realm SLUG] [--export PATH]
+
+# Delete raw API data older than retention window (Blizzard API ToS §2.r — 30-day TTL)
+wow-forecaster prune-snapshots         [--days N] [--dry-run]
 ```
 
 ### Crafting Margin Advisor
@@ -416,7 +419,7 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 1008 tests
+# All 1024 tests
 pytest
 
 # With coverage
@@ -425,7 +428,7 @@ pytest --cov=wow_forecaster --cov-report=term-missing
 # By group
 pytest tests/test_recommendations/  # Scorer, ranker, item overlay, crafting advisor (133 tests)
 pytest tests/test_cli/              # CLI smoke tests (54 tests)
-pytest tests/test_governance/       # Source policies, preflight, freshness (84 tests)
+pytest tests/test_governance/       # Source policies, preflight, freshness, pruner (100 tests)
 pytest tests/test_reporting/        # Reader, formatters, export (86 tests)
 pytest tests/test_monitoring/       # Drift, adaptive, orchestrator (73 tests)
 pytest tests/test_ingestion/        # Ingestion + snapshots (73 tests)
@@ -604,7 +607,6 @@ Without Blizzard credentials the pipeline cannot ingest live data.
 
 - `top_n_per_category` V2 refinements: Pareto-frontier ranking, user-profile weighting, "do not recommend" blocklist, A/B test support. (Cross-horizon deduplication was implemented in v0.9.1.)
 - Source governance: per-source cooldown enforcement — the cooldown check logic exists in `preflight.py` but `orchestrator.py` never queries or passes `last_call_at`, so the check is always skipped.
-- Source governance: `prune-snapshots` via `retention.raw_snapshot_days` — the field is modelled and displayed but no CLI command or deletion logic exists.
 - Live news ingestion: `BlizzardNewsClient.fetch_recent_news()` is implemented but `IngestStage._fetch_news()` always calls fixture mode regardless of credentials.
 - News-to-event auto-detection: `extract_wow_events()` (mapping ingested news items to `WoWEvent` candidates) is not implemented.
 
