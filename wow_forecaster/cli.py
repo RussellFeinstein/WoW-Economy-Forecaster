@@ -3382,6 +3382,178 @@ def report_recipe_status(
         typer.echo("")
 
 
+@app.command("report-feature-importance")
+def report_feature_importance(
+    realm: Optional[str] = typer.Option(
+        None,
+        "--realm",
+        help="Realm slug to inspect (e.g. 'us'). Uses first config default if omitted.",
+    ),
+    horizon: Optional[list[str]] = typer.Option(
+        None,
+        "--horizon",
+        help="Horizon(s) to inspect: 1d, 7d, 28d. Repeatable. Default: all.",
+    ),
+    top_n: int = typer.Option(
+        20,
+        "--top-n",
+        help="Number of top features to display per horizon (by chosen importance type).",
+    ),
+    importance_type: str = typer.Option(
+        "gain",
+        "--importance-type",
+        help="Importance method: 'gain' (total split gain, recommended) or 'split' (split count).",
+    ),
+    export: Optional[Path] = typer.Option(
+        None,
+        "--export",
+        help="Write full importance table to CSV at this path.",
+    ),
+    artifact_dir_override: Optional[str] = typer.Option(
+        None,
+        "--artifact-dir",
+        help="Override model artifact directory from config.",
+    ),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path."),
+) -> None:
+    """Show LightGBM feature importance from the most recent trained model artifacts.
+
+    Loads the latest .pkl artifact per horizon and displays features ranked by
+    gain importance (contribution to reducing prediction error) and split count
+    (how often the feature is used to make branching decisions).
+
+    Use 'gain' (default) to see which features actually move predictions.
+    Use 'split' to see which features are queried most often, regardless of effect size.
+
+    \b
+    Examples::
+
+        wow-forecaster report-feature-importance
+        wow-forecaster report-feature-importance --realm us --horizon 7d
+        wow-forecaster report-feature-importance --top-n 10 --importance-type split
+        wow-forecaster report-feature-importance --export importance.csv
+    """
+    from wow_forecaster.ml.lgbm_model import LightGBMForecaster
+
+    config = _load_config_or_exit(config_path)
+    target_realm    = realm or list(config.realms.defaults)[0]
+    target_horizons = list(horizon) if horizon else ["1d", "7d", "28d"]
+    art_dir         = Path(artifact_dir_override) if artifact_dir_override else Path(config.model.artifact_dir)
+
+    if importance_type not in ("gain", "split"):
+        typer.echo(
+            f"[ERROR] --importance-type must be 'gain' or 'split', got '{importance_type}'",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    all_export_rows: list[dict] = []
+    any_found = False
+
+    for h in target_horizons:
+        # Artifact naming convention: lgbm_{horizon}d_{realm}_{YYYY-MM-DD}.pkl
+        candidates = sorted(art_dir.glob(f"lgbm_{h}_{target_realm}_*.pkl"))
+        if not candidates:
+            typer.echo(
+                f"\n  [{h}] No artifact found in {art_dir} matching "
+                f"lgbm_{h}_{target_realm}_*.pkl"
+            )
+            typer.echo(f"       Run 'train-model --realm {target_realm}' to generate one.")
+            continue
+
+        artifact_path = candidates[-1]  # ISO date suffix -> lexicographic = chronological
+        any_found = True
+
+        try:
+            forecaster = LightGBMForecaster.load(artifact_path)
+        except Exception as exc:
+            typer.echo(f"\n  [{h}] Failed to load {artifact_path.name}: {exc}", err=True)
+            continue
+
+        if not forecaster.is_fitted:
+            typer.echo(
+                f"\n  [{h}] Artifact {artifact_path.name} exists but model is not fitted."
+            )
+            continue
+
+        gain_vals  = forecaster._booster.feature_importance(importance_type="gain")
+        split_vals = forecaster._booster.feature_importance(importance_type="split")
+        feat_cols  = forecaster._feature_cols
+
+        total_gain  = max(float(sum(gain_vals)),  1.0)
+        total_split = max(float(sum(split_vals)), 1.0)
+
+        rows = [
+            {
+                "horizon":   h,
+                "rank":      0,
+                "feature":   col,
+                "gain":      float(g),
+                "gain_pct":  float(g) / total_gain  * 100.0,
+                "splits":    int(s),
+                "split_pct": float(s) / total_split * 100.0,
+            }
+            for col, g, s in zip(feat_cols, gain_vals, split_vals)
+        ]
+
+        sort_key = "gain" if importance_type == "gain" else "splits"
+        rows.sort(key=lambda r: r[sort_key], reverse=True)
+        for i, row in enumerate(rows, 1):
+            row["rank"] = i
+
+        val_str = ""
+        if forecaster._val_metrics:
+            val_str = "  ".join(
+                f"{k}={v:.4f}" for k, v in sorted(forecaster._val_metrics.items())
+            )
+
+        typer.echo(f"\n  Feature Importance [{h}]  artifact: {artifact_path.name}")
+        typer.echo(f"  Trained: {forecaster._trained_at}  |  rows: {forecaster._training_rows}")
+        if val_str:
+            typer.echo(f"  Val:     {val_str}")
+        typer.echo("")
+        typer.echo(
+            f"  {'#':<4} {'Feature':<34} "
+            f"{'Gain':>12} {'Gain%':>7}  {'Splits':>7} {'Split%':>7}"
+        )
+        typer.echo("  " + "-" * 77)
+
+        for row in rows[:top_n]:
+            typer.echo(
+                f"  {row['rank']:<4} {row['feature']:<34} "
+                f"{row['gain']:>12.1f} {row['gain_pct']:>6.1f}%  "
+                f"{row['splits']:>7} {row['split_pct']:>6.1f}%"
+            )
+
+        if len(rows) > top_n:
+            typer.echo(
+                f"  ... {len(rows) - top_n} more features "
+                f"(use --top-n {len(rows)} to see all)"
+            )
+
+        all_export_rows.extend(rows)
+
+    if not any_found:
+        typer.echo(
+            f"\n[WARN] No model artifacts found for realm '{target_realm}'. "
+            "Run 'train-model' first."
+        )
+
+    if export and all_export_rows:
+        import csv as _csv
+
+        export_path = Path(export)
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        fieldnames = ["horizon", "rank", "feature", "gain", "gain_pct", "splits", "split_pct"]
+        with open(export_path, "w", newline="", encoding="utf-8") as fout:
+            writer = _csv.DictWriter(fout, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(all_export_rows)
+        typer.echo(f"\n  Exported: {export_path}")
+
+    typer.echo("")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

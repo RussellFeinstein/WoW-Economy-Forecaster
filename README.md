@@ -50,7 +50,7 @@ wow_forecaster/
 │                    # export (flat CSV/JSON for Power BI)
 ├── governance/      # Source policy registry, preflight checks, freshness validation
 ├── scheduler.py     # SchedulerDaemon (stdlib only) — hourly + daily automation
-└── cli.py           # Typer CLI: 30 commands
+└── cli.py           # Typer CLI: 31 commands
 
 config/
 ├── default.toml             # Static defaults (committed)
@@ -280,6 +280,11 @@ wow-forecaster report-drift        [--realm SLUG] [--export PATH]
 
 # Source freshness: per-source snapshot counts, success rates, stale flags
 wow-forecaster report-status       [--realm SLUG] [--export PATH]
+
+# LightGBM feature importance ranked by gain or split count
+wow-forecaster report-feature-importance [--realm SLUG] [--horizon 1d|7d|28d] \
+                                         [--top-n N] [--importance-type gain|split] \
+                                         [--export PATH]
 ```
 
 **Common options for all report commands:**
