@@ -50,7 +50,7 @@ wow_forecaster/
 │                    # export (flat CSV/JSON for Power BI)
 ├── governance/      # Source policy registry, preflight checks, freshness validation
 ├── scheduler.py     # SchedulerDaemon (stdlib only) — hourly + daily automation
-└── cli.py           # Typer CLI: 32 commands
+└── cli.py           # Typer CLI: 33 commands
 
 config/
 ├── default.toml             # Static defaults (committed)
@@ -322,6 +322,10 @@ wow-forecaster report-crafting         [--realm SLUG] [--top-n N] [--export PATH
 
 # Recipe seeding status: counts by expansion+profession, reagent coverage, margin snapshot freshness
 wow-forecaster report-recipe-status   [--expansion SLUG]
+
+# Export item buy signals as a TSM import string (paste into TradeSkillMaster)
+wow-forecaster export-tsm              [--realm SLUG] [--horizon 1d|7d|28d] \
+                                       [--min-roi 0.10] [--output PATH]
 ```
 
 **Crafting windows** (all valid buy <= sell pairs using existing 1d/7d/28d forecasts):
@@ -419,7 +423,7 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 1072 tests
+# All 1090 tests
 pytest
 
 # With coverage
@@ -429,7 +433,7 @@ pytest --cov=wow_forecaster --cov-report=term-missing
 pytest tests/test_recommendations/  # Scorer, ranker, item overlay, crafting advisor (160 tests)
 pytest tests/test_cli/              # CLI smoke tests (54 tests)
 pytest tests/test_governance/       # Source policies, preflight, freshness, pruner (100 tests)
-pytest tests/test_reporting/        # Reader, formatters, export (86 tests)
+pytest tests/test_reporting/        # Reader, formatters, export, TSM export (104 tests)
 pytest tests/test_monitoring/       # Drift, adaptive, orchestrator (73 tests)
 pytest tests/test_ingestion/        # Ingestion + snapshots (73 tests)
 pytest tests/test_features/         # Feature engineering (81 tests)

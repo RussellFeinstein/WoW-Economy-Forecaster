@@ -32,7 +32,7 @@ BLIZZARD_CLIENT_SECRET=...
 - [wow_forecaster/config.py](wow_forecaster/config.py) — AppConfig via load_config()
 - [wow_forecaster/db/schema.py](wow_forecaster/db/schema.py) — 21 tables, apply_schema() idempotent
 - [wow_forecaster/pipeline/base.py](wow_forecaster/pipeline/base.py) — PipelineStage ABC
-- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (32 commands)
+- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (33 commands)
 - [config/default.toml](config/default.toml) — static config
 - [config/sources.toml](config/sources.toml) — 3 source policies
 - [config/events/tww_events.json](config/events/tww_events.json) — TWW seed events
@@ -91,7 +91,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - BacktestConfig: horizons_days=[1,3], min_train_rows=14
 - DB tables: backtest_runs, backtest_fold_results (migration 0002)
 
-### ML + Recommendations (v0.5.0 / v1.10.0 / v1.11.0 / v1.12.0)
+### ML + Recommendations (v0.5.0 / v1.10.0 / v1.11.0 / v1.12.0 / v2.0.0)
 - [wow_forecaster/ml/feature_selector.py](wow_forecaster/ml/feature_selector.py) — TRAINING_FEATURE_COLS (40)
 - [wow_forecaster/ml/lgbm_model.py](wow_forecaster/ml/lgbm_model.py) — LightGBMForecaster: fit/predict/save/load; global cross-archetype model
 - ForecastHorizon: 1d/7d/28d; TARGET_COL_MAP = {1: 1d, 7: 7d, 28: 28d}
@@ -102,6 +102,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Risk levels (v1.10.0): determine_risk_level() in scorer.py — LOW/MEDIUM/HIGH/CRITICAL tiers independent of action; AVOID only at CRITICAL (uncertainty ≥ 95%); risk_level persisted in recommendation_outputs (migration 0006)
 - CI floor/cap (v1.11.0): compute_confidence_interval() in cold_start.py accepts current_price; floor = 5% of current, cap = 10× current; prevents 0.0 lower bounds and absurd upper bounds; ci_quality field ("good"/"wide"/"unreliable") on ForecastOutput (migration 0007)
 - Item-level forecasting extended (v1.12.0): _generate_item_forecasts() now covers union of recipe-linked items AND all items with ≥14 distinct observation days; ItemForecastRoi dataclass + fetch_item_rois() in item_overlay.py; enrich_with_top_item_rois() in ranker.py; top_items column in recommendations CSV/JSON prefers ROI-based items over discount-based fallback
+- TSM export (v2.0.0): export-tsm CLI command; wow_forecaster/reporting/tsm_export.py; TsmExportRow + fetch_tsm_export_items() + build_tsm_import_string() + write_tsm_export(); filters item-level forecasts by ROI >= min_roi_pct and ci_quality='good'; outputs i:XXXXX,... string for TradeSkillMaster paste import
 
 ### Monitoring + Orchestration (v0.6.0)
 - [wow_forecaster/pipeline/orchestrator.py](wow_forecaster/pipeline/orchestrator.py) — HourlyOrchestrator: 7-step pipeline
@@ -165,4 +166,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-1072 tests passing
+1090 tests passing
