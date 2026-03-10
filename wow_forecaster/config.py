@@ -259,6 +259,10 @@ class CraftingConfig(BaseModel):
     margin_history_days: int = 30
     top_n_crafting: int = 10
     min_volume_units: int = 50    # minimum quantity_sum over last 7 days; below = excluded
+    # Expansion slugs whose recipes are eligible for crafting recommendations.
+    # Empty list = all expansions (unfiltered).  Set to ["midnight", "tww"] to
+    # exclude legacy expansion recipes that are dominated by wall listings.
+    allowed_expansions: list[str] = []
 
 
 class AppConfig(BaseModel):

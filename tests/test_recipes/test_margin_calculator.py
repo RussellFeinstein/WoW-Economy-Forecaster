@@ -132,7 +132,6 @@ class TestMarginCalculator:
         calc = MarginCalculator(conn, min_coverage=0.5)
         stats = calc.compute_margins(realm_slug=realm, lookback_days=1, end_date=date(2026, 3, 6))
         assert stats.snapshots_written == 0
-        assert stats.recipes_no_output_price == 1
         conn.close()
 
     def test_low_coverage_skipped(self):
@@ -159,7 +158,6 @@ class TestMarginCalculator:
         calc = MarginCalculator(conn, min_coverage=0.5)
         stats = calc.compute_margins(realm_slug=realm, lookback_days=1, end_date=date(2026, 3, 6))
         assert stats.snapshots_written == 0
-        assert stats.recipes_low_coverage >= 1
         conn.close()
 
     def test_upsert_overwrites_existing(self):

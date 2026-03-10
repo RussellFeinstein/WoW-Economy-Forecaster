@@ -9,10 +9,16 @@ For each recipe × realm × date, computes:
   - ingredient_coverage  — fraction of required ingredients with price data
 
 Prices are sourced from ``market_observations_normalized`` (non-outlier rows),
-using the mean price per item per day (matching the daily aggregation approach).
+using the quantity-weighted mean price per item per day.
 
 Results are written to ``crafting_margin_snapshots`` with an ON CONFLICT
 update so re-running is idempotent.
+
+Performance notes:
+  - All computation is pushed into a single SQL CTE INSERT...SELECT so no
+    Python loops over recipe × date combinations are needed.
+  - Requires ``idx_obs_norm_realm_outlier_time`` on
+    market_observations_normalized(realm_slug, is_outlier, observed_at).
 
 Usage::
 
@@ -31,9 +37,85 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, timedelta
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+# Shared daily-price CTE used by both the main INSERT and the stats query.
+# Filters with a direct observed_at range so the covering index is used.
+_DAILY_PRICES_CTE = """
+    daily_prices AS (
+        SELECT
+            item_id,
+            DATE(observed_at) AS obs_date,
+            SUM(price_gold * COALESCE(quantity_listed, 1))
+                / NULLIF(SUM(COALESCE(quantity_listed, 1)), 0) AS avg_price
+        FROM market_observations_normalized
+        WHERE realm_slug = ?
+          AND is_outlier  = 0
+          AND observed_at >= ?
+          AND observed_at <  ?
+        GROUP BY item_id, DATE(observed_at)
+    )
+"""
+
+_INSERT_CTE = f"""
+    WITH {_DAILY_PRICES_CTE},
+    output_prices AS (
+        SELECT
+            r.recipe_id,
+            CASE WHEN r.output_quantity < 1 THEN 1 ELSE r.output_quantity END AS output_quantity,
+            dp.obs_date,
+            dp.avg_price AS output_price
+        FROM recipes r
+        JOIN daily_prices dp ON dp.item_id = r.output_item_id
+        WHERE EXISTS (
+            SELECT 1 FROM recipe_reagents rr
+            WHERE rr.recipe_id = r.recipe_id AND rr.reagent_type = 'required'
+        )
+    ),
+    reagent_agg AS (
+        SELECT
+            op.recipe_id,
+            op.obs_date,
+            op.output_price,
+            op.output_quantity,
+            COUNT(rr.id)                                                      AS total_ingredients,
+            SUM(CASE WHEN dp.avg_price IS NOT NULL THEN 1 ELSE 0 END)         AS ingredients_with_price,
+            SUM(COALESCE(dp.avg_price, 0.0) * rr.quantity)                    AS total_reagent_cost
+        FROM output_prices op
+        JOIN recipe_reagents rr
+            ON rr.recipe_id = op.recipe_id AND rr.reagent_type = 'required'
+        LEFT JOIN daily_prices dp
+            ON dp.item_id = rr.ingredient_item_id AND dp.obs_date = op.obs_date
+        GROUP BY op.recipe_id, op.obs_date, op.output_price, op.output_quantity
+    )
+    INSERT INTO crafting_margin_snapshots
+        (recipe_id, realm_slug, obs_date, output_price_gold,
+         craft_cost_gold, margin_gold, margin_pct, ingredient_coverage_pct)
+    SELECT
+        recipe_id,
+        ? AS realm_slug,
+        obs_date,
+        output_price AS output_price_gold,
+        CASE WHEN ingredients_with_price > 0
+             THEN total_reagent_cost / output_quantity
+             ELSE NULL END AS craft_cost_gold,
+        CASE WHEN ingredients_with_price > 0
+             THEN output_price - total_reagent_cost / output_quantity
+             ELSE NULL END AS margin_gold,
+        CASE WHEN ingredients_with_price > 0 AND output_price > 0
+             THEN (output_price - total_reagent_cost / output_quantity) / output_price
+             ELSE NULL END AS margin_pct,
+        CAST(ingredients_with_price AS REAL) / total_ingredients AS ingredient_coverage_pct
+    FROM reagent_agg
+    WHERE CAST(ingredients_with_price AS REAL) / total_ingredients >= ?
+    ON CONFLICT(recipe_id, realm_slug, obs_date) DO UPDATE SET
+        output_price_gold       = excluded.output_price_gold,
+        craft_cost_gold         = excluded.craft_cost_gold,
+        margin_gold             = excluded.margin_gold,
+        margin_pct              = excluded.margin_pct,
+        ingredient_coverage_pct = excluded.ingredient_coverage_pct
+"""
 
 
 @dataclass
@@ -73,6 +155,8 @@ class MarginCalculator:
         """Compute and persist margin snapshots for all recipes.
 
         Processes all dates in [end_date - lookback_days, end_date].
+        All computation is performed in a single SQL CTE INSERT...SELECT —
+        no Python loops over recipe × date combinations.
 
         Args:
             realm_slug:    Realm/region to compute margins for (e.g. "us").
@@ -85,217 +169,34 @@ class MarginCalculator:
         if end_date is None:
             end_date = date.today()
         start_date = end_date - timedelta(days=lookback_days - 1)
+        # Use direct timestamp bounds so the covering index on observed_at is used.
+        start_ts = start_date.isoformat()
+        end_ts = (end_date + timedelta(days=1)).isoformat()
 
         stats = MarginStats()
-        recipes = self._load_recipes_with_reagents()
-        if not recipes:
-            logger.info("No recipes found in DB — nothing to compute.")
-            return stats
-
-        # Build item_id -> {date: avg_price_gold} price lookup for the date range
-        price_map = self._fetch_prices(realm_slug, start_date, end_date)
-        logger.info(
-            "Loaded prices for %d items over %d days",
-            len(price_map), lookback_days,
-        )
-
-        current = start_date
-        rows_to_write: list[tuple] = []
-
-        while current <= end_date:
-            date_str = current.isoformat()
-            for recipe in recipes:
-                snap = self._compute_snapshot(recipe, date_str, price_map)
-                if snap is None:
-                    stats.recipes_no_output_price += 1
-                    continue
-                if snap["ingredient_coverage_pct"] < self._min_coverage:
-                    stats.recipes_low_coverage += 1
-                    continue
-                rows_to_write.append((
-                    snap["recipe_id"],
-                    realm_slug,
-                    date_str,
-                    snap["output_price_gold"],
-                    snap["craft_cost_gold"],
-                    snap["margin_gold"],
-                    snap["margin_pct"],
-                    snap["ingredient_coverage_pct"],
-                ))
-            current += timedelta(days=1)
-
-        stats.recipes_processed = len(recipes)
-        stats.snapshots_written, stats.snapshots_skipped = self._write_snapshots(
-            rows_to_write
-        )
-        self._conn.commit()
-        logger.info(
-            "Margin computation done: %d written, %d skipped (already existed)",
-            stats.snapshots_written, stats.snapshots_skipped,
-        )
-        return stats
-
-    # ── Private helpers ────────────────────────────────────────────────────────
-
-    def _load_recipes_with_reagents(self) -> list[dict]:
-        """Load all recipes with their required reagents as a flat structure."""
-        recipes_raw = self._conn.execute(
+        stats.recipes_processed = self._conn.execute(
             """
-            SELECT r.recipe_id, r.output_item_id, r.output_quantity
-            FROM recipes r
+            SELECT COUNT(*) FROM recipes r
             WHERE EXISTS (
                 SELECT 1 FROM recipe_reagents rr
                 WHERE rr.recipe_id = r.recipe_id AND rr.reagent_type = 'required'
             )
             """
-        ).fetchall()
+        ).fetchone()[0]
 
-        if not recipes_raw:
-            return []
+        if stats.recipes_processed == 0:
+            logger.info("No recipes found in DB — nothing to compute.")
+            return stats
 
-        recipe_ids = [r[0] for r in recipes_raw]
-        placeholders = ",".join("?" * len(recipe_ids))
-        reagents_raw = self._conn.execute(
-            f"""
-            SELECT recipe_id, ingredient_item_id, quantity
-            FROM recipe_reagents
-            WHERE recipe_id IN ({placeholders}) AND reagent_type = 'required'
-            """,
-            recipe_ids,
-        ).fetchall()
-
-        reagents_by_recipe: dict[int, list[tuple[int, int]]] = {}
-        for r in reagents_raw:
-            reagents_by_recipe.setdefault(r[0], []).append((r[1], r[2]))
-
-        return [
-            {
-                "recipe_id": r[0],
-                "output_item_id": r[1],
-                "output_quantity": r[2],
-                "reagents": reagents_by_recipe.get(r[0], []),
-            }
-            for r in recipes_raw
-        ]
-
-    def _fetch_prices(
-        self, realm_slug: str, start_date: date, end_date: date
-    ) -> dict[int, dict[str, float]]:
-        """Fetch quantity-weighted mean daily prices for all items in the date range.
-
-        Uses SUM(price * qty) / SUM(qty) so high-priced wall listings with tiny
-        quantity (e.g. 5 units at 49,997g) cannot dominate the average over
-        hundreds of units priced at market rate.
-
-        Returns dict: item_id -> {date_str: avg_price_gold}.
-        """
-        rows = self._conn.execute(
-            """
-            SELECT
-                item_id,
-                DATE(observed_at) AS obs_date,
-                SUM(price_gold * COALESCE(quantity_listed, 1))
-                    / NULLIF(SUM(COALESCE(quantity_listed, 1)), 0) AS avg_price
-            FROM market_observations_normalized
-            WHERE realm_slug = ?
-              AND is_outlier  = 0
-              AND DATE(observed_at) BETWEEN ? AND ?
-            GROUP BY item_id, DATE(observed_at)
-            """,
-            (realm_slug, start_date.isoformat(), end_date.isoformat()),
-        ).fetchall()
-
-        result: dict[int, dict[str, float]] = {}
-        for item_id, date_str, avg_price in rows:
-            if avg_price is not None:
-                result.setdefault(int(item_id), {})[date_str] = float(avg_price)
-        return result
-
-    def _compute_snapshot(
-        self, recipe: dict, date_str: str, price_map: dict[int, dict[str, float]]
-    ) -> dict | None:
-        """Compute a single margin snapshot for one recipe on one date.
-
-        Returns None if the output item has no price data on this date.
-        """
-        recipe_id = recipe["recipe_id"]
-        output_item_id = recipe["output_item_id"]
-        output_quantity = max(recipe["output_quantity"], 1)
-        reagents: list[tuple[int, int]] = recipe["reagents"]  # (item_id, qty)
-
-        # Output item price (per unit crafted)
-        output_item_prices = price_map.get(output_item_id, {})
-        output_price_raw = output_item_prices.get(date_str)
-        if output_price_raw is None:
-            return None
-
-        output_price_gold = output_price_raw  # Already per-unit from normalization
-
-        # Craft cost: sum of ingredient prices × quantities
-        total_cost = 0.0
-        ingredients_with_price = 0
-        for ingredient_item_id, quantity in reagents:
-            item_prices = price_map.get(ingredient_item_id, {})
-            price = item_prices.get(date_str)
-            if price is not None:
-                total_cost += price * quantity
-                ingredients_with_price += 1
-
-        total_ingredients = len(reagents)
-        coverage = (
-            float(ingredients_with_price) / total_ingredients
-            if total_ingredients > 0
-            else 1.0  # Recipe with no reagents = 100% coverage
+        self._conn.execute(
+            _INSERT_CTE,
+            (realm_slug, start_ts, end_ts, realm_slug, self._min_coverage),
         )
+        stats.snapshots_written = self._conn.execute("SELECT changes()").fetchone()[0]
+        self._conn.commit()
 
-        if total_ingredients > 0 and ingredients_with_price == 0:
-            craft_cost_gold = None
-            margin_gold = None
-            margin_pct = None
-        else:
-            craft_cost_gold = total_cost / output_quantity
-            margin_gold = output_price_gold - craft_cost_gold
-            margin_pct = (
-                margin_gold / output_price_gold
-                if output_price_gold > 0
-                else None
-            )
-
-        return {
-            "recipe_id": recipe_id,
-            "output_price_gold": output_price_gold,
-            "craft_cost_gold": craft_cost_gold,
-            "margin_gold": margin_gold,
-            "margin_pct": margin_pct,
-            "ingredient_coverage_pct": coverage,
-        }
-
-    def _write_snapshots(
-        self, rows: list[tuple]
-    ) -> tuple[int, int]:
-        """Upsert snapshot rows. Returns (written, skipped)."""
-        written = 0
-        skipped = 0
-        for row in rows:
-            try:
-                self._conn.execute(
-                    """
-                    INSERT INTO crafting_margin_snapshots
-                        (recipe_id, realm_slug, obs_date, output_price_gold,
-                         craft_cost_gold, margin_gold, margin_pct,
-                         ingredient_coverage_pct)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(recipe_id, realm_slug, obs_date) DO UPDATE SET
-                        output_price_gold       = excluded.output_price_gold,
-                        craft_cost_gold         = excluded.craft_cost_gold,
-                        margin_gold             = excluded.margin_gold,
-                        margin_pct              = excluded.margin_pct,
-                        ingredient_coverage_pct = excluded.ingredient_coverage_pct
-                    """,
-                    row,
-                )
-                written += 1
-            except Exception as exc:
-                logger.warning("Failed to write margin snapshot %s: %s", row[:3], exc)
-                skipped += 1
-        return written, skipped
+        logger.info(
+            "Margin computation done: %d written/updated",
+            stats.snapshots_written,
+        )
+        return stats

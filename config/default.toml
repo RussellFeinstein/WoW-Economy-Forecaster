@@ -215,3 +215,7 @@ top_n_crafting = 10
 # Minimum total quantity_sum (units listed) for output item over last 7 days.
 # Items below this are excluded (no market volume = no actionable opportunity).
 min_volume_units = 50
+# Expansion slugs whose recipes appear in crafting recommendations.
+# Empty = all expansions. Set to current/recent expansions to exclude legacy
+# recipes dominated by wall listings (e.g. 49,997g AH walls on old content).
+allowed_expansions = ["midnight", "tww"]

@@ -151,6 +151,7 @@ class BlizzardClient:
         self.client_secret = client_secret
         self.region = region
         self._access_token: Optional[str] = None
+        self._item_name_cache: dict[str, Optional[int]] = {}
 
     # ── Real API methods ───────────────────────────────────────────────────────
 
@@ -429,6 +430,70 @@ class BlizzardClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    def search_item_by_name(self, name: str) -> Optional[int]:
+        """Search for an item ID by exact English name via the static search API.
+
+        Endpoint::
+
+            GET /data/wow/search/item
+                ?namespace=static-{region}&name.en_US={name}&orderby=id&_page=1
+
+        Returns the first item ID whose English name exactly matches (case-insensitive),
+        or None if not found.  Results are cached per client instance to minimise API
+        calls — the same slot/item name appears across many recipes.
+
+        Used to resolve output item IDs for TWW/Midnight recipes where the Blizzard
+        static API omits the ``crafted_item`` field.
+
+        Args:
+            name: Exact English item name to search for.
+
+        Returns:
+            Item ID (int) on exact match, or None.
+
+        Raises:
+            RuntimeError: If client has no credentials.
+        """
+        if name in self._item_name_cache:
+            return self._item_name_cache[name]
+
+        import httpx
+
+        if not self.client_id or not self.client_secret:
+            raise RuntimeError(
+                "BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET must be set in .env."
+            )
+        self._ensure_token()
+        base = self.BASE_URL_TEMPLATE.format(region=self.region)
+        try:
+            resp = httpx.get(
+                f"{base}/data/wow/search/item",
+                params={
+                    "namespace": f"static-{self.region}",
+                    "locale": "en_US",
+                    "name.en_US": name,
+                    "orderby": "id",
+                    "_page": 1,
+                },
+                headers={"Authorization": f"Bearer {self._access_token}"},
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            for result in resp.json().get("results", []):
+                item_data = result.get("data", {})
+                item_name = item_data.get("name", {}).get("en_US", "")
+                if item_name.lower() == name.lower():
+                    item_id = item_data.get("id")
+                    if item_id:
+                        self._item_name_cache[name] = int(item_id)
+                        logger.debug("Item name search: '%s' -> %d", name, item_id)
+                        return int(item_id)
+        except Exception as exc:
+            logger.debug("Item name search failed for '%s': %s", name, exc)
+
+        self._item_name_cache[name] = None
+        return None
 
     def fetch_recipe(self, recipe_id: int) -> dict:
         """Fetch full recipe details including required reagents.

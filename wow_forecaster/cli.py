@@ -3139,6 +3139,7 @@ def report_crafting(
             margin_history_days=config.crafting.margin_history_days,
             min_volume_units=config.crafting.min_volume_units,
             min_ingredient_coverage=config.crafting.min_ingredient_coverage,
+            allowed_expansions=config.crafting.allowed_expansions or None,
         )
         ranked = rank_crafting_opportunities(opportunities, top_n=top_n)
 

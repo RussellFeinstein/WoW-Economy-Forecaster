@@ -133,6 +133,8 @@ CREATE INDEX IF NOT EXISTS idx_obs_norm_item_time
     ON market_observations_normalized(item_id, observed_at);
 CREATE INDEX IF NOT EXISTS idx_obs_norm_archetype_time
     ON market_observations_normalized(archetype_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_obs_norm_realm_outlier_time
+    ON market_observations_normalized(realm_slug, is_outlier, observed_at);
 """
 
 _DDL_ARCHETYPE_MAPPINGS = """

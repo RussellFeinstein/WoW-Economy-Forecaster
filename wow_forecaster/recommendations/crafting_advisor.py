@@ -111,6 +111,7 @@ def build_crafting_opportunities(
     margin_history_days: int = 30,
     min_volume_units: int = 50,
     min_ingredient_coverage: float = 0.5,
+    allowed_expansions: list[str] | None = None,
 ) -> list[CraftingOpportunity]:
     """Build CraftingOpportunity objects for all recipes with margin data.
 
@@ -123,12 +124,14 @@ def build_crafting_opportunities(
         margin_history_days:         Days of history for slope/percentile.
         min_volume_units:            Hard floor on output item volume (7-day sum).
         min_ingredient_coverage:     Minimum ingredient coverage to include.
+        allowed_expansions:          If non-empty, only recipes from these expansion
+                                     slugs are included.  None or [] = all expansions.
 
     Returns:
         List of CraftingOpportunity, unsorted.
     """
     # Load recipe metadata
-    recipes = _load_recipes(conn)
+    recipes = _load_recipes(conn, allowed_expansions=allowed_expansions or [])
     if not recipes:
         return []
 
@@ -148,8 +151,22 @@ def build_crafting_opportunities(
         conn, recipe_ids, realm_slug, run_date, margin_history_days
     )
 
-    # Load volume (quantity_sum) for output items over last 7 days
+    # Batch-load reagents for all recipes (one query instead of one per recipe)
+    reagents_map = _fetch_all_reagents(conn, recipe_ids)
+
+    # Collect every item_id that needs a current price: output items + all reagents
     output_item_ids = list({r["output_item_id"] for r in recipes})
+    all_price_item_ids = list(
+        {r["output_item_id"] for r in recipes}
+        | {iid for ids in reagents_map.values() for iid, _ in ids}
+    )
+
+    # Batch-load 7-day rolling prices for all needed items (one query)
+    current_price_map = _fetch_item_prices_bulk(
+        conn, all_price_item_ids, realm_slug, run_date
+    )
+
+    # Load volume (quantity_sum) for output items over last 7 days
     volume_map = _fetch_output_volumes(conn, output_item_ids, realm_slug, run_date)
 
     opportunities: list[CraftingOpportunity] = []
@@ -182,13 +199,12 @@ def build_crafting_opportunities(
         # Build window projections
         windows, window_sell_prices = _compute_windows(
             recipe=recipe,
+            reagents=reagents_map.get(recipe["recipe_id"], []),
             current_output_price=current_output,
             current_craft_cost=current_cost,
             item_archetype_map=item_archetype_map,
             forecasts=forecasts,
-            realm_slug=realm_slug,
-            conn=conn,
-            run_date=run_date,
+            current_price_map=current_price_map,
         )
 
         best_window, best_margin_gold = _find_best_window(windows, current_output)
@@ -261,18 +277,43 @@ def rank_crafting_opportunities(
 
 # ── Data loading helpers ───────────────────────────────────────────────────────
 
-def _load_recipes(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute(
-        """
-        SELECT r.recipe_id, r.profession_slug, r.output_item_id, r.output_quantity, r.recipe_name
-        FROM recipes r
-        WHERE EXISTS (
-            SELECT 1 FROM recipe_reagents rr
-            WHERE rr.recipe_id = r.recipe_id AND rr.reagent_type = 'required'
-        )
-        ORDER BY r.profession_slug, r.recipe_id
-        """
-    ).fetchall()
+def _load_recipes(
+    conn: sqlite3.Connection,
+    allowed_expansions: list[str] | None = None,
+) -> list[dict]:
+    """Load recipes that have at least one required reagent.
+
+    Args:
+        allowed_expansions: If non-empty, only recipes whose expansion_slug is
+                            in this list are returned.  Empty / None = all.
+    """
+    if allowed_expansions:
+        placeholders = ",".join("?" * len(allowed_expansions))
+        rows = conn.execute(
+            f"""
+            SELECT r.recipe_id, r.profession_slug, r.output_item_id, r.output_quantity, r.recipe_name
+            FROM recipes r
+            WHERE r.expansion_slug IN ({placeholders})
+              AND EXISTS (
+                SELECT 1 FROM recipe_reagents rr
+                WHERE rr.recipe_id = r.recipe_id AND rr.reagent_type = 'required'
+              )
+            ORDER BY r.profession_slug, r.recipe_id
+            """,
+            allowed_expansions,
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT r.recipe_id, r.profession_slug, r.output_item_id, r.output_quantity, r.recipe_name
+            FROM recipes r
+            WHERE EXISTS (
+                SELECT 1 FROM recipe_reagents rr
+                WHERE rr.recipe_id = r.recipe_id AND rr.reagent_type = 'required'
+            )
+            ORDER BY r.profession_slug, r.recipe_id
+            """
+        ).fetchall()
     return [
         {
             "recipe_id": row[0],
@@ -439,13 +480,12 @@ def _fetch_output_volumes(
 
 def _compute_windows(
     recipe: dict,
+    reagents: list[tuple[int, int]],
     current_output_price: float | None,
     current_craft_cost: float | None,
     item_archetype_map: dict[int, int],
     forecasts: dict[tuple[int, str], float],
-    realm_slug: str,
-    conn: sqlite3.Connection,
-    run_date: date,
+    current_price_map: dict[int, float],
 ) -> tuple[dict[CraftingWindow, float | None], dict[CraftingWindow, float | None]]:
     """Compute margin_gold and projected sell price for each of the 6 temporal windows.
 
@@ -454,20 +494,18 @@ def _compute_windows(
     """
     output_item_id = recipe["output_item_id"]
     output_archetype = item_archetype_map.get(output_item_id)
-    reagents = _load_reagents_for_recipe(conn, recipe["recipe_id"])
     output_quantity = max(recipe.get("output_quantity", 1), 1)
 
     def forecast_price(item_id: int, horizon_days: int) -> float | None:
         """Get forecasted price for an item at a given horizon."""
         if horizon_days == 0:
-            # Use current price from market_observations_normalized
-            return _fetch_latest_item_price(conn, item_id, realm_slug, run_date)
+            return current_price_map.get(item_id)
         archetype_id = item_archetype_map.get(item_id)
         label = _HORIZON_LABEL.get(horizon_days)
         if archetype_id and label:
             return forecasts.get((archetype_id, label))
-        # Fallback: 7-day rolling mean from margin history
-        return _fetch_latest_item_price(conn, item_id, realm_slug, run_date)
+        # Fallback: use pre-loaded current price
+        return current_price_map.get(item_id)
 
     def compute_craft_cost(buy_horizon: int) -> float | None:
         """Sum ingredient costs at the given buy horizon."""
@@ -510,42 +548,62 @@ def _compute_windows(
     return windows, window_sell_prices
 
 
-def _load_reagents_for_recipe(
-    conn: sqlite3.Connection, recipe_id: int
-) -> list[tuple[int, int]]:
-    """Return list of (ingredient_item_id, quantity) for required reagents."""
-    rows = conn.execute(
-        """
-        SELECT ingredient_item_id, quantity
-        FROM recipe_reagents
-        WHERE recipe_id = ? AND reagent_type = 'required'
-        """,
-        (recipe_id,),
-    ).fetchall()
-    return [(row[0], row[1]) for row in rows]
-
-
-def _fetch_latest_item_price(
+def _fetch_all_reagents(
     conn: sqlite3.Connection,
-    item_id: int,
+    recipe_ids: list[int],
+) -> dict[int, list[tuple[int, int]]]:
+    """Batch-load required reagents for all recipes in a single query.
+
+    Returns dict: recipe_id -> [(ingredient_item_id, quantity), ...].
+    """
+    if not recipe_ids:
+        return {}
+    placeholders = ",".join("?" * len(recipe_ids))
+    rows = conn.execute(
+        f"""
+        SELECT recipe_id, ingredient_item_id, quantity
+        FROM recipe_reagents
+        WHERE recipe_id IN ({placeholders}) AND reagent_type = 'required'
+        """,
+        recipe_ids,
+    ).fetchall()
+    result: dict[int, list[tuple[int, int]]] = {}
+    for rid, iid, qty in rows:
+        result.setdefault(rid, []).append((iid, qty))
+    return result
+
+
+def _fetch_item_prices_bulk(
+    conn: sqlite3.Connection,
+    item_ids: list[int],
     realm_slug: str,
     run_date: date,
-) -> float | None:
-    """Fetch 7-day quantity-weighted mean price for an item (rolling fallback)."""
-    start = (run_date - timedelta(days=6)).isoformat()
-    row = conn.execute(
-        """
-        SELECT SUM(price_gold * COALESCE(quantity_listed, 1))
+) -> dict[int, float]:
+    """Batch-load 7-day quantity-weighted mean prices for all items in a single query.
+
+    Returns dict: item_id -> avg_price_gold.
+    """
+    if not item_ids:
+        return {}
+    start_ts = (run_date - timedelta(days=6)).isoformat()
+    end_ts = (run_date + timedelta(days=1)).isoformat()
+    placeholders = ",".join("?" * len(item_ids))
+    rows = conn.execute(
+        f"""
+        SELECT item_id,
+               SUM(price_gold * COALESCE(quantity_listed, 1))
                    / NULLIF(SUM(COALESCE(quantity_listed, 1)), 0)
         FROM market_observations_normalized
-        WHERE item_id = ? AND realm_slug = ? AND is_outlier = 0
-          AND DATE(observed_at) BETWEEN ? AND ?
+        WHERE realm_slug = ?
+          AND is_outlier = 0
+          AND observed_at >= ?
+          AND observed_at <  ?
+          AND item_id IN ({placeholders})
+        GROUP BY item_id
         """,
-        (item_id, realm_slug, start, run_date.isoformat()),
-    ).fetchone()
-    if row and row[0] is not None:
-        return float(row[0])
-    return None
+        [realm_slug, start_ts, end_ts] + list(item_ids),
+    ).fetchall()
+    return {row[0]: float(row[1]) for row in rows if row[1] is not None}
 
 
 def _find_best_window(

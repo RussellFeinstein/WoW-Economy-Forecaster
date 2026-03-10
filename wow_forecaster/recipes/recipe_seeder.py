@@ -3,8 +3,8 @@ Recipe seeder — fetches profession/recipe data from Blizzard static API
 and upserts into the ``recipes`` + ``recipe_reagents`` DB tables.
 
 Expansion slug mapping to Blizzard tier keywords:
-  "midnight"    -> "Midnight"   (or whatever Blizzard names the tier)
-  "tww"         -> "The War Within"
+  "midnight"    -> "Midnight"
+  "tww"         -> "Khaz Algar"
   "dragonflight"-> "Dragon Isles"
 
 The keyword match is best-effort: if a tier's display name contains the
@@ -60,7 +60,7 @@ _PROFESSION_IDS: dict[str, int] = {
 # Expansion slug -> keywords to match against Blizzard skill tier display names
 _EXPANSION_TIER_KEYWORDS: dict[str, list[str]] = {
     "midnight":     ["midnight"],
-    "tww":          ["war within"],
+    "tww":          ["khaz algar"],
     "dragonflight": ["dragon isles"],
     "shadowlands":  ["shadowlands"],
     "bfa":          ["kul tiran", "zandalari", "battle for azeroth"],

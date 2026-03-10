@@ -9,6 +9,11 @@ Key normalisation decisions:
   - ``crafted_item`` is checked first for output_item_id; falls back to
     ``alliance_crafted_item`` / ``horde_crafted_item`` for faction-specific
     recipes (rare, mostly old content).
+  - For TWW/Midnight recipes where ``crafted_item`` is absent, output is
+    resolved via ``BlizzardClient.search_item_by_name(recipe_name)``.
+    Primary materials from ``modified_crafting_slots`` are also extracted;
+    optional quality/embellishment slots are filtered by keyword.
+    Slot quantities are assumed to be 1 (not exposed in the recipe API).
   - Recipes with no resolvable output item are silently dropped.
   - ``skill_level_required`` is set to 0 when absent (field is optional in API).
 """
@@ -19,6 +24,25 @@ import logging
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+# Slot type name keywords that indicate optional/quality-only reagent slots in
+# the modified crafting system (TWW/Midnight).  These slots do not represent
+# primary crafting materials and are excluded from ingredient cost calculations.
+_OPTIONAL_SLOT_KEYWORDS: frozenset[str] = frozenset({
+    "authenticity",   # Artisan's Authenticity — crafting quality reagent
+    "embellishment",  # Add Embellishment — gear customisation slot
+    "acuity",         # Artisan's Acuity — profession currency
+    "empower",        # Empower — gear power level slot
+    "customize",      # Customize Secondary Stats
+    "moxie",          # Artisan's Moxie — profession stat knowledge
+})
+
+
+def _is_optional_slot(slot_name: str) -> bool:
+    """Return True if the slot is a quality/optional reagent (not a primary material)."""
+    lower = slot_name.lower()
+    return any(kw in lower for kw in _OPTIONAL_SLOT_KEYWORDS)
+
 
 # Known TWW-era profession slugs mapped from display names returned by API.
 # Used to normalise "Alchemy" -> "alchemy" etc.
@@ -135,12 +159,24 @@ def fetch_all_recipes_for_profession(
                 logger.warning("Failed to fetch recipe %d (%s): %s", stub_id, stub_name, exc)
                 continue
 
+            skill_level = _extract_skill_level(tier_data, stub_id)
             normalised = _normalise_recipe(
                 recipe_data,
                 profession_slug=profession_slug,
                 expansion_slug=expansion_slug,
-                skill_level_required=_extract_skill_level(tier_data, stub_id),
+                skill_level_required=skill_level,
             )
+
+            # Fallback for TWW/Midnight recipes where crafted_item is absent from API.
+            if normalised is None and "crafted_item" not in recipe_data:
+                normalised = _resolve_recipe_by_name(
+                    recipe_data=recipe_data,
+                    profession_slug=profession_slug,
+                    expansion_slug=expansion_slug,
+                    skill_level_required=skill_level,
+                    client=client,
+                )
+
             if normalised is not None:
                 results.append(normalised)
 
@@ -149,6 +185,90 @@ def fetch_all_recipes_for_profession(
         profession_slug, len(results),
     )
     return results
+
+
+def _resolve_recipe_by_name(
+    recipe_data: dict,
+    profession_slug: str,
+    expansion_slug: str,
+    skill_level_required: int,
+    client,
+) -> "NormalisedRecipe | None":
+    """Resolve a recipe where ``crafted_item`` is absent via item name search.
+
+    Used for TWW/Midnight recipes where the Blizzard static API no longer
+    includes the output item in the recipe response.
+
+    Output item is found by searching for an item whose English name exactly
+    matches the recipe name.  Primary materials are extracted from both the
+    ``reagents`` field (fixed-quantity catalysts) and ``modified_crafting_slots``
+    (primary materials like herbs, ores, vials).  Optional quality/embellishment
+    slots are skipped.  Slot quantities default to 1 (not available in the API).
+
+    Args:
+        recipe_data:          Raw Blizzard recipe API response.
+        profession_slug:      e.g. "alchemy".
+        expansion_slug:       e.g. "midnight".
+        skill_level_required: Skill level (0 if unknown).
+        client:               Authenticated BlizzardClient (for name search).
+
+    Returns:
+        NormalisedRecipe on success, or None if output item cannot be resolved.
+    """
+    recipe_id = recipe_data.get("id")
+    recipe_name = (recipe_data.get("name") or "").strip()
+    if not recipe_id or not recipe_name:
+        return None
+
+    output_item_id = client.search_item_by_name(recipe_name)
+    if output_item_id is None:
+        logger.debug(
+            "Name lookup failed for recipe %d ('%s') — skipped",
+            recipe_id, recipe_name,
+        )
+        return None
+
+    # Fixed-quantity reagents (quality catalysts, Mote of Primal Energy, etc.)
+    reagents: list[NormalisedReagent] = []
+    for r in recipe_data.get("reagents", []):
+        reagent_item = r.get("reagent", {})
+        item_id = reagent_item.get("id")
+        quantity = r.get("quantity", 1) or 1
+        if item_id:
+            reagents.append(
+                NormalisedReagent(
+                    ingredient_item_id=int(item_id),
+                    quantity=int(quantity),
+                    reagent_type="required",
+                )
+            )
+
+    # Primary materials from modified_crafting_slots (herbs, ores, vials, etc.).
+    # Slot quantities are not in the API response; assumed to be 1.
+    for slot in recipe_data.get("modified_crafting_slots", []):
+        slot_name = (slot.get("slot_type", {}).get("name") or "").strip()
+        if not slot_name or _is_optional_slot(slot_name):
+            continue
+        slot_item_id = client.search_item_by_name(slot_name)
+        if slot_item_id is not None and slot_item_id != output_item_id:
+            reagents.append(
+                NormalisedReagent(
+                    ingredient_item_id=slot_item_id,
+                    quantity=1,
+                    reagent_type="required",
+                )
+            )
+
+    return NormalisedRecipe(
+        recipe_id=int(recipe_id),
+        profession_slug=profession_slug,
+        output_item_id=output_item_id,
+        output_quantity=1,
+        recipe_name=recipe_name,
+        skill_level_required=skill_level_required,
+        expansion_slug=expansion_slug,
+        reagents=reagents,
+    )
 
 
 def _collect_recipe_stubs(tier_data: dict) -> list[tuple[int, str]]:
