@@ -59,4 +59,6 @@ htmlcov/
 
 # Jupyter
 .ipynb_checkpoints/
-*.ipynb
+# Notebooks in notebooks/ are committed for portfolio display.
+# Exclude generated data used by notebooks.
+notebooks/data/

@@ -32,7 +32,7 @@ BLIZZARD_CLIENT_SECRET=...
 - [wow_forecaster/config.py](wow_forecaster/config.py) — AppConfig via load_config()
 - [wow_forecaster/db/schema.py](wow_forecaster/db/schema.py) — 21 tables, apply_schema() idempotent
 - [wow_forecaster/pipeline/base.py](wow_forecaster/pipeline/base.py) — PipelineStage ABC
-- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (34 commands)
+- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (36 commands)
 - [config/default.toml](config/default.toml) — static config
 - [config/sources.toml](config/sources.toml) — 3 source policies
 - [config/events/tww_events.json](config/events/tww_events.json) — TWW seed events
@@ -157,6 +157,18 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - CLI: start-scheduler (foreground daemon)
 - [scripts/setup_tasks.bat](scripts/setup_tasks.bat) — one-shot Windows Task Scheduler registration
 
+### Visualization & Portfolio (v2.2.0)
+- [wow_forecaster/viz/](wow_forecaster/viz/) — publication-quality chart layer (matplotlib/seaborn/Plotly)
+- [wow_forecaster/viz/theme.py](wow_forecaster/viz/theme.py) — WoW dark palette, apply_wow_theme(), get_plotly_template()
+- [wow_forecaster/viz/data_queries.py](wow_forecaster/viz/data_queries.py) — SQL/file -> pandas DataFrame fetchers
+- [wow_forecaster/viz/charts/](wow_forecaster/viz/charts/) — 6 chart modules: forecast, backtest, feature, recommendation, drift, transfer
+- [wow_forecaster/reporting/bi_export.py](wow_forecaster/reporting/bi_export.py) — Star-schema dim/fact table exports for Power BI / Tableau
+- CLI: generate-charts (--chart-type, --format png|svg|both), export-bi-bundle (--format csv|parquet)
+- Optional dep group: `[viz]` (matplotlib, seaborn, plotly, kaleido, pandas); `[dashboard]` now depends on `[viz]`
+- Dashboard upgraded to 8 tabs (added Backtest, Feature Insights, Crafting); Plotly interactive forecast chart
+- 3 Jupyter analysis notebooks in notebooks/ (EDA, Model Development, Backtest Evaluation)
+- GitHub Actions CI workflow (.github/workflows/ci.yml)
+
 ## What's NOT Implemented Yet
 - top_n_per_category V2 (Pareto-frontier, user-profile weighting, blocklist, A/B test support); cross-horizon dedup done in v0.9.1
 - Governance: cooldown enforcement not wired — preflight.py has check but orchestrator.py never passes last_call_at
@@ -167,4 +179,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-1111 tests passing
+1228 tests passing (8 pre-existing failures in test_item_forecasts.py)

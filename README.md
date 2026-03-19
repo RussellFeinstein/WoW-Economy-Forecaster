@@ -1,8 +1,40 @@
 # WoW Economy Forecaster
 
-A **local-first research system** for forecasting World of Warcraft auction house economy behavior.
+[![CI](https://github.com/yourusername/WoW-Economy-Forecaster/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/WoW-Economy-Forecaster/actions/workflows/ci.yml)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+![Tests](https://img.shields.io/badge/tests-1%2C200%2B%20passing-brightgreen)
+![License](https://img.shields.io/badge/license-personal%20research-orange)
+
+A **local-first ML forecasting system** for World of Warcraft auction house economy research.
 
 Uses historical data from **The War Within (TWW)** to learn economy patterns, then applies category/archetype-based transfer learning to generate price, volatility, and sale-velocity forecasts for **Midnight** as it launches and matures.
+
+---
+
+## Key Technical Highlights
+
+- **Archetype-based transfer learning** — economic behavior archetypes (not item IDs) power cross-expansion forecasting, enabling Day 1 predictions for never-seen items
+- **Walk-forward backtesting** with leakage-free event handling — `WoWEvent.is_known_at()` prevents look-ahead bias
+- **5-component recommendation scoring** — opportunity, liquidity, volatility, event_boost, uncertainty with principled thresholds
+- **Adaptive confidence intervals** — drift detection widens CIs when market conditions shift; cold-start blending anchors predictions to source-expansion prices
+- **Production-grade pipeline** — 36 CLI commands, 21 SQLite tables, 1,200+ tests, hourly automation
+
+## Architecture
+
+```mermaid
+graph LR
+    A[Blizzard API] -->|OAuth2| B[Ingest + Normalize]
+    B --> C[Feature Engineering<br/>48 features]
+    C --> D[LightGBM Training<br/>1d / 7d / 28d]
+    D --> E[Forecast + CI]
+    E --> F[Recommendation<br/>Scoring]
+    F --> G[Streamlit Dashboard<br/>8 tabs]
+    F --> H[CLI Reports]
+    F --> I[Power BI / Tableau<br/>Star Schema Export]
+    B --> J[Drift Detection]
+    J -->|Widens CI| E
+    F --> K[Portfolio Charts<br/>matplotlib + Plotly]
+```
 
 ---
 
@@ -24,6 +56,8 @@ Uses historical data from **The War Within (TWW)** to learn economy patterns, th
 | v1.0.0 — Automation | Scheduler daemon, Windows Task Scheduler integration | Complete |
 | v1.1.0 — Normalization | Rolling z-score normalization with cold-start fallback | Complete |
 | v1.5.0 — Crafting Advisor | Recipe seeder, margin compression/expansion, 6-window temporal analysis | Complete |
+| v2.0.0 — Execution Layer | TSM export, check-data-health, hourly exit codes | Complete |
+| v2.2.0 — Portfolio Showcase | Visualization layer, BI exports, Jupyter notebooks, CI pipeline | Complete |
 
 ---
 
@@ -47,10 +81,14 @@ wow_forecaster/
 │                    # crafting_advisor: 6-window margin compression/expansion
 ├── monitoring/      # Drift detection, adaptive policy, health, provenance, reporter
 ├── reporting/       # Reader (file discovery + freshness), formatters (ASCII tables),
-│                    # export (flat CSV/JSON for Power BI)
+│                    # export (flat CSV/JSON for Power BI), BI star-schema export
 ├── governance/      # Source policy registry, preflight checks, freshness validation
+├── viz/             # Publication-quality charts (matplotlib/seaborn/Plotly)
+│   ├── theme.py     # WoW dark palette, apply_wow_theme(), Plotly template
+│   ├── data_queries.py  # SQL/file -> pandas DataFrame fetchers
+│   └── charts/      # 6 chart modules: forecast, backtest, feature, recommendation, drift, transfer
 ├── scheduler.py     # SchedulerDaemon (stdlib only) — hourly + daily automation
-└── cli.py           # Typer CLI: 34 commands
+└── cli.py           # Typer CLI: 36 commands
 
 config/
 ├── default.toml             # Static defaults (committed)
@@ -73,9 +111,14 @@ data/
 └── logs/                     # forecaster.log
 
 dashboard/                    # Optional Streamlit analysis UI
-├── app.py                    # 5-tab dashboard (Top Picks/Forecasts/Volatility/Health/Status)
-├── data_loader.py            # Cached file loaders + DB queries
-└── requirements.txt          # streamlit + pandas
+├── app.py                    # 8-tab dashboard (Top Picks/Forecasts/Volatility/Health/
+│                             #   Status/Backtest/Feature Insights/Crafting)
+└── data_loader.py            # Cached file loaders + DB queries
+
+notebooks/                    # Jupyter analysis notebooks (portfolio narratives)
+├── 01_eda_and_data_exploration.ipynb
+├── 02_model_development.ipynb
+└── 03_backtest_and_evaluation.ipynb
 
 scripts/
 └── setup_tasks.bat           # One-shot Windows Task Scheduler registration

@@ -137,8 +137,9 @@ def _no_data_msg(command: str) -> None:
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab_top, tab_fc, tab_vol, tab_health, tab_status = st.tabs(
-    ["Top Picks", "Forecasts", "Volatility", "Model Health", "Source Status"]
+tab_top, tab_fc, tab_vol, tab_health, tab_status, tab_bt, tab_fi, tab_craft = st.tabs(
+    ["Top Picks", "Forecasts", "Volatility", "Model Health", "Source Status",
+     "Backtest", "Feature Insights", "Crafting"]
 )
 
 
@@ -318,13 +319,26 @@ with tab_fc:
                     )
 
                 if chart_data:
-                    df_chart = (
-                        pd.DataFrame(chart_data)
-                        .assign(date=lambda d: pd.to_datetime(d["date"], errors="coerce"))
-                        .sort_values("date")
-                        .set_index("date")
-                    )
-                    st.line_chart(df_chart[["actual_price", "predicted"]])
+                    # Interactive Plotly forecast chart with CI bands
+                    try:
+                        from wow_forecaster.viz.charts.forecast_chart import (
+                            plot_forecast_timeline_interactive,
+                        )
+                        df_h = pd.DataFrame(hist)
+                        plotly_fig = plot_forecast_timeline_interactive(
+                            df_h, fc_arch,
+                            archetype_name=f"Archetype {selected_arch}",
+                        )
+                        st.plotly_chart(plotly_fig, use_container_width=True)
+                    except ImportError:
+                        # Fallback to basic chart if viz deps not installed
+                        df_chart = (
+                            pd.DataFrame(chart_data)
+                            .assign(date=lambda d: pd.to_datetime(d["date"], errors="coerce"))
+                            .sort_values("date")
+                            .set_index("date")
+                        )
+                        st.line_chart(df_chart[["actual_price", "predicted"]])
 
                     # Show CI bands as a separate metric row.
                     if not fc_arch.empty:
@@ -558,3 +572,152 @@ with tab_status:
                     f"{source} — SuccRate",
                     f"{succ_rate:.0%}" if isinstance(succ_rate, (int, float)) else "N/A",
                 )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Tab 6 — Backtest Analysis
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab_bt:
+    st.header("Backtest Analysis")
+    st.caption(
+        "Walk-forward backtest results: model predictions vs actual prices "
+        "across multiple time folds. Validates that the model generalizes."
+    )
+
+    _BACKTEST_DIR = str(_ROOT / "data" / "processed" / "backtest")
+
+    try:
+        from wow_forecaster.viz.data_queries import fetch_backtest_predictions
+        from wow_forecaster.viz.charts.backtest_chart import (
+            plot_actual_vs_predicted_scatter,
+            plot_residual_distribution,
+            plot_directional_accuracy_heatmap,
+        )
+
+        df_bt = fetch_backtest_predictions(_BACKTEST_DIR, realm)
+
+        if df_bt.empty:
+            _no_data_msg("backtest")
+        else:
+            st.metric("Total Predictions", f"{len(df_bt):,}")
+
+            # Actual vs Predicted scatter
+            st.subheader("Actual vs Predicted")
+            fig_scatter = plot_actual_vs_predicted_scatter(df_bt)
+            st.pyplot(fig_scatter)
+            import matplotlib.pyplot as plt
+            plt.close(fig_scatter)
+
+            # Residual distribution
+            st.subheader("Residual Distribution")
+            fig_resid = plot_residual_distribution(df_bt)
+            st.pyplot(fig_resid)
+            plt.close(fig_resid)
+
+            # Directional accuracy heatmap
+            st.subheader("Directional Accuracy")
+            fig_dir = plot_directional_accuracy_heatmap(df_bt)
+            st.pyplot(fig_dir)
+            plt.close(fig_dir)
+
+    except ImportError:
+        st.info(
+            "Install visualization dependencies to see backtest charts: "
+            "`pip install -e '.[viz]'`"
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Tab 7 — Feature Insights
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab_fi:
+    st.header("Feature Insights")
+    st.caption(
+        "What the LightGBM model learned: feature importance by gain "
+        "(contribution to reducing prediction error) and how importance "
+        "shifts across forecast horizons."
+    )
+
+    _ARTIFACT_DIR = str(_ROOT / "data" / "outputs" / "model_artifacts")
+
+    try:
+        from wow_forecaster.viz.data_queries import fetch_feature_importance
+        from wow_forecaster.viz.charts.feature_chart import (
+            plot_feature_importance,
+            plot_importance_by_horizon,
+        )
+
+        df_fi = fetch_feature_importance(_ARTIFACT_DIR, realm)
+
+        if df_fi.empty:
+            _no_data_msg("train-model")
+        else:
+            # Overall importance
+            st.subheader("Top Features by Gain Importance")
+            fig_fi = plot_feature_importance(df_fi, top_n=15)
+            st.pyplot(fig_fi)
+            import matplotlib.pyplot as plt
+            plt.close(fig_fi)
+
+            # By horizon comparison
+            st.subheader("Feature Importance by Horizon")
+            fig_horizon = plot_importance_by_horizon(df_fi, top_n=10)
+            st.pyplot(fig_horizon)
+            plt.close(fig_horizon)
+
+    except ImportError:
+        st.info(
+            "Install visualization dependencies to see feature charts: "
+            "`pip install -e '.[viz]'`"
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Tab 8 — Crafting Margins
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab_craft:
+    st.header("Crafting Margins")
+    st.caption(
+        "Recipe profitability: craft cost vs output price over time. "
+        "Positive margin = profitable to craft and sell on the AH."
+    )
+
+    try:
+        from wow_forecaster.viz.data_queries import fetch_crafting_margins
+
+        df_margins = fetch_crafting_margins(_DB_PATH, realm, days=30)
+
+        if df_margins.empty:
+            _no_data_msg("build-margins")
+        else:
+            st.metric("Recipes with Margin Data", f"{df_margins['recipe_id'].nunique()}")
+
+            # Top profitable recipes
+            st.subheader("Most Profitable Recipes (Latest)")
+            latest_date = df_margins["obs_date"].max()
+            df_latest = df_margins[df_margins["obs_date"] == latest_date].copy()
+            df_latest = df_latest.sort_values("margin_pct", ascending=False).head(20)
+
+            display_cols = [
+                c for c in ["recipe_name", "profession", "craft_cost_gold",
+                            "output_price_gold", "margin_gold", "margin_pct"]
+                if c in df_latest.columns
+            ]
+            if display_cols:
+                st.dataframe(df_latest[display_cols], use_container_width=True, hide_index=True)
+
+            # Margin distribution
+            if "margin_pct" in df_latest.columns:
+                st.subheader("Margin % Distribution")
+                st.bar_chart(
+                    df_latest.set_index("recipe_name")["margin_pct"].head(15)
+                )
+
+    except ImportError:
+        st.info(
+            "Install visualization dependencies to see crafting data: "
+            "`pip install -e '.[viz]'`"
+        )
