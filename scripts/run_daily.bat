@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 
 rem ---------------------------------------------------------------------------
 rem  run_daily.bat -- WoW Economy Forecaster daily pipeline wrapper
@@ -32,11 +32,13 @@ rem ---- Step 1: build feature datasets ----------------------------------------
 echo [%DATE% %TIME%] Step 1/2: build-datasets >> logs\daily.log
 
 .venv\Scripts\wowfc.exe build-datasets >> logs\daily.log 2>&1
-set BUILD_CODE=%ERRORLEVEL%
+set "BUILD_CODE=!ERRORLEVEL!"
 
-if %BUILD_CODE% neq 0 (
-    echo [%DATE% %TIME%] build-datasets FAILED (exit %BUILD_CODE%) -- skipping forecast >> logs\daily.log
-    exit /b %BUILD_CODE%
+echo [%DATE% %TIME%] build-datasets exited with code !BUILD_CODE! >> logs\daily.log
+
+if !BUILD_CODE! neq 0 (
+    echo [%DATE% %TIME%] build-datasets FAILED -- skipping forecast >> logs\daily.log
+    exit /b !BUILD_CODE!
 )
 
 echo [%DATE% %TIME%] build-datasets OK >> logs\daily.log
@@ -45,8 +47,9 @@ rem ---- Step 2: train + forecast + recommend ----------------------------------
 echo [%DATE% %TIME%] Step 2/2: run-daily-forecast >> logs\daily.log
 
 .venv\Scripts\wowfc.exe run-daily-forecast >> logs\daily.log 2>&1
-set FORECAST_CODE=%ERRORLEVEL%
+set "FORECAST_CODE=!ERRORLEVEL!"
 
-echo [%DATE% %TIME%] Daily pipeline complete (exit %FORECAST_CODE%) >> logs\daily.log
+echo [%DATE% %TIME%] run-daily-forecast exited with code !FORECAST_CODE! >> logs\daily.log
+echo [%DATE% %TIME%] Daily pipeline complete >> logs\daily.log
 
-exit /b %FORECAST_CODE%
+exit /b !FORECAST_CODE!
