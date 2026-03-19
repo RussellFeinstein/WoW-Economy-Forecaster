@@ -3857,10 +3857,11 @@ def generate_charts(
 
     from wow_forecaster.viz.utils import save_chart
 
-    db_path = str(config.database.path)
-    artifact_dir = str(Path(config.data.processed_dir).parent / "outputs" / "model_artifacts")
-    recs_dir = str(Path(config.data.processed_dir).parent / "outputs" / "recommendations")
-    monitoring_dir = str(Path(config.data.processed_dir).parent / "outputs" / "monitoring")
+    db_path = str(config.database.db_path)
+    data_root = Path(config.data.processed_dir).parent
+    artifact_dir = str(data_root / "outputs" / "model_artifacts")
+    recs_dir = str(data_root / "outputs" / "recommendations")
+    monitoring_dir = str(data_root / "outputs" / "monitoring")
     backtest_dir = str(Path(config.data.processed_dir) / "backtest")
 
     generated = 0
@@ -4072,7 +4073,7 @@ def export_bi_bundle(
     typer.echo(f"  Output:   {output_dir}/")
 
     written = export_star_schema(
-        db_path=str(config.database.path),
+        db_path=str(config.database.db_path),
         output_dir=output_dir,
         realm=target_realm,
         include_backtest=include_backtest,
