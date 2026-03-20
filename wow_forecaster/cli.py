@@ -4090,6 +4090,102 @@ def export_bi_bundle(
     typer.echo(f"\n[OK] export-bi-bundle complete. {len(written)} table(s) exported.")
 
 
+@app.command("backfill-rollups")
+def backfill_rollups_cmd(
+    realm: Optional[str] = typer.Option(
+        None, "--realm",
+        help="Realm slug (e.g. 'us'). Uses first config default if omitted.",
+    ),
+    batch_days: int = typer.Option(
+        7, "--batch-days",
+        help="Number of dates to process per commit batch.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Show date range and estimated work without writing.",
+    ),
+    db_path: Optional[str] = typer.Option(None, "--db-path", help="Override DB path."),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path."),
+) -> None:
+    """Backfill daily rollup tables from existing normalized observations.
+
+    One-time operation after migration 0008. Pre-aggregates all historical
+    data into daily_rollup_archetype and daily_rollup_item tables so that
+    build-datasets, drift detection, and chart generation read from the
+    rollup instead of scanning 110M+ raw rows.
+
+    \b
+    Examples::
+
+        wow-forecaster backfill-rollups
+        wow-forecaster backfill-rollups --batch-days 14
+        wow-forecaster backfill-rollups --dry-run
+    """
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.db.migrations import run_migrations
+    from wow_forecaster.db.rollup import backfill_rollups
+
+    config = _load_config_or_exit(config_path)
+    target_realm = realm or list(config.realms.defaults)[0]
+    target_db = db_path or config.database.db_path
+
+    typer.echo(f"\n  Backfill Rollups -- realm={target_realm}  db={target_db}")
+
+    conn = get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    )
+    run_migrations(conn)
+
+    # Show date range
+    row = conn.execute(
+        """
+        SELECT date(MIN(observed_at)) AS min_d, date(MAX(observed_at)) AS max_d,
+               COUNT(*) AS total_rows
+        FROM market_observations_normalized
+        WHERE realm_slug = ? AND is_outlier = 0
+        """,
+        (target_realm,),
+    ).fetchone()
+
+    if row is None or row[0] is None:
+        typer.echo(f"\n  [WARN] No normalized data for realm={target_realm}.")
+        conn.close()
+        return
+
+    min_d, max_d, total_rows = row[0], row[1], row[2]
+    from datetime import date as _date
+    n_days = (_date.fromisoformat(max_d) - _date.fromisoformat(min_d)).days + 1
+
+    typer.echo(f"  Date range: {min_d} -> {max_d} ({n_days} days)")
+    typer.echo(f"  Source rows: {total_rows:,}")
+    typer.echo(f"  Batch size:  {batch_days} days per commit")
+
+    if dry_run:
+        typer.echo("\n  [DRY RUN] No data written.")
+        conn.close()
+        return
+
+    typer.echo("\n  Starting backfill...")
+
+    def _progress(done: int, total: int) -> None:
+        pct = done / total * 100 if total else 0
+        typer.echo(f"    {done}/{total} dates ({pct:.0f}%)")
+
+    arch_total, item_total = backfill_rollups(
+        conn, target_realm,
+        batch_days=batch_days,
+        progress_callback=_progress,
+    )
+
+    conn.close()
+    typer.echo(
+        f"\n[OK] backfill-rollups complete."
+        f"  archetype rows: {arch_total:,}  |  item rows: {item_total:,}"
+    )
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

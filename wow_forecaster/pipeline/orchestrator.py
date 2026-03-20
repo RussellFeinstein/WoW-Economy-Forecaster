@@ -193,6 +193,22 @@ class HourlyOrchestrator:
         if not norm_ok and norm_err:
             result.errors.append(f"NormalizeStage: {norm_err}")
 
+        # ── Step 3.5: Rollup update (non-fatal) ─────────────────────────────
+        try:
+            from datetime import date as _date
+
+            from wow_forecaster.db.rollup import upsert_rollups_for_date
+
+            today_str = _date.today().isoformat()
+            for realm in realms:
+                arch_n, item_n = upsert_rollups_for_date(self._conn, realm, today_str)
+                logger.info(
+                    "Rollup updated for realm=%s date=%s: arch=%d item=%d",
+                    realm, today_str, arch_n, item_n,
+                )
+        except Exception as exc:
+            logger.warning("Rollup step failed (non-fatal): %s", exc, exc_info=True)
+
         # ── Step 4: Drift check + adaptive policy per realm ───────────────────
         if check_drift:
             logger.info("[3/4] Drift check + adaptive policy ...")

@@ -64,10 +64,33 @@ def fetch_historical_prices(
 ) -> pd.DataFrame:
     """Fetch daily average prices for one archetype.
 
+    Uses the pre-aggregated ``daily_rollup_archetype`` table when available,
+    falling back to a full scan of ``market_observations_normalized`` if the
+    rollup is empty.
+
     Returns columns: obs_date, avg_price_gold, min_price_gold,
     max_price_gold, obs_count.
     """
-    sql = """
+    # Fast path: rollup table
+    rollup_sql = """
+        SELECT obs_date,
+               CASE WHEN price_obs_count > 0
+                    THEN price_sum / price_obs_count END AS avg_price_gold,
+               price_min                                 AS min_price_gold,
+               price_max                                 AS max_price_gold,
+               obs_count
+        FROM   daily_rollup_archetype
+        WHERE  archetype_id = ?
+          AND  realm_slug   = ?
+          AND  obs_date     >= date('now', ? || ' days')
+        ORDER  BY obs_date
+    """
+    df = _query_db(db_path, rollup_sql, [archetype_id, realm, f"-{days}"])
+    if not df.empty:
+        return df
+
+    # Fallback: legacy full-scan query
+    legacy_sql = """
         SELECT date(n.observed_at) AS obs_date,
                AVG(n.price_gold)   AS avg_price_gold,
                MIN(n.price_gold)   AS min_price_gold,
@@ -82,7 +105,7 @@ def fetch_historical_prices(
         GROUP  BY obs_date
         ORDER  BY obs_date
     """
-    return _query_db(db_path, sql, [archetype_id, realm, f"-{days}"])
+    return _query_db(db_path, legacy_sql, [archetype_id, realm, f"-{days}"])
 
 
 # ── Backtest predictions ──────────────────────────────────────────────────────
