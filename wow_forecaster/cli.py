@@ -4131,55 +4131,52 @@ def backfill_rollups_cmd(
 
     typer.echo(f"\n  Backfill Rollups -- realm={target_realm}  db={target_db}")
 
-    conn = get_connection(
+    with get_connection(
         target_db,
         wal_mode=config.database.wal_mode,
         busy_timeout_ms=config.database.busy_timeout_ms,
-    )
-    run_migrations(conn)
+    ) as conn:
+        run_migrations(conn)
 
-    # Show date range
-    row = conn.execute(
-        """
-        SELECT date(MIN(observed_at)) AS min_d, date(MAX(observed_at)) AS max_d,
-               COUNT(*) AS total_rows
-        FROM market_observations_normalized
-        WHERE realm_slug = ? AND is_outlier = 0
-        """,
-        (target_realm,),
-    ).fetchone()
+        # Show date range
+        row = conn.execute(
+            """
+            SELECT date(MIN(observed_at)) AS min_d, date(MAX(observed_at)) AS max_d,
+                   COUNT(*) AS total_rows
+            FROM market_observations_normalized
+            WHERE realm_slug = ? AND is_outlier = 0
+            """,
+            (target_realm,),
+        ).fetchone()
 
-    if row is None or row[0] is None:
-        typer.echo(f"\n  [WARN] No normalized data for realm={target_realm}.")
-        conn.close()
-        return
+        if row is None or row[0] is None:
+            typer.echo(f"\n  [WARN] No normalized data for realm={target_realm}.")
+            return
 
-    min_d, max_d, total_rows = row[0], row[1], row[2]
-    from datetime import date as _date
-    n_days = (_date.fromisoformat(max_d) - _date.fromisoformat(min_d)).days + 1
+        min_d, max_d, total_rows = row[0], row[1], row[2]
+        from datetime import date as _date
+        n_days = (_date.fromisoformat(max_d) - _date.fromisoformat(min_d)).days + 1
 
-    typer.echo(f"  Date range: {min_d} -> {max_d} ({n_days} days)")
-    typer.echo(f"  Source rows: {total_rows:,}")
-    typer.echo(f"  Batch size:  {batch_days} days per commit")
+        typer.echo(f"  Date range: {min_d} -> {max_d} ({n_days} days)")
+        typer.echo(f"  Source rows: {total_rows:,}")
+        typer.echo(f"  Batch size:  {batch_days} days per commit")
 
-    if dry_run:
-        typer.echo("\n  [DRY RUN] No data written.")
-        conn.close()
-        return
+        if dry_run:
+            typer.echo("\n  [DRY RUN] No data written.")
+            return
 
-    typer.echo("\n  Starting backfill...")
+        typer.echo("\n  Starting backfill...")
 
-    def _progress(done: int, total: int) -> None:
-        pct = done / total * 100 if total else 0
-        typer.echo(f"    {done}/{total} dates ({pct:.0f}%)")
+        def _progress(done: int, total: int) -> None:
+            pct = done / total * 100 if total else 0
+            typer.echo(f"    {done}/{total} dates ({pct:.0f}%)")
 
-    arch_total, item_total = backfill_rollups(
-        conn, target_realm,
-        batch_days=batch_days,
-        progress_callback=_progress,
-    )
+        arch_total, item_total = backfill_rollups(
+            conn, target_realm,
+            batch_days=batch_days,
+            progress_callback=_progress,
+        )
 
-    conn.close()
     typer.echo(
         f"\n[OK] backfill-rollups complete."
         f"  archetype rows: {arch_total:,}  |  item rows: {item_total:,}"
