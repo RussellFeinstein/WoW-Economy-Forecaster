@@ -143,6 +143,30 @@ def count_obs_per_archetype_realm(
     Returns:
         Dict mapping ``archetype_id → observation count``.
     """
+    # Try rollup first (fast path).  The archetype rollup doesn't store
+    # expansion_slug, so we join with items to filter.  Still fast because
+    # the rollup has ~400 rows vs 110M in normalized.
+    try:
+        rows = conn.execute(
+            """
+            SELECT ra.archetype_id, SUM(ra.obs_count) AS obs_count
+            FROM daily_rollup_archetype ra
+            WHERE ra.realm_slug = ?
+              AND EXISTS (
+                  SELECT 1 FROM items i2
+                  WHERE i2.archetype_id = ra.archetype_id
+                    AND i2.expansion_slug = ?
+              )
+            GROUP BY ra.archetype_id
+            """,
+            (realm_slug, expansion_slug),
+        ).fetchall()
+        if rows:
+            return {r["archetype_id"]: r["obs_count"] for r in rows}
+    except Exception:
+        pass
+
+    # Legacy fallback
     rows = conn.execute(
         """
         SELECT i.archetype_id, COUNT(*) AS obs_count
@@ -175,6 +199,25 @@ def count_items_per_archetype(
     Returns:
         Dict mapping ``archetype_id → item count``.
     """
+    # Try item rollup (fast path): count distinct items per archetype
+    try:
+        rows = conn.execute(
+            """
+            SELECT i.archetype_id, COUNT(DISTINCT ri.item_id) AS item_count
+            FROM daily_rollup_item ri
+            JOIN items i ON ri.item_id = i.item_id
+            WHERE i.archetype_id IS NOT NULL
+              AND ri.realm_slug  = ?
+            GROUP BY i.archetype_id
+            """,
+            (realm_slug,),
+        ).fetchall()
+        if rows:
+            return {r["archetype_id"]: r["item_count"] for r in rows}
+    except Exception:
+        pass
+
+    # Legacy fallback
     rows = conn.execute(
         """
         SELECT i.archetype_id, COUNT(DISTINCT mon.item_id) AS item_count
