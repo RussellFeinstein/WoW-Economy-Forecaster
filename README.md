@@ -110,7 +110,7 @@ tests/
 | ML | **LightGBM** | Fast training, handles mixed types, interpretable feature importances |
 | HTTP | **httpx** | Async-capable, used for Blizzard OAuth2 + API calls |
 | Reporting | **CLI-first + optional Streamlit** | Terminal reports work headlessly; Streamlit is zero-cost when not needed |
-| Tests | **pytest** | Standard; 886 tests across 16 groups |
+| Tests | **pytest** | Standard; 1,000+ tests across 20 groups |
 
 ### Transfer Learning Architecture
 
@@ -142,7 +142,7 @@ The system does **not** do naive TWW-item → Midnight-item mapping. Instead:
 ### Install
 
 ```bash
-git clone https://github.com/yourusername/WoW-Economy-Forecaster.git
+git clone https://github.com/RussellFeinstein/WoW-Economy-Forecaster.git
 cd WoW-Economy-Forecaster
 
 python -m venv .venv
@@ -416,7 +416,7 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 1008 tests
+# All 1,000+ tests
 pytest
 
 # With coverage
