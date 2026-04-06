@@ -5,6 +5,19 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.3] — 2026-04-06
+
+### Added
+- Related Projects section in README linking to alt-army-guide (profession setup guide for executing on forecaster recommendations)
+
+## [2.2.2] — 2026-03-20
+
+### Fixed
+- Scheduled tasks no longer open a visible cmd.exe window; `setup_tasks.bat` now uses `wscript.exe` + `run_silent.vbs` wrapper for silent execution
+
+### Added
+- `scripts/run_silent.vbs` — generic VBS launcher that runs batch files with no console window
+
 ## [2.2.0] — 2026-03-19
 
 ### Added

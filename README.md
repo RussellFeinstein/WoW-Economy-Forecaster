@@ -390,6 +390,7 @@ wow-forecaster export-tsm              [--realm SLUG] [--horizon 1d|7d|28d] \
 wow-forecaster start-scheduler     [--config PATH]
 
 # Register Windows Task Scheduler tasks for unattended operation
+# Tasks run silently (no visible cmd.exe window) via run_silent.vbs
 scripts/setup_tasks.bat
 ```
 
@@ -651,6 +652,12 @@ BLIZZARD_CLIENT_SECRET=...   # required for live Blizzard AH data
 ```
 
 Without Blizzard credentials the pipeline cannot ingest live data.
+
+---
+
+## Related Projects
+
+- **[alt-army-guide](https://github.com/RussellFeinstein/alt-army-guide)** — Step-by-step guide for setting up Alchemy + Enchanting alts to execute on this system's recommendations. Craft targets (Light's Potential, Enchant Chest - Mark of the Worldsoul) were selected using this forecaster's margin analysis.
 
 ---
 
