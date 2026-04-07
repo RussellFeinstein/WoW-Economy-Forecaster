@@ -95,67 +95,81 @@ class IngestStage(PipelineStage):
         total_snapshots = 0
         total_inserted_raw = 0
 
-        with get_connection(self.db_path) as conn:
-            snap_repo = IngestionSnapshotRepository(conn)
-            market_repo = MarketObservationRepository(conn)
+        # ── Phase 1: Read-only — load FK guard set (short connection) ──────
+        with get_connection(
+            self.db_path,
+            wal_mode=self.config.database.wal_mode,
+            busy_timeout_ms=self.config.database.busy_timeout_ms,
+        ) as conn:
             item_repo = ItemRepository(conn)
-
-            # Load known item IDs once — FK guard for all sources this run.
             known_item_ids: set[int] = item_repo.get_all_item_ids()
-            logger.info(
-                "IngestStage: %d known items in registry", len(known_item_ids)
-            )
+        logger.info(
+            "IngestStage: %d known items in registry", len(known_item_ids)
+        )
 
-            # ── Blizzard Game Data API ─────────────────────────────────────────
-            # Live mode: fetch commodities ONCE for the whole US region.
-            # Commodities are region-wide since patch 9.2.7 — one call covers all realms.
-            # Fixture mode keeps the old per-realm loop so existing tests still pass.
-            if blizzard_id:
-                snap, records_data = self._fetch_blizzard_commodities(
+        # ── Phase 2: Network I/O — no DB connection held ──────────────────
+        # Blizzard Game Data API
+        # Live mode: fetch commodities ONCE for the whole US region.
+        # Commodities are region-wide since patch 9.2.7 — one call covers all realms.
+        # Fixture mode keeps the old per-realm loop so existing tests still pass.
+        fetched_snapshots: list[tuple] = []  # (snap, observations, n_records, skipped)
+
+        if blizzard_id:
+            snap, records_data = self._fetch_blizzard_commodities(
+                blizzard=blizzard,
+                raw_dir=raw_dir,
+                run=run,
+            )
+            if snap.success:
+                observations, skipped = self._parse_blizzard_records(
+                    records_data, snap.fetched_at, known_item_ids
+                )
+                fetched_snapshots.append((snap, observations, len(records_data), skipped))
+            else:
+                fetched_snapshots.append((snap, [], 0, 0))
+        else:
+            for realm in realms:
+                snap, records_data = self._fetch_blizzard(
                     blizzard=blizzard,
+                    realm=realm,
                     raw_dir=raw_dir,
                     run=run,
+                    blizzard_id=blizzard_id,
                 )
-                snap_repo.insert(snap)
                 if snap.success:
-                    total_snapshots += 1
                     observations, skipped = self._parse_blizzard_records(
                         records_data, snap.fetched_at, known_item_ids
                     )
+                    fetched_snapshots.append((snap, observations, len(records_data), skipped))
+                else:
+                    fetched_snapshots.append((snap, [], 0, 0))
+
+        # Blizzard News (content only — no market table rows)
+        news_snap = self._fetch_news(news=news, raw_dir=raw_dir, run=run)
+
+        # ── Phase 3: Write — short connection for all DB inserts ───────────
+        with get_connection(
+            self.db_path,
+            wal_mode=self.config.database.wal_mode,
+            busy_timeout_ms=self.config.database.busy_timeout_ms,
+        ) as conn:
+            snap_repo = IngestionSnapshotRepository(conn)
+            market_repo = MarketObservationRepository(conn)
+
+            for snap, observations, n_records, skipped in fetched_snapshots:
+                snap_repo.insert(snap)
+                if snap.success:
+                    total_snapshots += 1
                     inserted = market_repo.insert_raw_batch(observations)
                     total_inserted_raw += inserted
                     logger.info(
-                        "Blizzard commodities (US region-wide): %d records | "
-                        "inserted=%d | skipped_missing_items=%d",
-                        len(records_data), inserted, skipped,
+                        "Blizzard API: %d records | inserted=%d | "
+                        "skipped_missing_items=%d",
+                        n_records, inserted, skipped,
                     )
-            else:
-                for realm in realms:
-                    snap, records_data = self._fetch_blizzard(
-                        blizzard=blizzard,
-                        realm=realm,
-                        raw_dir=raw_dir,
-                        run=run,
-                        blizzard_id=blizzard_id,
-                    )
-                    snap_repo.insert(snap)
-                    if snap.success:
-                        total_snapshots += 1
-                        observations, skipped = self._parse_blizzard_records(
-                            records_data, snap.fetched_at, known_item_ids
-                        )
-                        inserted = market_repo.insert_raw_batch(observations)
-                        total_inserted_raw += inserted
-                        logger.info(
-                            "Blizzard API %s: %d records | inserted=%d | "
-                            "skipped_missing_items=%d",
-                            realm, len(records_data), inserted, skipped,
-                        )
 
-            # ── Blizzard News (content only — no market table rows) ────────────
-            snap = self._fetch_news(news=news, raw_dir=raw_dir, run=run)
-            snap_repo.insert(snap)
-            if snap.success:
+            snap_repo.insert(news_snap)
+            if news_snap.success:
                 total_snapshots += 1
 
             conn.commit()

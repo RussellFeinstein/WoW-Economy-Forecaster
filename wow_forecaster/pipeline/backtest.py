@@ -90,7 +90,11 @@ class BacktestStage(PipelineStage):
 
         total_records = 0
 
-        with get_connection(self.db_path) as conn:
+        with get_connection(
+            self.db_path,
+            wal_mode=self.config.database.wal_mode,
+            busy_timeout_ms=self.config.database.busy_timeout_ms,
+        ) as conn:
             # ── Load active event dates for is_event_window classification ──
             event_rows = conn.execute(
                 "SELECT start_date, end_date FROM wow_events WHERE start_date IS NOT NULL;"

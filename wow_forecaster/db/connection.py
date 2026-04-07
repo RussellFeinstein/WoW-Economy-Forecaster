@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 def get_connection(
     db_path: str,
     wal_mode: bool = True,
-    busy_timeout_ms: int = 5000,
+    busy_timeout_ms: int = 30000,
 ) -> Generator[sqlite3.Connection, None, None]:
     """Context manager yielding a configured SQLite connection.
 

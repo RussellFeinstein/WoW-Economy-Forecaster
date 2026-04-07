@@ -33,7 +33,7 @@ class DatabaseConfig(BaseModel):
 
     db_path: str = "data/db/wow_forecaster.db"
     wal_mode: bool = True
-    busy_timeout_ms: int = 5000
+    busy_timeout_ms: int = 30000
 
 
 class DataConfig(BaseModel):

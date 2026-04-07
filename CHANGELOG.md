@@ -5,6 +5,33 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.3] — 2026-04-06
+
+### Fixed
+- Rollup tables now update during hourly pipeline (was silently failing due to missing `self._conn` attribute in orchestrator)
+- IngestStage no longer holds SQLite write lock during Blizzard API HTTP fetch (connection split into read/fetch/write phases)
+- All pipeline stages now use config-driven `busy_timeout_ms` instead of hardcoded 5-second default
+- Default `busy_timeout_ms` increased from 5s to 30s to handle realistic batch operation contention
+- Overlapping hourly pipeline runs prevented via lock file guard in `run_hourly.bat`
+- Version regression from v2.3.2 to v2.2.3 corrected (was a typo in previous commit)
+
+## [2.3.2] — 2026-04-05
+
+### Changed
+- Migrated `archetype_features.py` to use pre-aggregated rollup tables for faster feature queries
+
+## [2.3.1] — 2026-04-05
+
+### Fixed
+- `backfill-rollups` now uses `get_connection` as context manager (was leaking connections)
+
+## [2.3.0] — 2026-04-05
+
+### Added
+- Pre-aggregated rollup tables (`archetype_rollups`, `item_rollups`) for 110M-row performance optimization
+- `backfill-rollups` CLI command to populate rollup tables from historical data
+- Automatic rollup update step in hourly orchestrator pipeline
+
 ## [2.2.3] — 2026-04-06
 
 ### Added

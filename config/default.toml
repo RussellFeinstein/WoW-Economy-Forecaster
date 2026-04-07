@@ -12,7 +12,7 @@ db_path = "data/db/wow_forecaster.db"
 # WAL journal mode enables concurrent reads during pipeline runs
 wal_mode = true
 # Milliseconds to wait when DB is locked before raising OperationalError
-busy_timeout_ms = 5000
+busy_timeout_ms = 30000
 
 # ── Data Directories ──────────────────────────────────────────────────────────
 

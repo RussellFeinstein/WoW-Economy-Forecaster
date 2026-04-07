@@ -197,15 +197,21 @@ class HourlyOrchestrator:
         try:
             from datetime import date as _date
 
+            from wow_forecaster.db.connection import get_connection
             from wow_forecaster.db.rollup import upsert_rollups_for_date
 
             today_str = _date.today().isoformat()
-            for realm in realms:
-                arch_n, item_n = upsert_rollups_for_date(self._conn, realm, today_str)
-                logger.info(
-                    "Rollup updated for realm=%s date=%s: arch=%d item=%d",
-                    realm, today_str, arch_n, item_n,
-                )
+            with get_connection(
+                self.db_path,
+                wal_mode=self.config.database.wal_mode,
+                busy_timeout_ms=self.config.database.busy_timeout_ms,
+            ) as conn:
+                for realm in realms:
+                    arch_n, item_n = upsert_rollups_for_date(conn, realm, today_str)
+                    logger.info(
+                        "Rollup updated for realm=%s date=%s: arch=%d item=%d",
+                        realm, today_str, arch_n, item_n,
+                    )
         except Exception as exc:
             logger.warning("Rollup step failed (non-fatal): %s", exc, exc_info=True)
 

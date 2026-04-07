@@ -46,6 +46,9 @@ BLIZZARD_CLIENT_SECRET=...
 - Archetype mappings require non-empty mapping_rationale (audit trail)
 - RawMarketObservation has NO obs_id field — query DB rows directly when obs_id needed
 - IngestStage pre-persists RunMetadata at start of _execute() to get run_id for FK use
+- IngestStage uses 3-phase connection pattern: (1) short read connection for FK guard, (2) no connection during HTTP fetch, (3) short write connection for all inserts — avoids holding DB lock during network I/O
+- All pipeline get_connection() calls pass config.database.wal_mode + busy_timeout_ms (default 30s)
+- run_hourly.bat uses lock file (data/db/.hourly.lock) to prevent overlapping scheduled runs
 - ForecastOutput frozen model — use object.__setattr__(fc, "forecast_id", fc_id) after DB insert
 - LightGBM v4+ requires numpy arrays — convert list[list[float]] via np.array(..., dtype=np.float64)
 - Windows terminal: avoid Unicode arrows in typer.echo() — use ASCII -> instead
@@ -179,4 +182,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-1228 tests passing (8 pre-existing failures in test_item_forecasts.py)
+1251 tests passing (9 pre-existing failures: 8 in test_item_forecasts.py, 1 date-sensitive in test_pruner.py)
