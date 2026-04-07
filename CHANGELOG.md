@@ -5,6 +5,15 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.4] — 2026-04-07
+
+### Added
+- `checkpoint-db` CLI command to force WAL checkpoint when the write-ahead log grows too large
+- Automatic WAL checkpoint step in hourly orchestrator pipeline (after prune, before monitoring outputs)
+
+### Fixed
+- WAL file growth unbounded (no checkpoint logic existed); 4.2 GB WAL was causing all DB operations to exceed lock timeout
+
 ## [2.3.3] — 2026-04-06
 
 ### Fixed

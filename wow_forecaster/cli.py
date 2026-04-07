@@ -3717,6 +3717,68 @@ def prune_snapshots(
         typer.echo("[OK] Prune complete.")
 
 
+@app.command("checkpoint-db")
+def checkpoint_db_cmd(
+    mode: str = typer.Option(
+        "TRUNCATE",
+        "--mode",
+        help="Checkpoint mode: PASSIVE, FULL, RESTART, or TRUNCATE.",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Force a WAL checkpoint to merge the write-ahead log into the main database.
+
+    Use this when the WAL file grows large (visible as a .db-wal file next
+    to the database).  TRUNCATE mode (default) resets the WAL to zero bytes
+    on success.  PASSIVE never blocks but may leave pages un-checkpointed.
+    """
+    import os
+
+    from wow_forecaster.db.connection import get_connection
+
+    config = _load_config_or_exit(config_path)
+    db_path = config.database.db_path
+    wal_path = db_path + "-wal"
+
+    if os.path.exists(wal_path):
+        wal_mb = os.path.getsize(wal_path) / 1024 / 1024
+        typer.echo(f"  WAL size before: {wal_mb:.1f} MB")
+    else:
+        typer.echo("  WAL file not present (nothing to checkpoint).")
+        return
+
+    valid_modes = ("PASSIVE", "FULL", "RESTART", "TRUNCATE")
+    mode_upper = mode.upper()
+    if mode_upper not in valid_modes:
+        typer.echo(f"  [ERROR] Invalid mode '{mode}'. Choose from: {', '.join(valid_modes)}")
+        raise typer.Exit(code=1)
+
+    with get_connection(
+        db_path,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        result = conn.execute(f"PRAGMA wal_checkpoint({mode_upper});").fetchone()
+        busy, log_pages, checkpointed = result
+
+    if os.path.exists(wal_path):
+        wal_mb_after = os.path.getsize(wal_path) / 1024 / 1024
+        typer.echo(f"  WAL size after:  {wal_mb_after:.1f} MB")
+    else:
+        typer.echo("  WAL size after:  0.0 MB")
+
+    if busy:
+        typer.echo(f"  [WARN] Checkpoint incomplete (busy). log={log_pages} checkpointed={checkpointed}")
+        typer.echo("  Another process may be using the database. Retry when idle.")
+        raise typer.Exit(code=1)
+    else:
+        typer.echo(f"  [OK] Checkpoint complete. log={log_pages} checkpointed={checkpointed}")
+
+
 @app.command("export-tsm")
 def export_tsm_cmd(
     realm: Optional[str] = typer.Option(

@@ -240,6 +240,30 @@ class HourlyOrchestrator:
         logger.info("[4/5] Retention prune (raw data > %d days) ...", self.config.retention.raw_snapshot_days)
         self._run_prune()
 
+        # ── Step 5.5: WAL checkpoint (keep WAL file bounded) ────────────────
+        try:
+            from wow_forecaster.db.connection import get_connection
+
+            with get_connection(
+                self.db_path,
+                wal_mode=self.config.database.wal_mode,
+                busy_timeout_ms=self.config.database.busy_timeout_ms,
+            ) as conn:
+                wal_result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE);").fetchone()
+                busy, log_pages, checkpointed = wal_result
+                if busy:
+                    logger.warning(
+                        "WAL checkpoint incomplete (busy): log=%d checkpointed=%d",
+                        log_pages, checkpointed,
+                    )
+                else:
+                    logger.info(
+                        "WAL checkpoint complete: log=%d checkpointed=%d",
+                        log_pages, checkpointed,
+                    )
+        except Exception as exc:
+            logger.warning("WAL checkpoint failed (non-fatal): %s", exc)
+
         # ── Step 6: Write monitoring outputs ──────────────────────────────────
         logger.info("[5/5] Writing monitoring outputs ...")
         output_dir = Path(self.config.monitoring.monitoring_output_dir)
