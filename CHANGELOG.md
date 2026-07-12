@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.7] - 2026-07-12
+
+### Changed
+- Milestone M7 renamed to M0.5 (unattended capture) and moved to run immediately after M0: the design and cloud fetcher (#41, #42) depend on nothing local and stop further unrecoverable data loss, so they no longer wait behind M1-M6; only the catch-up command (#43) needs the restored pipeline
+
 ## [2.3.6] - 2026-07-12
 
 ### Added
