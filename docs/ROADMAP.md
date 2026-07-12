@@ -1,6 +1,6 @@
 # Roadmap: from research system to validated, published forecaster
 
-Last updated: 2026-07-12. Work is tracked in [GitHub milestones](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/milestones) M0 through M6; this document is the narrative companion. Each milestone is scoped to one coherent arc of PRs and ends with a measurable result.
+Last updated: 2026-07-12. Work is tracked in [GitHub milestones](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/milestones) M0 through M7; this document is the narrative companion. Each milestone is scoped to one coherent arc of PRs and ends with a measurable result.
 
 ## Why this roadmap
 
@@ -11,9 +11,9 @@ Two findings drove it, both from the 2026-07-12 state-of-project review:
 
 ## Milestones
 
-### M0: Restore and harden operations (issues [#1](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/1)-[#12](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/12))
+### M0: Restore and harden operations (issues [#1](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/1)-[#12](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/12), [#40](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/40))
 
-Restore ingestion safely (the pruner would delete the surviving history if the lock were simply removed; see the runbook in #1), add age-based lock takeover, schedule `check-data-health` with visible alerting, gate the daily forecast on freshness, fix the 9 failing tests, and merge the long-lived `feature/portfolio-showcase` branch. Everything else depends on this.
+Restore ingestion safely (the pruner would delete the surviving history if the lock were simply removed; see the runbook in #1), add age-based lock takeover, schedule `check-data-health` with visible alerting, gate the daily forecast on freshness, fix the 9 failing tests, let the machine sleep between runs with wake-to-run task settings (#40), and merge the long-lived `feature/portfolio-showcase` branch. Everything else depends on this.
 
 ### M1: Model validation and monitoring (issues [#13](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/13)-[#19](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/19))
 
@@ -39,6 +39,10 @@ Interrupted time-series and difference-in-differences designs measure how patch 
 
 A public Streamlit dashboard on Community Cloud reading the Supabase marts, a README case study with architecture and measured results, and a profile refresh.
 
+### M7: Unattended capture (issues [#41](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/41)-[#43](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/43))
+
+Capture that does not depend on the desktop. Wake-to-run settings (#40, in M0) let the machine sleep; this milestone takes the machine out of the loop entirely. An hourly cloud job fetches and compresses the commodities snapshot into private object storage with a 30-day lifecycle rule (the ToS deletion requirement becomes infrastructure), and a local `sync-snapshots` command ingests the backlog through the existing pipeline whenever the desktop is next on. Missed hours are otherwise unrecoverable because the API serves only the current snapshot. Independent of M1-M6; parallel any time after M0.
+
 ## Dependency graph
 
 ```
@@ -48,6 +52,7 @@ M0 (gates everything)
  |    |    +-> M3 (BI dashboards; prototype may start earlier off CSV bundle)
  |    +-> M4 (paper trading uses realizations)
  +-> M5 (event study; independent, parallel any time after M0)
+ +-> M7 (unattended capture; independent, parallel any time after M0)
  +-> M6 (publish; needs M2 marts and M1/M4 numbers)
 ```
 
@@ -60,6 +65,7 @@ M0 (gates everything)
 | Supabase free tier caps the DB at 500 MB | Archetype-grain marts only, with a size guard (#25) |
 | Public deployment requires a public repo | Secrets audit before flipping; read-only cloud key; local DB never committed (#37) |
 | DB grows ~14 GB/month raw once ingest resumes | 30-day prune caps steady state; retention sentinel in health checks (#5) |
+| Capture requires the desktop awake; slept or powered-off hours are unrecoverable | Wake timers in M0 (#40); cloud capture and catch-up ingestion in M7 (#41-#43) |
 
 ## Backlog (not scheduled)
 

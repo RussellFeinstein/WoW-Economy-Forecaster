@@ -173,7 +173,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - GitHub Actions CI workflow (.github/workflows/ci.yml)
 
 ## Roadmap
-Next-phase work (M0 restore/harden ops -> M1 model validation -> M2 PostgreSQL+dbt warehouse -> M3 Power BI/Tableau -> M4 paper-trading P&L + ranking A/B -> M5 event impact study -> M6 publish) is tracked in [docs/ROADMAP.md](docs/ROADMAP.md) and GitHub milestones M0-M6 (issues #1-#39, created 2026-07-12). Session protocol: pick the lowest open milestone, work its issues in order.
+Next-phase work (M0 restore/harden ops -> M1 model validation -> M2 PostgreSQL+dbt warehouse -> M3 Power BI/Tableau -> M4 paper-trading P&L + ranking A/B -> M5 event impact study -> M6 publish; M7 unattended capture runs parallel any time after M0) is tracked in [docs/ROADMAP.md](docs/ROADMAP.md) and GitHub milestones M0-M7 (issues #1-#43, created 2026-07-12). Session protocol: pick the lowest open milestone, work its issues in order.
 
 ## ACTIVE OPERATIONAL HAZARD (2026-07-12)
 - **Hourly ingestion has been dead since 2026-04-15**: a crashed run leaked `data/db/.hourly.lock`; run_hourly.bat logs SKIPPED and exits 0 on every run since. Last successful ingest 2026-04-07. The daily forecast task still runs on frozen data.

@@ -5,6 +5,15 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.6] - 2026-07-12
+
+### Added
+- Milestone M7 (unattended capture) on the roadmap: cloud-hosted hourly snapshot fetcher, private object storage with a 30-day lifecycle rule, and a local catch-up ingestion command, so capture no longer depends on the desktop being on (issues #41-#43)
+- M0 issue #40: wake-to-run task settings so the machine can sleep between scheduled runs
+
+### Changed
+- docs/ROADMAP.md and CLAUDE.md updated for milestone M7 and the extended issue range (#1-#43)
+
 ## [2.3.5] - 2026-07-12
 
 ### Added
