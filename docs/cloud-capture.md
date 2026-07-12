@@ -104,7 +104,7 @@ Steps for the repo owner; none of them belong in git:
 2. Add a lifecycle rule on the bucket: delete objects 30 days after creation.
 3. Create an R2 API token scoped to that bucket with read and write access.
 4. Add six repository secrets: `BLIZZARD_CLIENT_ID`, `BLIZZARD_CLIENT_SECRET`, `SNAPSHOT_S3_ENDPOINT` (the account R2 endpoint URL), `SNAPSHOT_S3_BUCKET`, `SNAPSHOT_S3_ACCESS_KEY_ID`, `SNAPSHOT_S3_SECRET_ACCESS_KEY`.
-5. Get the workflow onto `main` (scheduled workflows run only from the default branch): either the M0 merge (#10), or a small cherry-pick PR of the fetcher commit if capture should start before the merge.
+5. Done 2026-07-12: the workflow reached `main` with the #10 merge and was then disabled by hand so the schedule cannot fire before the secrets exist. After step 4, enable it: `gh workflow enable "Cloud snapshot capture"` (or the Actions tab).
 6. Trigger once by hand (Actions tab, Cloud snapshot capture, Run workflow) and confirm the object appears in the bucket at a plausible size (~2.2 MiB).
 7. Acceptance per #42: 48 hours of hourly objects with no gaps; one forced failure (for example, temporarily rename a secret) produces the failure email; lifecycle deletion verified on a short-TTL test prefix or a manually aged object.
 

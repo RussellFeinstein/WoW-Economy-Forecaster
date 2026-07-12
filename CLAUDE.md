@@ -25,6 +25,13 @@ BLIZZARD_CLIENT_ID=...
 BLIZZARD_CLIENT_SECRET=...
 ```
 
+## Branch Workflow
+- main is the integration branch; nothing is developed directly on it.
+- Every piece of work gets a short-lived type-prefixed branch cut from the latest main: feat/, fix/, improvement/, docs/, chore/, refactor/, test/ plus a short kebab slug, with the issue number when one exists (e.g. fix/44-ci-ruff-drift).
+- One issue or one concern per branch. Merge to main with a merge commit, push, then the branch is frozen: retained forever, never reused.
+- Scope check before every commit: if the work does not match the current branch's type and slug, stop and cut the right branch from main. A branch whose scoped work is delivered is frozen even if no PR was ever opened for it.
+- No umbrella or long-lived topic branches. feature/portfolio-showcase (v1.9.0-v2.4.1) was the last; merged and frozen 2026-07-12 (issue #10).
+
 ## Key Files
 - [wow_forecaster/taxonomy/archetype_taxonomy.py](wow_forecaster/taxonomy/archetype_taxonomy.py) — ArchetypeTag, ArchetypeCategory, CATEGORY_TAG_MAP
 - [wow_forecaster/taxonomy/event_taxonomy.py](wow_forecaster/taxonomy/event_taxonomy.py) — EventType (26), EventScope (4), EventSeverity (5)
@@ -162,11 +169,11 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 
 ### Cloud Capture (v2.4.0, M0.5)
 - [wow_forecaster/ingestion/cloud_fetch.py](wow_forecaster/ingestion/cloud_fetch.py) - hourly commodities capture on GitHub Actions (issue #42); reuses BlizzardClient + build_snapshot_path + save_snapshot so cloud objects carry the identical local envelope; gzip -9 (~59 MB raw -> ~2.2 MiB); run via `python -m wow_forecaster.ingestion.cloud_fetch`, env-only config (no dotenv)
-- [.github/workflows/cloud-snapshot.yml](.github/workflows/cloud-snapshot.yml) - cron :16 hourly; scheduled workflows run ONLY from the default branch (dormant until the workflow lands on main); installs `pip install --no-deps .` + httpx + boto3, so the cloud_fetch import chain must stay stdlib-light (httpx/boto3 lazy)
+- [.github/workflows/cloud-snapshot.yml](.github/workflows/cloud-snapshot.yml) - cron :16 hourly; on main since 2026-07-12 (#10 merge) but disabled by hand until secrets exist; installs `pip install --no-deps .` + httpx + boto3, so the cloud_fetch import chain must stay stdlib-light (httpx/boto3 lazy)
 - Bucket keys mirror local layout: `blizzard_api/YYYY/MM/DD/commodities_us_<ts>Z.json.gz`; private R2 bucket, 30-day lifecycle rule = ToS 2.r enforcement
 - Exit codes: 0 ok, 1 fetch/sanity/upload failure, 2 missing env (named, never values), 3 uploaded but trailing-24h gap guard tripped (<20 objects with history present; bootstrap passes)
 - Sanity floor: refuses snapshots <50K records (healthy ~314K); design record + activation checklist (secrets are added by hand, never by agents): [docs/cloud-capture.md](docs/cloud-capture.md)
-- Activation is manual and pending: bucket + lifecycle + 6 repo secrets + workflow on main; #43 sync-snapshots (catch-up ingestion) not yet implemented
+- Activation is manual and pending: bucket + lifecycle + 6 repo secrets, then `gh workflow enable "Cloud snapshot capture"` + one manual dispatch; #43 sync-snapshots (catch-up ingestion) not yet implemented
 
 ### Visualization & Portfolio (v2.2.0)
 - [wow_forecaster/viz/](wow_forecaster/viz/) — publication-quality chart layer (matplotlib/seaborn/Plotly)
