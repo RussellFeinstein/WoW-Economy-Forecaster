@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.9] - 2026-07-12
+
+### Added
+- docs/cloud-capture.md: cloud capture design record (issue #41). GitHub Actions hourly workflow plus a private Cloudflare R2 bucket with a 30-day lifecycle rule; sizing measured from a real snapshot (58.9 MB raw, 2.2 MiB at gzip level 9, 25.7x, ~1.5 GiB per rolling 30-day window); compliance mapping, failure-visibility plan, and the one-time activation checklist
+
 ## [2.3.8] - 2026-07-12
 
 ### Changed
