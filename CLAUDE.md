@@ -85,7 +85,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 
 ### Feature Engineering (v0.3.0 / v0.9.0)
 - [wow_forecaster/features/registry.py](wow_forecaster/features/registry.py) — 48 training / 45 inference cols
-- [wow_forecaster/features/daily_agg.py](wow_forecaster/features/daily_agg.py) — recursive CTE date spine; JOINs items.archetype_id (backward-compat with pre-v1.3.4 rows + items with no archetype assignment)
+- [wow_forecaster/features/daily_agg.py](wow_forecaster/features/daily_agg.py) — Python-generated date spine over rollup fast path (recursive CTE replaced in v2.3.x); spine clamps to [data_min, data_max]; JOINs items.archetype_id (backward-compat with pre-v1.3.4 rows + items with no archetype assignment)
 - [wow_forecaster/features/dataset_builder.py](wow_forecaster/features/dataset_builder.py) — orchestrates all steps → training/inference Parquet + JSON manifest
 - build-datasets end_date default = date.today()+timedelta(days=1) (captures UTC-midnight observations)
 
@@ -172,6 +172,15 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - 3 Jupyter analysis notebooks in notebooks/ (EDA, Model Development, Backtest Evaluation)
 - GitHub Actions CI workflow (.github/workflows/ci.yml)
 
+## Roadmap
+Next-phase work (M0 restore/harden ops -> M1 model validation -> M2 PostgreSQL+dbt warehouse -> M3 Power BI/Tableau -> M4 paper-trading P&L + ranking A/B -> M5 event impact study -> M6 publish) is tracked in [docs/ROADMAP.md](docs/ROADMAP.md) and GitHub milestones M0-M6 (issues #1-#39, created 2026-07-12). Session protocol: pick the lowest open milestone, work its issues in order.
+
+## ACTIVE OPERATIONAL HAZARD (2026-07-12)
+- **Hourly ingestion has been dead since 2026-04-15**: a crashed run leaked `data/db/.hourly.lock`; run_hourly.bat logs SKIPPED and exits 0 on every run since. Last successful ingest 2026-04-07. The daily forecast task still runs on frozen data.
+- **Do NOT delete the lock file without following the runbook in issue #1.** The orchestrator auto-prunes on every run and would delete ALL raw + normalized rows older than 30 days (everything in the DB). Daily history survives only in daily_rollup_archetype/daily_rollup_item, which are incomplete (22 dates, 2026-02-24..2026-04-07; 2026-03-20..2026-04-06 missing). Back up and backfill rollups first.
+- Data gap 2026-04-15 -> restore date is unrecoverable (Blizzard API serves current snapshots only). After restore: drift detection blind ~30 days, item-level forecasts return after 14 fresh days.
+- Migrations end at 0008 (rollup tables); new tables start at 0009.
+
 ## What's NOT Implemented Yet
 - top_n_per_category V2 (Pareto-frontier, user-profile weighting, blocklist, A/B test support); cross-horizon dedup done in v0.9.1
 - Governance: cooldown enforcement not wired — preflight.py has check but orchestrator.py never passes last_call_at
@@ -182,4 +191,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-1251 tests passing (9 pre-existing failures: 8 in test_item_forecasts.py, 1 date-sensitive in test_pruner.py)
+1251 tests passing (9 pre-existing failures: 8 in test_item_forecasts.py, 1 date-sensitive in test_pruner.py; root causes identified and tracked as issues #7 and #8 in milestone M0)

@@ -5,6 +5,14 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.5] - 2026-07-12
+
+### Added
+- docs/ROADMAP.md: next-phase roadmap (M0 restore/harden operations through M6 publish) with dependency graph and risk register; work tracked as GitHub milestones M0-M6 with issues #1-#39
+
+### Changed
+- CLAUDE.md: documented the active ingestion outage (lock leaked 2026-04-15, ingestion dead since) and the lock-clearing hazard (orchestrator auto-prune would delete all rows older than 30 days; rollup tables are incomplete), corrected the date-spine description (Python-generated spine over rollup fast path, not a recursive CTE), and noted that migrations end at 0008
+
 ## [2.3.4] — 2026-04-07
 
 ### Added
