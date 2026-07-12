@@ -1,6 +1,6 @@
 # WoW Economy Forecaster
 
-[![CI](https://github.com/yourusername/WoW-Economy-Forecaster/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/WoW-Economy-Forecaster/actions/workflows/ci.yml)
+[![CI](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/actions/workflows/ci.yml/badge.svg)](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![Tests](https://img.shields.io/badge/tests-1%2C200%2B%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-personal%20research-orange)
