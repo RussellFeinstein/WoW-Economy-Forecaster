@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.3] - 2026-07-12
+
+### Fixed
+- README CI badge now points at the real repository instead of the yourusername placeholder, so it renders actual CI status (issue #45)
+
 ## [2.4.2] - 2026-07-12
 
 ### Changed
