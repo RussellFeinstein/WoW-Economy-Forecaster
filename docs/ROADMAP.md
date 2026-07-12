@@ -13,7 +13,7 @@ Two findings drove it, both from the 2026-07-12 state-of-project review:
 
 ### M0: Restore and harden operations (issues [#1](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/1)-[#12](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/12), [#40](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/40), [#44](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/44))
 
-Restore ingestion safely (the pruner would delete the surviving history if the lock were simply removed; see the runbook in #1), add age-based lock takeover, schedule `check-data-health` with visible alerting, gate the daily forecast on freshness, fix the 9 failing tests, let the machine sleep between runs with wake-to-run task settings (#40), and merge the long-lived `feature/portfolio-showcase` branch. Everything else depends on this.
+Restore ingestion safely (the pruner would delete the surviving history if the lock were simply removed; see the runbook in #1), add age-based lock takeover, schedule `check-data-health` with visible alerting, gate the daily forecast on freshness, fix the failing tests and the CI lint drift (#44), and let the machine sleep between runs with wake-to-run task settings (#40). Everything else depends on this. The long-lived `feature/portfolio-showcase` branch was merged and frozen 2026-07-12 (#10); development now uses short-lived type-prefixed branches per issue (see Branch Workflow in CLAUDE.md).
 
 ### M0.5: Unattended capture (issues [#41](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/41)-[#43](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/43))
 
@@ -51,7 +51,7 @@ Most urgent first. Milestone numbers match this sequence; within milestones, fol
 2. **Green CI (M0).** #44 first: CI currently fails at the ruff step before tests run (`ruff>=0.4` floats to releases with rules the code predates), so nothing else is visible. Then #7 and #8, so the hardening changes that follow are validated by a trustworthy suite.
 3. **Harden before restoring (M0).** #3 stale-lock takeover, #12 daily freshness gate, #4 scheduled health check, #5 lock-age and retention checks, #6 commit setup_tasks.bat and register tasks, #40 wake timers. All of it lands before the lock is touched, so the restored system is born hardened.
 4. **Restore (M0, then M0.5).** #1, the runbook, in its documented order. Then #43 catch-up ingestion drains the cloud backlog into the DB; capture is now desktop-independent end to end.
-5. **Close out M0.** #11 gap verification (passive, over the following days), #2 postmortem, #9 gitignore, #10 merge to main.
+5. **Close out M0.** #11 gap verification (passive, over the following days), #2 postmortem, #9 gitignore, #45 README badge. (#10, the merge to main, was pulled forward and done on 2026-07-12 when the umbrella-branch model was retired.)
 6. **Prove the forecasts (M1).** #13 realization ledger first (roughly 305K matured forecasts become scoreable the day it lands), then #14, #15, #16, #17, #18, #19.
 7. **Prove the gold (M2).** #29 simulator, #32 ScoringPolicy extraction, then start #33 so the live A/B clock runs in the background, then #30 backfill P&L and #31 baselines.
 8. **Warehouse (M3).** #20-#25 in order, while the A/B matures.

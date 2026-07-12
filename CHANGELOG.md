@@ -5,6 +5,12 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.2] - 2026-07-12
+
+### Changed
+- Development model: work now lands on short-lived type-prefixed branches (feat/, fix/, docs/, chore/) cut from main and merged per issue, recorded as a Branch Workflow section in CLAUDE.md; the long-lived feature/portfolio-showcase branch was merged to main (issue #10) and frozen
+- Cloud capture activation shortened: the workflow is on main but disabled by hand, so the remaining steps are the bucket, the six secrets, gh workflow enable, and one manual dispatch (README, docs/cloud-capture.md, CLAUDE.md updated to match)
+
 ## [2.4.1] - 2026-07-12
 
 ### Added

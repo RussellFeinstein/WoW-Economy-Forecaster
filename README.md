@@ -410,9 +410,9 @@ One-time setup (repository owner):
 2. Add repository secrets: `BLIZZARD_CLIENT_ID`, `BLIZZARD_CLIENT_SECRET`,
    `SNAPSHOT_S3_ENDPOINT`, `SNAPSHOT_S3_BUCKET`, `SNAPSHOT_S3_ACCESS_KEY_ID`,
    `SNAPSHOT_S3_SECRET_ACCESS_KEY`.
-3. The schedule fires only from the default branch. Trigger the first run by hand
-   (Actions tab -> Cloud snapshot capture -> Run workflow) and confirm a ~2.2 MiB
-   object lands in the bucket.
+3. Enable the workflow, which stays disabled until the secrets exist
+   (`gh workflow enable "Cloud snapshot capture"` or the Actions tab), trigger the
+   first run by hand (Run workflow), and confirm a ~2.2 MiB object lands in the bucket.
 
 A failed run emails the repository owner; a healthy run also verifies the trailing
 24 hours of objects and fails loudly if hours are missing. Local catch-up ingestion
