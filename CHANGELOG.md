@@ -5,6 +5,12 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.8] - 2026-07-12
+
+### Changed
+- Milestones renumbered to match the decisive work order: paper trading P&L and ranking A/B is now M2 (was M4), the PostgreSQL + dbt warehouse is M3 (was M2), and BI dashboards are M4 (was M3). The live A/B test needs weeks of data to mature, so its clock starts right after model validation instead of waiting behind infrastructure work, and the make-gold answer exists before dashboards are built to showcase it
+- docs/ROADMAP.md: added a Work order section with the issue-level sequence, most urgent first (stop data loss, green CI, harden, restore, validate, then build outward)
+
 ## [2.3.7] - 2026-07-12
 
 ### Changed
