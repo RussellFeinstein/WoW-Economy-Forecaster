@@ -118,23 +118,43 @@ def load_historical_prices(
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
+
+        # Try rollup table first (fast path)
         cur = conn.execute(
             """
-            SELECT date(observed_at) AS obs_date,
-                   AVG(price_gold)   AS avg_price_gold
-            FROM   market_observations_normalized n
-            JOIN   items i ON n.item_id = i.item_id
-            WHERE  i.archetype_id  = ?
-              AND  n.realm_slug    = ?
-              AND  n.is_outlier    = 0
-              AND  date(observed_at) >= date('now', ? || ' days')
-            GROUP  BY obs_date
+            SELECT obs_date,
+                   CASE WHEN price_obs_count > 0
+                        THEN price_sum / price_obs_count END AS avg_price_gold
+            FROM   daily_rollup_archetype
+            WHERE  archetype_id = ?
+              AND  realm_slug   = ?
+              AND  obs_date     >= date('now', ? || ' days')
             ORDER  BY obs_date
             """,
             (archetype_id, realm_slug, f"-{days}"),
         )
-        for row in cur.fetchall():
-            rows.append({"date": row["obs_date"], "avg_price_gold": row["avg_price_gold"]})
+        rows = [{"date": r["obs_date"], "avg_price_gold": r["avg_price_gold"]}
+                for r in cur.fetchall()]
+
+        # Fallback to legacy query if rollup is empty
+        if not rows:
+            cur = conn.execute(
+                """
+                SELECT date(observed_at) AS obs_date,
+                       AVG(price_gold)   AS avg_price_gold
+                FROM   market_observations_normalized n
+                JOIN   items i ON n.item_id = i.item_id
+                WHERE  i.archetype_id  = ?
+                  AND  n.realm_slug    = ?
+                  AND  n.is_outlier    = 0
+                  AND  date(observed_at) >= date('now', ? || ' days')
+                GROUP  BY obs_date
+                ORDER  BY obs_date
+                """,
+                (archetype_id, realm_slug, f"-{days}"),
+            )
+            rows = [{"date": r["obs_date"], "avg_price_gold": r["avg_price_gold"]}
+                    for r in cur.fetchall()]
         conn.close()
     except Exception:
         pass

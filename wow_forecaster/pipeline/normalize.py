@@ -55,7 +55,11 @@ class NormalizeStage(PipelineStage):
         total_normalized = 0
         total_processed  = 0
 
-        with get_connection(self.db_path) as conn:
+        with get_connection(
+            self.db_path,
+            wal_mode=self.config.database.wal_mode,
+            busy_timeout_ms=self.config.database.busy_timeout_ms,
+        ) as conn:
             # Count pending rows upfront for X/Y progress reporting.
             total_pending = conn.execute(
                 "SELECT COUNT(*) FROM market_observations_raw WHERE is_processed = 0;"

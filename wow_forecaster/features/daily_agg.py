@@ -85,7 +85,45 @@ class DailyAggRow:
     is_volume_proxy: bool
 
 
-# ── SQL ────────────────────────────────────────────────────────────────────────
+# ── SQL — rollup-based (fast path) ────────────────────────────────────────────
+
+_ROLLUP_BOUNDS_SQL = """
+SELECT MIN(obs_date) AS min_d, MAX(obs_date) AS max_d
+FROM   daily_rollup_archetype
+WHERE  realm_slug = ?
+"""
+
+_ROLLUP_ARCHETYPES_SQL = """
+SELECT DISTINCT archetype_id
+FROM   daily_rollup_archetype
+WHERE  realm_slug = ?
+"""
+
+# Read pre-aggregated daily data.  Derives price_mean / market_value_mean from
+# additive components stored in the rollup.
+_ROLLUP_DAILY_SQL = """
+SELECT
+    archetype_id,
+    obs_date,
+    CASE WHEN price_obs_count > 0
+         THEN price_sum / price_obs_count END                      AS price_mean,
+    price_min,
+    price_max,
+    CASE WHEN market_value_count > 0
+         THEN market_value_sum / market_value_count END            AS market_value_mean,
+    CASE WHEN historical_value_count > 0
+         THEN historical_value_sum / historical_value_count END    AS historical_value_mean,
+    obs_count,
+    quantity_sum,
+    auctions_sum,
+    is_volume_proxy
+FROM daily_rollup_archetype
+WHERE realm_slug = ?
+  AND obs_date BETWEEN ? AND ?
+ORDER BY archetype_id, obs_date
+"""
+
+# ── SQL — legacy (fallback when rollup is empty) ─────────────────────────────
 
 _BOUNDS_SQL = """
 SELECT
@@ -98,9 +136,6 @@ WHERE i.archetype_id IS NOT NULL
   AND mon.realm_slug  = ?
 """
 
-# All archetypes that have ever had non-outlier observations in this realm.
-# No date filter — ensures spine rows are generated even for archetypes with
-# no data in the requested window.
 _ARCHETYPES_SQL = """
 SELECT DISTINCT i.archetype_id
 FROM market_observations_normalized mon
@@ -110,9 +145,6 @@ WHERE i.archetype_id IS NOT NULL
   AND mon.realm_slug  = ?
 """
 
-# Actual per-day aggregates within the requested window.  No spine or CROSS JOIN —
-# SQLite only touches rows that exist.  The Python caller fills in NULL spine rows.
-# Parameters: realm_slug, start_date, end_date
 _RAW_DAILY_SQL = """
 SELECT
     i.archetype_id,
@@ -134,6 +166,18 @@ WHERE i.archetype_id IS NOT NULL
   AND date(mon.observed_at) BETWEEN ? AND ?
 GROUP BY i.archetype_id, date(mon.observed_at)
 """
+
+
+def _rollup_has_data(conn: sqlite3.Connection, realm_slug: str) -> bool:
+    """Check if the rollup table has any rows for this realm."""
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM daily_rollup_archetype WHERE realm_slug = ? LIMIT 1",
+            (realm_slug,),
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
 
 
 def fetch_daily_agg(
@@ -165,8 +209,14 @@ def fetch_daily_agg(
     if start_date > end_date:
         return []
 
+    # Choose fast path (rollup) or legacy path based on data availability.
+    use_rollup = _rollup_has_data(conn, realm_slug)
+    bounds_sql = _ROLLUP_BOUNDS_SQL if use_rollup else _BOUNDS_SQL
+    archetypes_sql = _ROLLUP_ARCHETYPES_SQL if use_rollup else _ARCHETYPES_SQL
+    daily_sql = _ROLLUP_DAILY_SQL if use_rollup else _RAW_DAILY_SQL
+
     # Step 1: compute actual data bounds so the date spine is anchored to real data.
-    bounds_row = conn.execute(_BOUNDS_SQL, (realm_slug,)).fetchone()
+    bounds_row = conn.execute(bounds_sql, (realm_slug,)).fetchone()
     if bounds_row is None or bounds_row["min_d"] is None:
         return []
 
@@ -181,14 +231,14 @@ def fetch_daily_agg(
         return []
 
     # Step 2: fetch all archetypes active in this realm (no date filter).
-    arch_rows = conn.execute(_ARCHETYPES_SQL, (realm_slug,)).fetchall()
+    arch_rows = conn.execute(archetypes_sql, (realm_slug,)).fetchall()
     arch_ids  = sorted(int(r["archetype_id"]) for r in arch_rows)
     if not arch_ids:
         return []
 
     # Step 3: fetch actual aggregated observations within the window.
     raw_rows = conn.execute(
-        _RAW_DAILY_SQL,
+        daily_sql,
         (realm_slug, spine_start.isoformat(), spine_end.isoformat()),
     ).fetchall()
 

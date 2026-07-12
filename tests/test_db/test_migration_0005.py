@@ -28,8 +28,8 @@ class TestCraftingTablesInSchema:
         assert "recipe_reagents" in ALL_TABLE_NAMES
         assert "crafting_margin_snapshots" in ALL_TABLE_NAMES
 
-    def test_table_count_is_21(self):
-        assert len(ALL_TABLE_NAMES) == 21
+    def test_table_count_is_23(self):
+        assert len(ALL_TABLE_NAMES) == 23
 
     def test_recipes_schema(self, in_memory_db):
         cols = {

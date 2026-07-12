@@ -256,6 +256,28 @@ def migration_0007_add_ci_quality(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def migration_0008_add_rollup_tables(conn: sqlite3.Connection) -> None:
+    """Add daily_rollup_archetype and daily_rollup_item pre-aggregation tables."""
+    from wow_forecaster.db.schema import (
+        _DDL_DAILY_ROLLUP_ARCHETYPE,
+        _DDL_DAILY_ROLLUP_ARCHETYPE_INDEXES,
+        _DDL_DAILY_ROLLUP_ITEM,
+        _DDL_DAILY_ROLLUP_ITEM_INDEXES,
+    )
+
+    for ddl in (
+        _DDL_DAILY_ROLLUP_ARCHETYPE,
+        _DDL_DAILY_ROLLUP_ARCHETYPE_INDEXES,
+        _DDL_DAILY_ROLLUP_ITEM,
+        _DDL_DAILY_ROLLUP_ITEM_INDEXES,
+    ):
+        for statement in ddl.strip().split(";"):
+            stmt = statement.strip()
+            if stmt:
+                conn.execute(stmt)
+    conn.commit()
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 # Add new migrations here. They will run once, in order.
 
@@ -287,6 +309,10 @@ MIGRATIONS: dict[str, tuple[MigrationFn, str]] = {
     "0007_forecast_ci_quality": (
         migration_0007_add_ci_quality,
         "Add ci_quality column to forecast_outputs",
+    ),
+    "0008_rollup_tables": (
+        migration_0008_add_rollup_tables,
+        "Add daily_rollup_archetype and daily_rollup_item tables",
     ),
 }
 

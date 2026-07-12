@@ -193,6 +193,28 @@ class HourlyOrchestrator:
         if not norm_ok and norm_err:
             result.errors.append(f"NormalizeStage: {norm_err}")
 
+        # ── Step 3.5: Rollup update (non-fatal) ─────────────────────────────
+        try:
+            from datetime import date as _date
+
+            from wow_forecaster.db.connection import get_connection
+            from wow_forecaster.db.rollup import upsert_rollups_for_date
+
+            today_str = _date.today().isoformat()
+            with get_connection(
+                self.db_path,
+                wal_mode=self.config.database.wal_mode,
+                busy_timeout_ms=self.config.database.busy_timeout_ms,
+            ) as conn:
+                for realm in realms:
+                    arch_n, item_n = upsert_rollups_for_date(conn, realm, today_str)
+                    logger.info(
+                        "Rollup updated for realm=%s date=%s: arch=%d item=%d",
+                        realm, today_str, arch_n, item_n,
+                    )
+        except Exception as exc:
+            logger.warning("Rollup step failed (non-fatal): %s", exc, exc_info=True)
+
         # ── Step 4: Drift check + adaptive policy per realm ───────────────────
         if check_drift:
             logger.info("[3/4] Drift check + adaptive policy ...")
@@ -217,6 +239,30 @@ class HourlyOrchestrator:
         # ── Step 5: Retention prune (API ToS §2.r) ───────────────────────────
         logger.info("[4/5] Retention prune (raw data > %d days) ...", self.config.retention.raw_snapshot_days)
         self._run_prune()
+
+        # ── Step 5.5: WAL checkpoint (keep WAL file bounded) ────────────────
+        try:
+            from wow_forecaster.db.connection import get_connection
+
+            with get_connection(
+                self.db_path,
+                wal_mode=self.config.database.wal_mode,
+                busy_timeout_ms=self.config.database.busy_timeout_ms,
+            ) as conn:
+                wal_result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE);").fetchone()
+                busy, log_pages, checkpointed = wal_result
+                if busy:
+                    logger.warning(
+                        "WAL checkpoint incomplete (busy): log=%d checkpointed=%d",
+                        log_pages, checkpointed,
+                    )
+                else:
+                    logger.info(
+                        "WAL checkpoint complete: log=%d checkpointed=%d",
+                        log_pages, checkpointed,
+                    )
+        except Exception as exc:
+            logger.warning("WAL checkpoint failed (non-fatal): %s", exc)
 
         # ── Step 6: Write monitoring outputs ──────────────────────────────────
         logger.info("[5/5] Writing monitoring outputs ...")

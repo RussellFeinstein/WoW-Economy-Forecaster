@@ -1,8 +1,40 @@
 # WoW Economy Forecaster
 
-A **local-first research system** for forecasting World of Warcraft auction house economy behavior.
+[![CI](https://github.com/yourusername/WoW-Economy-Forecaster/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/WoW-Economy-Forecaster/actions/workflows/ci.yml)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+![Tests](https://img.shields.io/badge/tests-1%2C200%2B%20passing-brightgreen)
+![License](https://img.shields.io/badge/license-personal%20research-orange)
+
+A **local-first ML forecasting system** for World of Warcraft auction house economy research.
 
 Uses historical data from **The War Within (TWW)** to learn economy patterns, then applies category/archetype-based transfer learning to generate price, volatility, and sale-velocity forecasts for **Midnight** as it launches and matures.
+
+---
+
+## Key Technical Highlights
+
+- **Archetype-based transfer learning** — economic behavior archetypes (not item IDs) power cross-expansion forecasting, enabling Day 1 predictions for never-seen items
+- **Walk-forward backtesting** with leakage-free event handling — `WoWEvent.is_known_at()` prevents look-ahead bias
+- **5-component recommendation scoring** — opportunity, liquidity, volatility, event_boost, uncertainty with principled thresholds
+- **Adaptive confidence intervals** — drift detection widens CIs when market conditions shift; cold-start blending anchors predictions to source-expansion prices
+- **Production-grade pipeline** — 36 CLI commands, 21 SQLite tables, 1,200+ tests, hourly automation
+
+## Architecture
+
+```mermaid
+graph LR
+    A[Blizzard API] -->|OAuth2| B[Ingest + Normalize]
+    B --> C[Feature Engineering<br/>48 features]
+    C --> D[LightGBM Training<br/>1d / 7d / 28d]
+    D --> E[Forecast + CI]
+    E --> F[Recommendation<br/>Scoring]
+    F --> G[Streamlit Dashboard<br/>8 tabs]
+    F --> H[CLI Reports]
+    F --> I[Power BI / Tableau<br/>Star Schema Export]
+    B --> J[Drift Detection]
+    J -->|Widens CI| E
+    F --> K[Portfolio Charts<br/>matplotlib + Plotly]
+```
 
 ---
 
@@ -24,6 +56,8 @@ Uses historical data from **The War Within (TWW)** to learn economy patterns, th
 | v1.0.0 — Automation | Scheduler daemon, Windows Task Scheduler integration | Complete |
 | v1.1.0 — Normalization | Rolling z-score normalization with cold-start fallback | Complete |
 | v1.5.0 — Crafting Advisor | Recipe seeder, margin compression/expansion, 6-window temporal analysis | Complete |
+| v2.0.0 — Execution Layer | TSM export, check-data-health, hourly exit codes | Complete |
+| v2.2.0 — Portfolio Showcase | Visualization layer, BI exports, Jupyter notebooks, CI pipeline | Complete |
 
 ---
 
@@ -37,7 +71,7 @@ wow_forecaster/
 ├── pipeline/        # 7 stages: ingest, normalize, feature_build, train,
 │                    #           forecast, recommend, orchestrator (backtest separate)
 ├── ingestion/       # Blizzard live client, snapshot writer, item bootstrapper,
-│                    # auctionator importer (historical backfill)
+│                    # auctionator importer (backfill), cloud fetcher (GitHub Actions)
 ├── features/        # Daily agg, lag/rolling, event features, archetype features,
 │                    # dataset builder → 48-col training / 45-col inference Parquet
 ├── backtest/        # Walk-forward splits, baseline models, metrics, reporter
@@ -47,10 +81,14 @@ wow_forecaster/
 │                    # crafting_advisor: 6-window margin compression/expansion
 ├── monitoring/      # Drift detection, adaptive policy, health, provenance, reporter
 ├── reporting/       # Reader (file discovery + freshness), formatters (ASCII tables),
-│                    # export (flat CSV/JSON for Power BI)
+│                    # export (flat CSV/JSON for Power BI), BI star-schema export
 ├── governance/      # Source policy registry, preflight checks, freshness validation
+├── viz/             # Publication-quality charts (matplotlib/seaborn/Plotly)
+│   ├── theme.py     # WoW dark palette, apply_wow_theme(), Plotly template
+│   ├── data_queries.py  # SQL/file -> pandas DataFrame fetchers
+│   └── charts/      # 6 chart modules: forecast, backtest, feature, recommendation, drift, transfer
 ├── scheduler.py     # SchedulerDaemon (stdlib only) — hourly + daily automation
-└── cli.py           # Typer CLI: 34 commands
+└── cli.py           # Typer CLI: 36 commands
 
 config/
 ├── default.toml             # Static defaults (committed)
@@ -73,9 +111,14 @@ data/
 └── logs/                     # forecaster.log
 
 dashboard/                    # Optional Streamlit analysis UI
-├── app.py                    # 5-tab dashboard (Top Picks/Forecasts/Volatility/Health/Status)
-├── data_loader.py            # Cached file loaders + DB queries
-└── requirements.txt          # streamlit + pandas
+├── app.py                    # 8-tab dashboard (Top Picks/Forecasts/Volatility/Health/
+│                             #   Status/Backtest/Feature Insights/Crafting)
+└── data_loader.py            # Cached file loaders + DB queries
+
+notebooks/                    # Jupyter analysis notebooks (portfolio narratives)
+├── 01_eda_and_data_exploration.ipynb
+├── 02_model_development.ipynb
+└── 03_backtest_and_evaluation.ipynb
 
 scripts/
 └── setup_tasks.bat           # One-shot Windows Task Scheduler registration
@@ -347,8 +390,33 @@ wow-forecaster export-tsm              [--realm SLUG] [--horizon 1d|7d|28d] \
 wow-forecaster start-scheduler     [--config PATH]
 
 # Register Windows Task Scheduler tasks for unattended operation
+# Tasks run silently (no visible cmd.exe window) via run_silent.vbs
 scripts/setup_tasks.bat
 ```
+
+### Cloud Snapshot Capture (GitHub Actions)
+
+Hourly capture that does not depend on the desktop being on. A scheduled workflow
+([.github/workflows/cloud-snapshot.yml](.github/workflows/cloud-snapshot.yml)) fetches
+the commodities snapshot, gzips it (~59 MB raw -> ~2.2 MiB), and uploads it to a private
+S3-compatible bucket (Cloudflare R2) whose 30-day lifecycle rule enforces the Blizzard
+API ToS deletion window. Design record, measured sizing, and failure modes:
+[docs/cloud-capture.md](docs/cloud-capture.md).
+
+One-time setup (repository owner):
+
+1. Create a private R2 bucket with a 30-day delete lifecycle rule, and an API token
+   scoped to that bucket with read and write access.
+2. Add repository secrets: `BLIZZARD_CLIENT_ID`, `BLIZZARD_CLIENT_SECRET`,
+   `SNAPSHOT_S3_ENDPOINT`, `SNAPSHOT_S3_BUCKET`, `SNAPSHOT_S3_ACCESS_KEY_ID`,
+   `SNAPSHOT_S3_SECRET_ACCESS_KEY`.
+3. The schedule fires only from the default branch. Trigger the first run by hand
+   (Actions tab -> Cloud snapshot capture -> Run workflow) and confirm a ~2.2 MiB
+   object lands in the bucket.
+
+A failed run emails the repository owner; a healthy run also verifies the trailing
+24 hours of objects and fails loudly if hours are missing. Local catch-up ingestion
+of the cloud backlog is tracked as issue #43 (`sync-snapshots`).
 
 ---
 
@@ -427,7 +495,7 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 1111 tests
+# All 1280 tests
 pytest
 
 # With coverage
@@ -608,6 +676,12 @@ BLIZZARD_CLIENT_SECRET=...   # required for live Blizzard AH data
 ```
 
 Without Blizzard credentials the pipeline cannot ingest live data.
+
+---
+
+## Related Projects
+
+- **[alt-army-guide](https://github.com/RussellFeinstein/alt-army-guide)** — Step-by-step guide for setting up Alchemy + Enchanting alts to execute on this system's recommendations. Craft targets (Light's Potential, Enchant Chest - Mark of the Worldsoul) were selected using this forecaster's margin analysis.
 
 ---
 

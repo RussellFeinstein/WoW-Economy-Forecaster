@@ -26,6 +26,8 @@ Table creation order respects foreign key dependencies:
   19. recipes                       (no FKs — output_item_id intentionally loose)
   20. recipe_reagents               (→ recipes)
   21. crafting_margin_snapshots     (→ recipes)
+  22. daily_rollup_archetype        (no FKs — pre-aggregated from normalized obs)
+  23. daily_rollup_item             (no FKs — pre-aggregated from normalized obs)
 """
 
 from __future__ import annotations
@@ -463,6 +465,78 @@ CREATE INDEX IF NOT EXISTS idx_margin_recipe_date ON crafting_margin_snapshots(r
 CREATE INDEX IF NOT EXISTS idx_margin_realm_date  ON crafting_margin_snapshots(realm_slug, obs_date);
 """
 
+_DDL_DAILY_ROLLUP_ARCHETYPE = """
+CREATE TABLE IF NOT EXISTS daily_rollup_archetype (
+    archetype_id           INTEGER NOT NULL,
+    realm_slug             TEXT    NOT NULL,
+    obs_date               TEXT    NOT NULL,
+
+    obs_count              INTEGER NOT NULL DEFAULT 0,
+    price_sum_all          REAL    NOT NULL DEFAULT 0.0,
+    price_sum_sq_all       REAL    NOT NULL DEFAULT 0.0,
+
+    price_obs_count        INTEGER NOT NULL DEFAULT 0,
+    price_sum              REAL    NOT NULL DEFAULT 0.0,
+    price_sum_sq           REAL    NOT NULL DEFAULT 0.0,
+    price_min              REAL,
+    price_max              REAL,
+
+    qty_weighted_price_sum REAL    NOT NULL DEFAULT 0.0,
+    qty_weight_sum         REAL    NOT NULL DEFAULT 0.0,
+
+    market_value_sum       REAL,
+    market_value_count     INTEGER NOT NULL DEFAULT 0,
+    historical_value_sum   REAL,
+    historical_value_count INTEGER NOT NULL DEFAULT 0,
+
+    quantity_sum           REAL,
+    auctions_sum           REAL,
+    is_volume_proxy        INTEGER NOT NULL DEFAULT 1,
+
+    updated_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(archetype_id, realm_slug, obs_date)
+);
+"""
+
+_DDL_DAILY_ROLLUP_ARCHETYPE_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_rollup_arch_realm_date
+    ON daily_rollup_archetype(realm_slug, obs_date);
+"""
+
+_DDL_DAILY_ROLLUP_ITEM = """
+CREATE TABLE IF NOT EXISTS daily_rollup_item (
+    item_id                    INTEGER NOT NULL,
+    realm_slug                 TEXT    NOT NULL,
+    obs_date                   TEXT    NOT NULL,
+
+    obs_count                  INTEGER NOT NULL DEFAULT 0,
+    price_sum                  REAL    NOT NULL DEFAULT 0.0,
+    price_sum_sq               REAL    NOT NULL DEFAULT 0.0,
+    price_min                  REAL,
+    price_max                  REAL,
+
+    price_obs_count_pos        INTEGER NOT NULL DEFAULT 0,
+    price_sum_pos              REAL    NOT NULL DEFAULT 0.0,
+
+    qty_weighted_price_sum     REAL    NOT NULL DEFAULT 0.0,
+    qty_weight_sum             REAL    NOT NULL DEFAULT 0.0,
+
+    qty_weighted_price_sum_pos REAL    NOT NULL DEFAULT 0.0,
+    qty_weight_sum_pos         REAL    NOT NULL DEFAULT 0.0,
+
+    quantity_sum               REAL,
+    auctions_sum               REAL,
+
+    updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(item_id, realm_slug, obs_date)
+);
+"""
+
+_DDL_DAILY_ROLLUP_ITEM_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_rollup_item_realm_date
+    ON daily_rollup_item(realm_slug, obs_date);
+"""
+
 # ── Ordered list of all DDL to apply ──────────────────────────────────────────
 
 _ALL_DDL: list[str] = [
@@ -499,6 +573,10 @@ _ALL_DDL: list[str] = [
     _DDL_RECIPE_REAGENTS_INDEXES,
     _DDL_CRAFTING_MARGIN_SNAPSHOTS,
     _DDL_CRAFTING_MARGIN_SNAPSHOTS_INDEXES,
+    _DDL_DAILY_ROLLUP_ARCHETYPE,
+    _DDL_DAILY_ROLLUP_ARCHETYPE_INDEXES,
+    _DDL_DAILY_ROLLUP_ITEM,
+    _DDL_DAILY_ROLLUP_ITEM_INDEXES,
 ]
 
 # Table names for introspection / tests
@@ -524,6 +602,8 @@ ALL_TABLE_NAMES = [
     "recipes",
     "recipe_reagents",
     "crafting_margin_snapshots",
+    "daily_rollup_archetype",
+    "daily_rollup_item",
 ]
 
 
@@ -545,7 +625,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
                 conn.execute(statement)
 
     conn.commit()
-    logger.info("Schema applied: %d tables, indexes created/verified.", len(ALL_TABLE_NAMES))  # 21
+    logger.info("Schema applied: %d tables, indexes created/verified.", len(ALL_TABLE_NAMES))  # 23
 
 
 def _split_ddl(ddl: str) -> list[str]:

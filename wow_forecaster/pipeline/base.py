@@ -158,7 +158,11 @@ class PipelineStage(ABC):
             from wow_forecaster.db.connection import get_connection
             from wow_forecaster.db.repositories.forecast_repo import RunMetadataRepository
 
-            with get_connection(self.db_path) as conn:
+            with get_connection(
+                self.db_path,
+                wal_mode=self.config.database.wal_mode,
+                busy_timeout_ms=self.config.database.busy_timeout_ms,
+            ) as conn:
                 repo = RunMetadataRepository(conn)
                 if run.run_id is None:
                     run.run_id = repo.insert_run(run)

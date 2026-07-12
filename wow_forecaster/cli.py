@@ -3717,6 +3717,68 @@ def prune_snapshots(
         typer.echo("[OK] Prune complete.")
 
 
+@app.command("checkpoint-db")
+def checkpoint_db_cmd(
+    mode: str = typer.Option(
+        "TRUNCATE",
+        "--mode",
+        help="Checkpoint mode: PASSIVE, FULL, RESTART, or TRUNCATE.",
+    ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Force a WAL checkpoint to merge the write-ahead log into the main database.
+
+    Use this when the WAL file grows large (visible as a .db-wal file next
+    to the database).  TRUNCATE mode (default) resets the WAL to zero bytes
+    on success.  PASSIVE never blocks but may leave pages un-checkpointed.
+    """
+    import os
+
+    from wow_forecaster.db.connection import get_connection
+
+    config = _load_config_or_exit(config_path)
+    db_path = config.database.db_path
+    wal_path = db_path + "-wal"
+
+    if os.path.exists(wal_path):
+        wal_mb = os.path.getsize(wal_path) / 1024 / 1024
+        typer.echo(f"  WAL size before: {wal_mb:.1f} MB")
+    else:
+        typer.echo("  WAL file not present (nothing to checkpoint).")
+        return
+
+    valid_modes = ("PASSIVE", "FULL", "RESTART", "TRUNCATE")
+    mode_upper = mode.upper()
+    if mode_upper not in valid_modes:
+        typer.echo(f"  [ERROR] Invalid mode '{mode}'. Choose from: {', '.join(valid_modes)}")
+        raise typer.Exit(code=1)
+
+    with get_connection(
+        db_path,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        result = conn.execute(f"PRAGMA wal_checkpoint({mode_upper});").fetchone()
+        busy, log_pages, checkpointed = result
+
+    if os.path.exists(wal_path):
+        wal_mb_after = os.path.getsize(wal_path) / 1024 / 1024
+        typer.echo(f"  WAL size after:  {wal_mb_after:.1f} MB")
+    else:
+        typer.echo("  WAL size after:  0.0 MB")
+
+    if busy:
+        typer.echo(f"  [WARN] Checkpoint incomplete (busy). log={log_pages} checkpointed={checkpointed}")
+        typer.echo("  Another process may be using the database. Retry when idle.")
+        raise typer.Exit(code=1)
+    else:
+        typer.echo(f"  [OK] Checkpoint complete. log={log_pages} checkpointed={checkpointed}")
+
+
 @app.command("export-tsm")
 def export_tsm_cmd(
     realm: Optional[str] = typer.Option(
@@ -3809,6 +3871,378 @@ def export_tsm_cmd(
         typer.echo(f"  Written to: {p}")
 
     typer.echo("[OK] export-tsm complete.")
+
+
+@app.command("generate-charts")
+def generate_charts(
+    realm: Optional[str] = typer.Option(
+        None, "--realm",
+        help="Realm slug (e.g. 'us'). Uses first config default if omitted.",
+    ),
+    output_dir: str = typer.Option(
+        "data/outputs/charts", "--output-dir",
+        help="Directory to write chart images.",
+    ),
+    fmt: str = typer.Option(
+        "png", "--format",
+        help="Image format: png, svg, or both.",
+    ),
+    chart_type: str = typer.Option(
+        "all", "--chart-type",
+        help="Chart type to generate: all, forecast, backtest, features, "
+             "recommendations, drift, transfer.",
+    ),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path."),
+) -> None:
+    """Generate publication-quality portfolio charts from pipeline outputs.
+
+    Produces matplotlib charts saved to disk for use in README, notebooks,
+    presentations, and social media.
+
+    \b
+    Examples::
+
+        wow-forecaster generate-charts
+        wow-forecaster generate-charts --format both --chart-type forecast
+        wow-forecaster generate-charts --output-dir docs/images --format svg
+    """
+    config = _load_config_or_exit(config_path)
+    target_realm = realm or list(config.realms.defaults)[0]
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    formats = ("png", "svg") if fmt == "both" else (fmt,)
+    types_to_gen = (
+        ["forecast", "backtest", "features", "recommendations", "drift", "transfer"]
+        if chart_type == "all" else [chart_type]
+    )
+
+    from wow_forecaster.viz.utils import save_chart
+
+    db_path = str(config.database.db_path)
+    data_root = Path(config.data.processed_dir).parent
+    artifact_dir = str(data_root / "outputs" / "model_artifacts")
+    recs_dir = str(data_root / "outputs" / "recommendations")
+    monitoring_dir = str(data_root / "outputs" / "monitoring")
+    backtest_dir = str(Path(config.data.processed_dir) / "backtest")
+
+    generated = 0
+
+    # ── Forecast charts ──────────────────────────────────────────────────
+    if "forecast" in types_to_gen:
+        from wow_forecaster.viz.charts.forecast_chart import plot_forecast_timeline
+        from wow_forecaster.viz.data_queries import (
+            fetch_archetypes,
+            fetch_forecast_data,
+            fetch_historical_prices,
+        )
+
+        typer.echo(f"  Generating forecast charts for realm={target_realm}...")
+        df_fc = fetch_forecast_data(db_path, target_realm)
+        df_arch = fetch_archetypes(db_path)
+
+        if not df_fc.empty:
+            # One chart per archetype (top 5 by latest forecast)
+            arch_ids = df_fc["archetype_id"].dropna().unique()[:5]
+            for aid in arch_ids:
+                aid_int = int(aid)
+                name_row = df_arch[df_arch["archetype_id"] == aid_int]
+                name = name_row.iloc[0]["display_name"] if not name_row.empty else f"Archetype {aid_int}"
+                df_hist = fetch_historical_prices(db_path, target_realm, aid_int)
+                df_fc_arch = df_fc[df_fc["archetype_id"] == aid_int]
+                fig = plot_forecast_timeline(df_hist, df_fc_arch, archetype_name=name)
+                save_chart(fig, out / f"forecast_{aid_int}", formats=formats)
+                import matplotlib.pyplot as plt
+                plt.close(fig)
+                generated += 1
+        else:
+            typer.echo("    [SKIP] No forecast data found.")
+
+    # ── Backtest charts ──────────────────────────────────────────────────
+    if "backtest" in types_to_gen:
+        from wow_forecaster.viz.charts.backtest_chart import (
+            plot_actual_vs_predicted_scatter,
+            plot_directional_accuracy_heatmap,
+            plot_residual_distribution,
+            plot_walk_forward_mae,
+        )
+        from wow_forecaster.viz.data_queries import fetch_backtest_predictions
+
+        typer.echo(f"  Generating backtest charts...")
+        df_bt = fetch_backtest_predictions(backtest_dir, target_realm)
+
+        if not df_bt.empty:
+            for chart_fn, name in [
+                (plot_actual_vs_predicted_scatter, "backtest_scatter"),
+                (plot_residual_distribution, "backtest_residuals"),
+                (plot_directional_accuracy_heatmap, "backtest_directional"),
+                (plot_walk_forward_mae, "backtest_walk_forward"),
+            ]:
+                fig = chart_fn(df_bt)
+                save_chart(fig, out / name, formats=formats)
+                import matplotlib.pyplot as plt
+                plt.close(fig)
+                generated += 1
+        else:
+            typer.echo("    [SKIP] No backtest data found.")
+
+    # ── Feature charts ───────────────────────────────────────────────────
+    if "features" in types_to_gen:
+        from wow_forecaster.viz.charts.feature_chart import (
+            plot_feature_importance,
+            plot_importance_by_horizon,
+        )
+        from wow_forecaster.viz.data_queries import fetch_feature_importance
+
+        typer.echo(f"  Generating feature importance charts...")
+        df_fi = fetch_feature_importance(artifact_dir, target_realm)
+
+        if not df_fi.empty:
+            fig = plot_feature_importance(df_fi, top_n=15)
+            save_chart(fig, out / "feature_importance", formats=formats)
+            import matplotlib.pyplot as plt
+            plt.close(fig)
+            generated += 1
+
+            fig = plot_importance_by_horizon(df_fi)
+            save_chart(fig, out / "feature_importance_by_horizon", formats=formats)
+            plt.close(fig)
+            generated += 1
+        else:
+            typer.echo("    [SKIP] No model artifacts found.")
+
+    # ── Recommendation charts ────────────────────────────────────────────
+    if "recommendations" in types_to_gen:
+        from wow_forecaster.viz.charts.recommendation_chart import (
+            plot_action_distribution,
+            plot_roi_vs_uncertainty,
+            plot_score_tornado,
+        )
+        from wow_forecaster.viz.data_queries import fetch_recommendation_scores
+
+        typer.echo(f"  Generating recommendation charts...")
+        df_recs = fetch_recommendation_scores(recs_dir, target_realm)
+
+        if not df_recs.empty:
+            for chart_fn, name in [
+                (plot_score_tornado, "score_tornado"),
+                (plot_action_distribution, "action_distribution"),
+                (plot_roi_vs_uncertainty, "roi_vs_uncertainty"),
+            ]:
+                fig = chart_fn(df_recs)
+                save_chart(fig, out / name, formats=formats)
+                import matplotlib.pyplot as plt
+                plt.close(fig)
+                generated += 1
+        else:
+            typer.echo("    [SKIP] No recommendations found.")
+
+    # ── Drift charts ─────────────────────────────────────────────────────
+    if "drift" in types_to_gen:
+        from wow_forecaster.viz.charts.drift_chart import plot_drift_timeline
+        from wow_forecaster.viz.data_queries import fetch_drift_history
+
+        typer.echo(f"  Generating drift charts...")
+        df_drift = fetch_drift_history(monitoring_dir, target_realm)
+
+        if not df_drift.empty:
+            fig = plot_drift_timeline(df_drift)
+            save_chart(fig, out / "drift_timeline", formats=formats)
+            import matplotlib.pyplot as plt
+            plt.close(fig)
+            generated += 1
+        else:
+            typer.echo("    [SKIP] No drift history found.")
+
+    # ── Transfer / cold-start charts ─────────────────────────────────────
+    if "transfer" in types_to_gen:
+        from wow_forecaster.viz.charts.transfer_chart import (
+            plot_ci_width_by_category,
+            plot_cold_start_blend_diagram,
+        )
+        from wow_forecaster.viz.data_queries import fetch_forecast_data
+
+        typer.echo(f"  Generating transfer learning charts...")
+
+        # Always generate the blend diagram (conceptual, no data needed)
+        fig = plot_cold_start_blend_diagram()
+        save_chart(fig, out / "cold_start_blend", formats=formats)
+        import matplotlib.pyplot as plt
+        plt.close(fig)
+        generated += 1
+
+        df_fc = fetch_forecast_data(db_path, target_realm)
+        if not df_fc.empty:
+            fig = plot_ci_width_by_category(df_fc)
+            save_chart(fig, out / "ci_width_by_category", formats=formats)
+            plt.close(fig)
+            generated += 1
+
+    typer.echo(f"\n[OK] generate-charts complete. {generated} chart(s) saved to {out}/")
+
+
+@app.command("export-bi-bundle")
+def export_bi_bundle(
+    realm: Optional[str] = typer.Option(
+        None, "--realm",
+        help="Realm slug (e.g. 'us'). Uses first config default if omitted.",
+    ),
+    output_dir: str = typer.Option(
+        "data/exports/bi", "--output-dir",
+        help="Directory to write BI export files.",
+    ),
+    fmt: str = typer.Option(
+        "csv", "--format",
+        help="Export format: csv or parquet.",
+    ),
+    include_backtest: bool = typer.Option(
+        False, "--include-backtest",
+        help="Include fact_backtest table (can be large).",
+    ),
+    data_dict: bool = typer.Option(
+        True, "--data-dictionary/--no-data-dictionary",
+        help="Generate a data dictionary markdown file.",
+    ),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path."),
+) -> None:
+    """Export star-schema dimension + fact tables for Power BI / Tableau.
+
+    Generates CSV (or Parquet) files with proper FK relationships ready
+    for direct import into BI tools without transformation.
+
+    \b
+    Tables generated:
+      Dimensions: dim_archetypes, dim_events, dim_items, dim_dates
+      Facts:      fact_prices, fact_forecasts, fact_recommendations
+      Optional:   fact_backtest (with --include-backtest)
+
+    \b
+    Examples::
+
+        wow-forecaster export-bi-bundle
+        wow-forecaster export-bi-bundle --format parquet --include-backtest
+        wow-forecaster export-bi-bundle --output-dir reports/bi --realm us
+    """
+    from wow_forecaster.reporting.bi_export import (
+        export_star_schema,
+        generate_data_dictionary,
+    )
+
+    config = _load_config_or_exit(config_path)
+    target_realm = realm or list(config.realms.defaults)[0]
+
+    typer.echo(f"\n  BI Export -- realm={target_realm} format={fmt}")
+    typer.echo(f"  Output:   {output_dir}/")
+
+    written = export_star_schema(
+        db_path=str(config.database.db_path),
+        output_dir=output_dir,
+        realm=target_realm,
+        include_backtest=include_backtest,
+        fmt=fmt,
+    )
+
+    for name, path in written.items():
+        typer.echo(f"    {name}: {path}")
+
+    if data_dict:
+        dd_path = generate_data_dictionary(Path(output_dir) / "DATA_DICTIONARY.md")
+        typer.echo(f"    data_dictionary: {dd_path}")
+
+    typer.echo(f"\n[OK] export-bi-bundle complete. {len(written)} table(s) exported.")
+
+
+@app.command("backfill-rollups")
+def backfill_rollups_cmd(
+    realm: Optional[str] = typer.Option(
+        None, "--realm",
+        help="Realm slug (e.g. 'us'). Uses first config default if omitted.",
+    ),
+    batch_days: int = typer.Option(
+        7, "--batch-days",
+        help="Number of dates to process per commit batch.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Show date range and estimated work without writing.",
+    ),
+    db_path: Optional[str] = typer.Option(None, "--db-path", help="Override DB path."),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path."),
+) -> None:
+    """Backfill daily rollup tables from existing normalized observations.
+
+    One-time operation after migration 0008. Pre-aggregates all historical
+    data into daily_rollup_archetype and daily_rollup_item tables so that
+    build-datasets, drift detection, and chart generation read from the
+    rollup instead of scanning 110M+ raw rows.
+
+    \b
+    Examples::
+
+        wow-forecaster backfill-rollups
+        wow-forecaster backfill-rollups --batch-days 14
+        wow-forecaster backfill-rollups --dry-run
+    """
+    from wow_forecaster.db.connection import get_connection
+    from wow_forecaster.db.migrations import run_migrations
+    from wow_forecaster.db.rollup import backfill_rollups
+
+    config = _load_config_or_exit(config_path)
+    target_realm = realm or list(config.realms.defaults)[0]
+    target_db = db_path or config.database.db_path
+
+    typer.echo(f"\n  Backfill Rollups -- realm={target_realm}  db={target_db}")
+
+    with get_connection(
+        target_db,
+        wal_mode=config.database.wal_mode,
+        busy_timeout_ms=config.database.busy_timeout_ms,
+    ) as conn:
+        run_migrations(conn)
+
+        # Show date range
+        row = conn.execute(
+            """
+            SELECT date(MIN(observed_at)) AS min_d, date(MAX(observed_at)) AS max_d,
+                   COUNT(*) AS total_rows
+            FROM market_observations_normalized
+            WHERE realm_slug = ? AND is_outlier = 0
+            """,
+            (target_realm,),
+        ).fetchone()
+
+        if row is None or row[0] is None:
+            typer.echo(f"\n  [WARN] No normalized data for realm={target_realm}.")
+            return
+
+        min_d, max_d, total_rows = row[0], row[1], row[2]
+        from datetime import date as _date
+        n_days = (_date.fromisoformat(max_d) - _date.fromisoformat(min_d)).days + 1
+
+        typer.echo(f"  Date range: {min_d} -> {max_d} ({n_days} days)")
+        typer.echo(f"  Source rows: {total_rows:,}")
+        typer.echo(f"  Batch size:  {batch_days} days per commit")
+
+        if dry_run:
+            typer.echo("\n  [DRY RUN] No data written.")
+            return
+
+        typer.echo("\n  Starting backfill...")
+
+        def _progress(done: int, total: int) -> None:
+            pct = done / total * 100 if total else 0
+            typer.echo(f"    {done}/{total} dates ({pct:.0f}%)")
+
+        arch_total, item_total = backfill_rollups(
+            conn, target_realm,
+            batch_days=batch_days,
+            progress_callback=_progress,
+        )
+
+    typer.echo(
+        f"\n[OK] backfill-rollups complete."
+        f"  archetype rows: {arch_total:,}  |  item rows: {item_total:,}"
+    )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

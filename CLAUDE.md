@@ -32,7 +32,7 @@ BLIZZARD_CLIENT_SECRET=...
 - [wow_forecaster/config.py](wow_forecaster/config.py) — AppConfig via load_config()
 - [wow_forecaster/db/schema.py](wow_forecaster/db/schema.py) — 21 tables, apply_schema() idempotent
 - [wow_forecaster/pipeline/base.py](wow_forecaster/pipeline/base.py) — PipelineStage ABC
-- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (34 commands)
+- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (37 commands)
 - [config/default.toml](config/default.toml) — static config
 - [config/sources.toml](config/sources.toml) — 3 source policies
 - [config/events/tww_events.json](config/events/tww_events.json) — TWW seed events
@@ -46,6 +46,9 @@ BLIZZARD_CLIENT_SECRET=...
 - Archetype mappings require non-empty mapping_rationale (audit trail)
 - RawMarketObservation has NO obs_id field — query DB rows directly when obs_id needed
 - IngestStage pre-persists RunMetadata at start of _execute() to get run_id for FK use
+- IngestStage uses 3-phase connection pattern: (1) short read connection for FK guard, (2) no connection during HTTP fetch, (3) short write connection for all inserts — avoids holding DB lock during network I/O
+- All pipeline get_connection() calls pass config.database.wal_mode + busy_timeout_ms (default 30s)
+- run_hourly.bat uses lock file (data/db/.hourly.lock) to prevent overlapping scheduled runs
 - ForecastOutput frozen model — use object.__setattr__(fc, "forecast_id", fc_id) after DB insert
 - LightGBM v4+ requires numpy arrays — convert list[list[float]] via np.array(..., dtype=np.float64)
 - Windows terminal: avoid Unicode arrows in typer.echo() — use ASCII -> instead
@@ -82,7 +85,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 
 ### Feature Engineering (v0.3.0 / v0.9.0)
 - [wow_forecaster/features/registry.py](wow_forecaster/features/registry.py) — 48 training / 45 inference cols
-- [wow_forecaster/features/daily_agg.py](wow_forecaster/features/daily_agg.py) — recursive CTE date spine; JOINs items.archetype_id (backward-compat with pre-v1.3.4 rows + items with no archetype assignment)
+- [wow_forecaster/features/daily_agg.py](wow_forecaster/features/daily_agg.py) — Python-generated date spine over rollup fast path (recursive CTE replaced in v2.3.x); spine clamps to [data_min, data_max]; JOINs items.archetype_id (backward-compat with pre-v1.3.4 rows + items with no archetype assignment)
 - [wow_forecaster/features/dataset_builder.py](wow_forecaster/features/dataset_builder.py) — orchestrates all steps → training/inference Parquet + JSON manifest
 - build-datasets end_date default = date.today()+timedelta(days=1) (captures UTC-midnight observations)
 
@@ -157,6 +160,35 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - CLI: start-scheduler (foreground daemon)
 - [scripts/setup_tasks.bat](scripts/setup_tasks.bat) — one-shot Windows Task Scheduler registration
 
+### Cloud Capture (v2.4.0, M0.5)
+- [wow_forecaster/ingestion/cloud_fetch.py](wow_forecaster/ingestion/cloud_fetch.py) - hourly commodities capture on GitHub Actions (issue #42); reuses BlizzardClient + build_snapshot_path + save_snapshot so cloud objects carry the identical local envelope; gzip -9 (~59 MB raw -> ~2.2 MiB); run via `python -m wow_forecaster.ingestion.cloud_fetch`, env-only config (no dotenv)
+- [.github/workflows/cloud-snapshot.yml](.github/workflows/cloud-snapshot.yml) - cron :16 hourly; scheduled workflows run ONLY from the default branch (dormant until the workflow lands on main); installs `pip install --no-deps .` + httpx + boto3, so the cloud_fetch import chain must stay stdlib-light (httpx/boto3 lazy)
+- Bucket keys mirror local layout: `blizzard_api/YYYY/MM/DD/commodities_us_<ts>Z.json.gz`; private R2 bucket, 30-day lifecycle rule = ToS 2.r enforcement
+- Exit codes: 0 ok, 1 fetch/sanity/upload failure, 2 missing env (named, never values), 3 uploaded but trailing-24h gap guard tripped (<20 objects with history present; bootstrap passes)
+- Sanity floor: refuses snapshots <50K records (healthy ~314K); design record + activation checklist (secrets are added by hand, never by agents): [docs/cloud-capture.md](docs/cloud-capture.md)
+- Activation is manual and pending: bucket + lifecycle + 6 repo secrets + workflow on main; #43 sync-snapshots (catch-up ingestion) not yet implemented
+
+### Visualization & Portfolio (v2.2.0)
+- [wow_forecaster/viz/](wow_forecaster/viz/) — publication-quality chart layer (matplotlib/seaborn/Plotly)
+- [wow_forecaster/viz/theme.py](wow_forecaster/viz/theme.py) — WoW dark palette, apply_wow_theme(), get_plotly_template()
+- [wow_forecaster/viz/data_queries.py](wow_forecaster/viz/data_queries.py) — SQL/file -> pandas DataFrame fetchers
+- [wow_forecaster/viz/charts/](wow_forecaster/viz/charts/) — 6 chart modules: forecast, backtest, feature, recommendation, drift, transfer
+- [wow_forecaster/reporting/bi_export.py](wow_forecaster/reporting/bi_export.py) — Star-schema dim/fact table exports for Power BI / Tableau
+- CLI: generate-charts (--chart-type, --format png|svg|both), export-bi-bundle (--format csv|parquet)
+- Optional dep group: `[viz]` (matplotlib, seaborn, plotly, kaleido, pandas); `[dashboard]` now depends on `[viz]`
+- Dashboard upgraded to 8 tabs (added Backtest, Feature Insights, Crafting); Plotly interactive forecast chart
+- 3 Jupyter analysis notebooks in notebooks/ (EDA, Model Development, Backtest Evaluation)
+- GitHub Actions CI workflow (.github/workflows/ci.yml)
+
+## Roadmap
+Next-phase work (M0 restore/harden ops -> M0.5 unattended capture -> M1 model validation -> M2 paper-trading P&L + ranking A/B -> M3 PostgreSQL+dbt warehouse -> M4 Power BI/Tableau -> M5 event impact study -> M6 publish) is tracked in [docs/ROADMAP.md](docs/ROADMAP.md) and GitHub milestones M0-M6 plus M0.5 (issues #1-#44). Session protocol: follow the Work order section in docs/ROADMAP.md (milestone numbers match it; within a milestone use its issue sequence, not raw issue numbers). M0.5 issues #41-#42 depend on nothing local and may start before the M0 runbook. When remaining issues are waiting on wall clock (#11, #33), advance to the next milestone and circle back.
+
+## ACTIVE OPERATIONAL HAZARD (2026-07-12)
+- **Hourly ingestion has been dead since 2026-04-15**: a crashed run leaked `data/db/.hourly.lock`; run_hourly.bat logs SKIPPED and exits 0 on every run since. Last successful ingest 2026-04-07. The daily forecast task still runs on frozen data.
+- **Do NOT delete the lock file without following the runbook in issue #1.** The orchestrator auto-prunes on every run and would delete ALL raw + normalized rows older than 30 days (everything in the DB). Daily history survives only in daily_rollup_archetype/daily_rollup_item, which are incomplete (22 dates, 2026-02-24..2026-04-07; 2026-03-20..2026-04-06 missing). Back up and backfill rollups first.
+- Data gap 2026-04-15 -> restore date is unrecoverable (Blizzard API serves current snapshots only). After restore: drift detection blind ~30 days, item-level forecasts return after 14 fresh days.
+- Migrations end at 0008 (rollup tables); new tables start at 0009.
+
 ## What's NOT Implemented Yet
 - top_n_per_category V2 (Pareto-frontier, user-profile weighting, blocklist, A/B test support); cross-horizon dedup done in v0.9.1
 - Governance: cooldown enforcement not wired — preflight.py has check but orchestrator.py never passes last_call_at
@@ -167,4 +199,4 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-1111 tests passing
+1272 tests passing of 1280 (8 pre-existing failures in test_item_forecasts.py; the date-sensitive test_pruner.py flake passed on the 2026-07-12 run; root causes tracked as issues #7 and #8 in milestone M0)
