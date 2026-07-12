@@ -160,6 +160,14 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - CLI: start-scheduler (foreground daemon)
 - [scripts/setup_tasks.bat](scripts/setup_tasks.bat) — one-shot Windows Task Scheduler registration
 
+### Cloud Capture (v2.4.0, M0.5)
+- [wow_forecaster/ingestion/cloud_fetch.py](wow_forecaster/ingestion/cloud_fetch.py) - hourly commodities capture on GitHub Actions (issue #42); reuses BlizzardClient + build_snapshot_path + save_snapshot so cloud objects carry the identical local envelope; gzip -9 (~59 MB raw -> ~2.2 MiB); run via `python -m wow_forecaster.ingestion.cloud_fetch`, env-only config (no dotenv)
+- [.github/workflows/cloud-snapshot.yml](.github/workflows/cloud-snapshot.yml) - cron :16 hourly; scheduled workflows run ONLY from the default branch (dormant until the workflow lands on main); installs `pip install --no-deps .` + httpx + boto3, so the cloud_fetch import chain must stay stdlib-light (httpx/boto3 lazy)
+- Bucket keys mirror local layout: `blizzard_api/YYYY/MM/DD/commodities_us_<ts>Z.json.gz`; private R2 bucket, 30-day lifecycle rule = ToS 2.r enforcement
+- Exit codes: 0 ok, 1 fetch/sanity/upload failure, 2 missing env (named, never values), 3 uploaded but trailing-24h gap guard tripped (<20 objects with history present; bootstrap passes)
+- Sanity floor: refuses snapshots <50K records (healthy ~314K); design record + activation checklist (secrets are added by hand, never by agents): [docs/cloud-capture.md](docs/cloud-capture.md)
+- Activation is manual and pending: bucket + lifecycle + 6 repo secrets + workflow on main; #43 sync-snapshots (catch-up ingestion) not yet implemented
+
 ### Visualization & Portfolio (v2.2.0)
 - [wow_forecaster/viz/](wow_forecaster/viz/) — publication-quality chart layer (matplotlib/seaborn/Plotly)
 - [wow_forecaster/viz/theme.py](wow_forecaster/viz/theme.py) — WoW dark palette, apply_wow_theme(), get_plotly_template()
@@ -191,4 +199,4 @@ Next-phase work (M0 restore/harden ops -> M0.5 unattended capture -> M1 model va
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-1251 tests passing (9 pre-existing failures: 8 in test_item_forecasts.py, 1 date-sensitive in test_pruner.py; root causes identified and tracked as issues #7 and #8 in milestone M0)
+1272 tests passing of 1280 (8 pre-existing failures in test_item_forecasts.py; the date-sensitive test_pruner.py flake passed on the 2026-07-12 run; root causes tracked as issues #7 and #8 in milestone M0)

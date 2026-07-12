@@ -5,6 +5,14 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-07-12
+
+### Added
+- Cloud snapshot fetcher (issue #42): `python -m wow_forecaster.ingestion.cloud_fetch` plus a scheduled GitHub Actions workflow capture the hourly commodities snapshot from always-on infrastructure and upload it gzipped to a private S3-compatible bucket, so capture no longer requires the desktop to be on. Reuses the existing Blizzard client and snapshot writer, so cloud objects carry the identical envelope local ingest produces
+- Failure paths are loud by design: refuses implausibly small snapshots (default floor 50,000 records), retries fetch and upload, exits 3 when the trailing 24 hours of objects have gaps, and reports missing configuration by variable name only
+- `[cloud]` optional dependency group (boto3) for running the fetcher outside the workflow
+- README setup section covering the bucket, lifecycle rule, repository secrets, and first-run verification; activation is a manual one-time step for the repository owner
+
 ## [2.3.9] - 2026-07-12
 
 ### Added

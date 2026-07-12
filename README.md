@@ -71,7 +71,7 @@ wow_forecaster/
 ├── pipeline/        # 7 stages: ingest, normalize, feature_build, train,
 │                    #           forecast, recommend, orchestrator (backtest separate)
 ├── ingestion/       # Blizzard live client, snapshot writer, item bootstrapper,
-│                    # auctionator importer (historical backfill)
+│                    # auctionator importer (backfill), cloud fetcher (GitHub Actions)
 ├── features/        # Daily agg, lag/rolling, event features, archetype features,
 │                    # dataset builder → 48-col training / 45-col inference Parquet
 ├── backtest/        # Walk-forward splits, baseline models, metrics, reporter
@@ -394,6 +394,30 @@ wow-forecaster start-scheduler     [--config PATH]
 scripts/setup_tasks.bat
 ```
 
+### Cloud Snapshot Capture (GitHub Actions)
+
+Hourly capture that does not depend on the desktop being on. A scheduled workflow
+([.github/workflows/cloud-snapshot.yml](.github/workflows/cloud-snapshot.yml)) fetches
+the commodities snapshot, gzips it (~59 MB raw -> ~2.2 MiB), and uploads it to a private
+S3-compatible bucket (Cloudflare R2) whose 30-day lifecycle rule enforces the Blizzard
+API ToS deletion window. Design record, measured sizing, and failure modes:
+[docs/cloud-capture.md](docs/cloud-capture.md).
+
+One-time setup (repository owner):
+
+1. Create a private R2 bucket with a 30-day delete lifecycle rule, and an API token
+   scoped to that bucket with read and write access.
+2. Add repository secrets: `BLIZZARD_CLIENT_ID`, `BLIZZARD_CLIENT_SECRET`,
+   `SNAPSHOT_S3_ENDPOINT`, `SNAPSHOT_S3_BUCKET`, `SNAPSHOT_S3_ACCESS_KEY_ID`,
+   `SNAPSHOT_S3_SECRET_ACCESS_KEY`.
+3. The schedule fires only from the default branch. Trigger the first run by hand
+   (Actions tab -> Cloud snapshot capture -> Run workflow) and confirm a ~2.2 MiB
+   object lands in the bucket.
+
+A failed run emails the repository owner; a healthy run also verifies the trailing
+24 hours of objects and fails loudly if hours are missing. Local catch-up ingestion
+of the cloud backlog is tracked as issue #43 (`sync-snapshots`).
+
 ---
 
 ## Primary Workflow
@@ -471,7 +495,7 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 1111 tests
+# All 1280 tests
 pytest
 
 # With coverage
