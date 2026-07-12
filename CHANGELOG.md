@@ -5,6 +5,14 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-07-12
+
+### Added
+- Issue #44 filed and slotted first in the green-CI tier of the work order: CI fails at the ruff lint step before tests run because `ruff>=0.4` floats to releases enforcing rules the codebase predates (782 findings under 0.15.2), so pytest results are invisible on GitHub
+
+### Changed
+- docs/ROADMAP.md and CLAUDE.md: M0 issue list and work order updated for #44
+
 ## [2.4.0] - 2026-07-12
 
 ### Added
