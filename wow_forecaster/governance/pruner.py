@@ -10,9 +10,14 @@ enforces that requirement by pruning:
   2. ``market_observations_raw`` rows in SQLite
      (pruning normalised rows first to satisfy the FK constraint)
 
-Derived artefacts (Parquet features, model weights, normalised observations
-that have already been rolled into training data) are NOT pruned — the 30-day
-TTL only applies to the raw API data.
+Normalised observations are pruned together with their parent raw rows: they
+are FK children of ``market_observations_raw``, and keeping per-observation
+API data past the TTL would defeat the ToS requirement. Durable derived
+artefacts (daily rollup tables, Parquet features, model weights) are NOT
+pruned; they are the layer that survives the 30-day window.
+
+The cutoff is a pure calendar date derived from UTC, the same clock that
+names the snapshot path dates (YYYY/MM/DD).
 
 Usage
 -----
@@ -109,21 +114,28 @@ class SnapshotPruner:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def prune(self, dry_run: bool = False) -> PruneResult:
+    def prune(self, dry_run: bool = False, now: datetime | None = None) -> PruneResult:
         """Execute the retention prune.
 
         Deletes raw snapshot files and ``market_observations_raw`` rows
         that are older than ``retention_days`` days.
 
+        The cutoff is the UTC calendar date ``retention_days`` before ``now``,
+        matching the UTC dates encoded in snapshot paths. A file dated exactly
+        ``retention_days`` ago sits on the cutoff itself and is kept.
+
         Args:
             dry_run: If True, report what would be deleted without deleting.
+            now:     Reference clock for the cutoff (default: current UTC
+                     time). Injectable so tests are deterministic at any
+                     wall-clock time in any timezone.
 
         Returns:
             PruneResult summarising the operation.
         """
-        cutoff = (
-            datetime.now(tz=UTC) - timedelta(days=self.retention_days)
-        ).date()
+        if now is None:
+            now = datetime.now(tz=UTC)
+        cutoff = (now - timedelta(days=self.retention_days)).date()
         result = PruneResult(cutoff_date=cutoff, dry_run=dry_run)
 
         self._prune_files(result, dry_run)

@@ -5,6 +5,12 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.7] - 2026-07-16
+
+### Fixed
+- The pruner boundary test no longer flakes by time of day: SnapshotPruner.prune() accepts an injectable reference clock (default: current UTC time), the file-fixture tests share that clock with the cutoff, and a new companion test pins the other side of the boundary (a file one day past retention is deleted). Semantics are unchanged: a file dated exactly retention_days ago is kept (issue #8)
+- Corrected the pruner module docstring, which claimed normalised observations are never pruned. They are deleted together with their parent raw rows; the durable derived layers (daily rollups, Parquet features, model weights) are what the pruner never touches (issue #8)
+
 ## [2.4.6] - 2026-07-16
 
 ### Fixed
