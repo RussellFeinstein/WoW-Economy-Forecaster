@@ -6,7 +6,7 @@ Last updated: 2026-07-15. Work is tracked in [GitHub milestones](https://github.
 
 Two findings drove it, both from the 2026-07-12 state-of-project review:
 
-1. **A silent 96-day ingestion outage.** A crashed run leaked `data/db/.hourly.lock` on 2026-04-15. The hourly wrapper treats any existing lock as "previous run still active", logs SKIPPED, and exits 0, so Task Scheduler saw success 1,933 times in a row while no data arrived. The daily forecast task kept succeeding on features frozen at the last ingest (2026-04-07). Details and fixes: milestone M0 and the postmortem (issue [#2](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/2)).
+1. **A silent 96-day ingestion outage.** A crashed run leaked `data/db/.hourly.lock` on 2026-04-15. The hourly wrapper treated any existing lock as "previous run still active", logged SKIPPED, and exited 0 (behavior removed by the stale-lock takeover in [#3](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/3)), so Task Scheduler saw success 1,933 times in a row while no data arrived. The daily forecast task kept succeeding on features frozen at the last ingest (2026-04-07). Details and fixes: milestone M0 and the postmortem (issue [#2](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/2)).
 2. **The system has never measured itself.** 300K+ forecasts have been issued and none compared to what prices actually did. Recommendations have never been scored for profit. M1 and M2 close that loop; M3, M4, and M6 make the results visible to other people.
 
 ## Milestones
@@ -78,7 +78,7 @@ M0 (gates everything)
 
 | Risk | Mitigation |
 |---|---|
-| Pruner deletes >30-day rows on the first un-wedged run; rollups are the only durable daily history and have known gaps | Runbook order in #1: back up and backfill rollups before anything else; the lock stays in place until then |
+| Pruner deletes >30-day rows on the first un-wedged run; rollups are the only durable daily history and have known gaps | Runbook order in #1: back up and backfill rollups before anything else; the WoWForecaster-Hourly task is disabled until then (since #3's stale-lock takeover, the leaked lock itself no longer blocks a run) |
 | Post-gap model behavior: drift baseline empty for ~30 days, item forecasts need 14 fresh days, retrain spans a 90-day hole | Verification checklist in #11; limitations documented in the postmortem |
 | Supabase free tier caps the DB at 500 MB | Archetype-grain marts only, with a size guard (#25) |
 | Public deployment requires a public repo | The repo is already public; keep the standing secrets audit, read-only cloud key, local DB never committed (#37) |

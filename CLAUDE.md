@@ -61,7 +61,7 @@ BLIZZARD_CLIENT_SECRET=...
 - IngestStage pre-persists RunMetadata at start of _execute() to get run_id for FK use
 - IngestStage uses 3-phase connection pattern: (1) short read connection for FK guard, (2) no connection during HTTP fetch, (3) short write connection for all inserts — avoids holding DB lock during network I/O
 - All pipeline get_connection() calls pass config.database.wal_mode + busy_timeout_ms (default 30s)
-- run_hourly.bat uses lock file (data/db/.hourly.lock) to prevent overlapping scheduled runs
+- run_hourly.bat uses lock file (data/db/.hourly.lock) to prevent overlapping scheduled runs; locks older than 180 minutes are taken over (STALE LOCK TAKEOVER logged, lock deleted, run continues), and an age-check failure also takes over; only a provably fresh lock skips (exit 0)
 - ForecastOutput frozen model — use object.__setattr__(fc, "forecast_id", fc_id) after DB insert
 - LightGBM v4+ requires numpy arrays — convert list[list[float]] via np.array(..., dtype=np.float64)
 - Windows terminal: avoid Unicode arrows in typer.echo() — use ASCII -> instead
@@ -196,9 +196,10 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 ## Roadmap
 Next-phase work (M0 restore/harden ops -> M0.5 unattended capture -> M1 model validation -> M2 paper-trading P&L + ranking A/B -> M3 PostgreSQL+dbt warehouse -> M4 Power BI/Tableau -> M5 event impact study -> M6 publish) is tracked in [docs/ROADMAP.md](docs/ROADMAP.md) and GitHub milestones M0-M6 plus M0.5 (issues #1-#49). Session protocol: follow the Work order section in docs/ROADMAP.md (milestone numbers match it; within a milestone use its issue sequence, not raw issue numbers). Each milestone description on GitHub opens with a numbered work-order list rendered from ROADMAP.md; when filing, closing, or reordering an issue, update that milestone's list in the same session (a stale list is a doc bug, same as any Documentation Sync miss). M0.5 issues #41-#42 depend on nothing local and may start before the M0 runbook. When remaining issues are waiting on wall clock (#11, #33), advance to the next milestone and circle back.
 
-## ACTIVE OPERATIONAL HAZARD (2026-07-12)
-- **Hourly ingestion has been dead since 2026-04-15**: a crashed run leaked `data/db/.hourly.lock`; run_hourly.bat logs SKIPPED and exits 0 on every run since. Last successful ingest 2026-04-07. The daily forecast task still runs on frozen data.
-- **Do NOT delete the lock file without following the runbook in issue #1.** The orchestrator auto-prunes on every run and would delete ALL raw + normalized rows older than 30 days (everything in the DB). Daily history survives only in daily_rollup_archetype/daily_rollup_item, which are incomplete (22 dates, 2026-02-24..2026-04-07; 2026-03-20..2026-04-06 missing). Back up and backfill rollups first.
+## ACTIVE OPERATIONAL HAZARD (2026-07-12, updated 2026-07-16)
+- **Hourly ingestion has been dead since 2026-04-15**: a crashed run leaked `data/db/.hourly.lock`. Until v2.4.9, run_hourly.bat logged SKIPPED and exited 0 on every run with the lock present; it now takes over locks older than 180 minutes (issue #3). Last successful ingest 2026-04-07. The daily forecast task still runs on frozen data.
+- **The WoWForecaster-Hourly scheduled task is DISABLED (2026-07-16) and must stay disabled until the issue #1 runbook completes.** With the takeover in place, one firing would delete the stale leaked lock and run the pipeline, and the orchestrator auto-prune would delete ALL raw + normalized rows older than 30 days (everything in the DB) before the runbook recovers what it can. Re-enable only at runbook step 9.
+- **Do NOT delete the lock file or re-enable the hourly task outside the runbook in issue #1.** Daily history survives only in daily_rollup_archetype/daily_rollup_item, which are incomplete (22 dates, 2026-02-24..2026-04-07; 2026-03-20..2026-04-06 missing). Back up and backfill rollups first.
 - Data gap 2026-04-15 -> restore date is unrecoverable (Blizzard API serves current snapshots only). After restore: drift detection blind ~30 days, item-level forecasts return after 14 fresh days.
 - Migrations end at 0008 (rollup tables); new tables start at 0009.
 
@@ -212,4 +213,4 @@ Next-phase work (M0 restore/harden ops -> M0.5 unattended capture -> M1 model va
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-All 1283 tests passing as of 2026-07-16 (issues #7, #8, #49 closed the green-CI tier: 8 item-forecast date anchors, the pruner boundary flake plus one new boundary test, the health-report UTC anchor, and 2 scheduler CLI-locator tests now parametrized over both venv layouts). CI green on Python 3.11 and 3.12.
+All 1288 tests passing locally as of 2026-07-16. Five of them (the run_hourly.bat lock-guard tests in tests/test_scripts/, added with the issue #3 stale-lock takeover) are Windows-only and skip on the Linux CI runners, so CI reports 1283 passed + 5 skipped, green on Python 3.11 and 3.12. Issues #7, #8, #49 closed the green-CI tier: 8 item-forecast date anchors, the pruner boundary flake plus one new boundary test, the health-report UTC anchor, and 2 scheduler CLI-locator tests now parametrized over both venv layouts.
