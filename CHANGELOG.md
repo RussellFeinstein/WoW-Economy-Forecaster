@@ -5,6 +5,14 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.4] - 2026-07-15
+
+### Changed
+- Merges to main now require a pull request: a branch protection ruleset blocks direct pushes, force pushes, and deletion, with no bypass for admins (issue #46)
+- Merged branches are deleted instead of kept frozen; the repo auto-deletes head branches on merge, and the four already-merged branches were removed
+- Versioning moved to stamp commits: work commits log under Unreleased, and a single stamp commit at PR-open sets the version for the whole PR
+- Each GitHub milestone description now opens with a numbered work-order list matching docs/ROADMAP.md
+
 ## [2.4.3] - 2026-07-12
 
 ### Fixed
