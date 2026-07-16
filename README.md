@@ -139,6 +139,7 @@ tests/
 ├── test_recommendations/ # Scorer, ranker, item overlay, crafting (133 tests)
 ├── test_reporting/       # Reader, formatters, export (86 tests)
 ├── test_scheduler/       # Scheduler daemon (26 tests)
+├── test_scripts/         # run_hourly.bat lock guard, Windows-only (5 tests)
 └── test_taxonomy/        # Taxonomy integrity (30 tests)
 ```
 
@@ -518,6 +519,7 @@ pytest tests/test_db/               # Schema + repositories + migrations (37 tes
 pytest tests/test_events/           # Seed loader, event imports (24 tests)
 pytest tests/test_taxonomy/         # Taxonomy integrity (30 tests)
 pytest tests/test_recipes/          # Recipe repo, seeder, margin calculator (21 tests)
+pytest tests/test_scripts/          # run_hourly.bat lock guard, Windows-only (5 tests)
 ```
 
 ---

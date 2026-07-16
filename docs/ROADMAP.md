@@ -6,7 +6,7 @@ Last updated: 2026-07-15. Work is tracked in [GitHub milestones](https://github.
 
 Two findings drove it, both from the 2026-07-12 state-of-project review:
 
-1. **A silent 96-day ingestion outage.** A crashed run leaked `data/db/.hourly.lock` on 2026-04-15. The hourly wrapper treats any existing lock as "previous run still active", logs SKIPPED, and exits 0, so Task Scheduler saw success 1,933 times in a row while no data arrived. The daily forecast task kept succeeding on features frozen at the last ingest (2026-04-07). Details and fixes: milestone M0 and the postmortem (issue [#2](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/2)).
+1. **A silent 96-day ingestion outage.** A crashed run leaked `data/db/.hourly.lock` on 2026-04-15. The hourly wrapper treated any existing lock as "previous run still active", logged SKIPPED, and exited 0 (behavior removed by the stale-lock takeover in [#3](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/3)), so Task Scheduler saw success 1,933 times in a row while no data arrived. The daily forecast task kept succeeding on features frozen at the last ingest (2026-04-07). Details and fixes: milestone M0 and the postmortem (issue [#2](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/2)).
 2. **The system has never measured itself.** 300K+ forecasts have been issued and none compared to what prices actually did. Recommendations have never been scored for profit. M1 and M2 close that loop; M3, M4, and M6 make the results visible to other people.
 
 ## Milestones
@@ -49,7 +49,7 @@ Most urgent first. Milestone numbers match this sequence; within milestones, fol
 
 1. **Stop the permanent loss (M0.5 front, plus one insurance step).** #41 design, then #42 cloud fetcher. From the fetcher's first green run, no more hours are lost for good. Pull one runbook step forward now: dump `daily_rollup_archetype` and `daily_rollup_item` to `data/outputs/backups/` (read-only, minutes), so an accidental lock deletion can no longer destroy the only durable history.
 2. **Green CI (M0).** #46 first: repo governance (PR-only merges, delete-after-merge, milestone work-order lists) so every change from here on ships through a gated PR. Then #44: CI currently fails at the ruff step before tests run (`ruff>=0.4` floats to releases with rules the code predates), so nothing else is visible. Then #7, #8, and #49 (the CI-only failures that surfaced once pytest became reachable), so the hardening changes that follow are validated by a trustworthy suite. (Done: #46 and #44 on 2026-07-15, #7/#8/#49 on 2026-07-16; the full suite is green in CI on 3.11 and 3.12.)
-3. **Harden before restoring (M0).** #3 stale-lock takeover, #12 daily freshness gate, #4 scheduled health check, #5 lock-age and retention checks, #6 commit setup_tasks.bat and register tasks, #40 wake timers. All of it lands before the lock is touched, so the restored system is born hardened.
+3. **Harden before restoring (M0).** #3 stale-lock takeover, #12 daily freshness gate, #4 scheduled health check, #5 lock-age and retention checks, #6 commit setup_tasks.bat and register tasks, #40 wake timers. All of it lands before the lock is touched, so the restored system is born hardened. (Done: #3 on 2026-07-16; the WoWForecaster-Hourly task was disabled the same day, pulling the hourly half of runbook step 1 forward.)
 4. **Restore (M0, then M0.5).** #1, the runbook, in its documented order. Then #43 catch-up ingestion drains the cloud backlog into the DB; capture is now desktop-independent end to end.
 5. **Close out M0.** #11 gap verification (passive, over the following days), #2 postmortem, #9 gitignore, #45 README badge. (#10, the merge to main, was pulled forward and done on 2026-07-12 when the umbrella-branch model was retired.)
 6. **Prove the forecasts (M1).** #13 realization ledger first (roughly 305K matured forecasts become scoreable the day it lands), then #14, #15, #16, #17, #18, #19.
@@ -78,7 +78,7 @@ M0 (gates everything)
 
 | Risk | Mitigation |
 |---|---|
-| Pruner deletes >30-day rows on the first un-wedged run; rollups are the only durable daily history and have known gaps | Runbook order in #1: back up and backfill rollups before anything else; the lock stays in place until then |
+| Pruner deletes >30-day rows on the first un-wedged run; rollups are the only durable daily history and have known gaps | Runbook order in #1: back up and backfill rollups before anything else; the WoWForecaster-Hourly task is disabled until then (since #3's stale-lock takeover, the leaked lock itself no longer blocks a run) |
 | Post-gap model behavior: drift baseline empty for ~30 days, item forecasts need 14 fresh days, retrain spans a 90-day hole | Verification checklist in #11; limitations documented in the postmortem |
 | Supabase free tier caps the DB at 500 MB | Archetype-grain marts only, with a size guard (#25) |
 | Public deployment requires a public repo | The repo is already public; keep the standing secrets audit, read-only cloud key, local DB never committed (#37) |
