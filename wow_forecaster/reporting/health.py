@@ -101,8 +101,13 @@ def _collect_realm_stats(
     conn:          sqlite3.Connection,
     realm_slug:    str,
     lookback_days: int,
+    as_of:         date,
 ) -> RealmHealthStats:
-    """Build RealmHealthStats for one realm by querying the DB."""
+    """Build RealmHealthStats for one realm by querying the DB.
+
+    ``as_of`` anchors the coverage window; observations carry UTC timestamps,
+    so the anchor must be a UTC date rather than the local calendar date.
+    """
     stats = RealmHealthStats(realm_slug=realm_slug)
 
     # ── Observation date range ────────────────────────────────────────────────
@@ -120,7 +125,7 @@ def _collect_realm_stats(
         stats.last_obs_date  = row["last"]
 
     # ── Days with data in lookback window ─────────────────────────────────────
-    cutoff = (date.today() - timedelta(days=lookback_days)).isoformat()
+    cutoff = (as_of - timedelta(days=lookback_days)).isoformat()
     rows_with_data = conn.execute(
         """
         SELECT DISTINCT DATE(observed_at) AS obs_date
@@ -139,7 +144,7 @@ def _collect_realm_stats(
 
     # ── Gap detection ─────────────────────────────────────────────────────────
     all_dates = {
-        (date.today() - timedelta(days=i)).isoformat()
+        (as_of - timedelta(days=i)).isoformat()
         for i in range(lookback_days)
     }
     stats.gap_dates = sorted(all_dates - dates_with_data)
@@ -170,6 +175,7 @@ def collect_health_report(
     realm_slugs:           list[str],
     lookback_days:         int   = 14,
     stale_threshold_hours: float = 4.0,
+    as_of:                 date | None = None,
 ) -> HealthReport:
     """Build a full data collection health report.
 
@@ -178,10 +184,15 @@ def collect_health_report(
         realm_slugs:           Realms to report on.
         lookback_days:         Days of history to check for coverage gaps (default 14).
         stale_threshold_hours: Hours beyond which data is considered stale (default 4).
+        as_of:                 Anchor date for the coverage window (default: the
+                               current UTC date, matching the UTC timestamps on
+                               observations). Injectable for deterministic tests.
 
     Returns:
         :class:`HealthReport` with all findings populated.
     """
+    if as_of is None:
+        as_of = datetime.now(tz=UTC).date()
     now_iso = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     report  = HealthReport(
         generated_at          = now_iso,
@@ -190,7 +201,7 @@ def collect_health_report(
 
     # ── Per-realm stats ───────────────────────────────────────────────────────
     for realm in realm_slugs:
-        stats = _collect_realm_stats(conn, realm, lookback_days)
+        stats = _collect_realm_stats(conn, realm, lookback_days, as_of)
         report.realms.append(stats)
 
     # ── Last orchestrator (hourly) run ────────────────────────────────────────

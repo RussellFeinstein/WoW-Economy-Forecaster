@@ -101,8 +101,13 @@ def conn() -> sqlite3.Connection:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _insert_obs(conn, realm: str, days_ago: float, count: int = 1) -> None:
-    ts = (datetime.now(tz=UTC) - timedelta(days=days_ago)).strftime(
+def _insert_obs(
+    conn, realm: str, days_ago: float, count: int = 1,
+    anchor: datetime | None = None,
+) -> None:
+    if anchor is None:
+        anchor = datetime.now(tz=UTC)
+    ts = (anchor - timedelta(days=days_ago)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     for _ in range(count):
@@ -174,9 +179,16 @@ class TestCollectHealthReport:
         assert len(stats.gap_dates) == 2
 
     def test_no_gaps_when_all_days_covered(self, conn):
+        # A midday anchor puts each (d + 0.5)-days-ago observation at 00:00 of
+        # a distinct date, covering exactly as_of .. as_of-6. A wall-clock
+        # anchor flips the day-0 slot to yesterday whenever the suite runs
+        # before 12:00 UTC.
+        anchor = datetime(2026, 3, 9, 12, 0, tzinfo=UTC)
         for d in range(7):
-            _insert_obs(conn, "us", days_ago=d + 0.5)
-        report = collect_health_report(conn, ["us"], lookback_days=7)
+            _insert_obs(conn, "us", days_ago=d + 0.5, anchor=anchor)
+        report = collect_health_report(
+            conn, ["us"], lookback_days=7, as_of=anchor.date()
+        )
         assert report.realms[0].gap_dates == []
 
     def test_coverage_pct_computed(self, conn):

@@ -34,18 +34,36 @@ from wow_forecaster.scheduler import (
 # ── _find_cli_exe ─────────────────────────────────────────────────────────────
 
 class TestFindCliExe:
-    def test_returns_path_when_wowfc_exists(self, tmp_path, monkeypatch):
-        """Returns the wowfc path when it exists in the Scripts dir."""
-        fake_exe = tmp_path / "wowfc.exe"
+    # Both venv layouts run on every host: platform.system is monkeypatched, and
+    # the helper only joins paths, so a suffix-free "wowfc" works on NTFS too.
+    @pytest.mark.parametrize(
+        ("system", "suffix"), [("Windows", ".exe"), ("Linux", "")]
+    )
+    def test_returns_path_when_wowfc_exists(
+        self, tmp_path, monkeypatch, system, suffix
+    ):
+        """Returns the wowfc path when it exists in the venv scripts dir."""
+        fake_exe = tmp_path / f"wowfc{suffix}"
         fake_exe.touch()
+        monkeypatch.setattr(
+            "wow_forecaster.scheduler.platform.system", lambda: system
+        )
         monkeypatch.setattr("sys.executable", str(tmp_path / "python.exe"))
         result = _find_cli_exe()
         assert result == str(fake_exe)
 
-    def test_falls_back_to_wow_forecaster_exe(self, tmp_path, monkeypatch):
-        """Falls back to wow-forecaster.exe when wowfc.exe is absent."""
-        fake_exe = tmp_path / "wow-forecaster.exe"
+    @pytest.mark.parametrize(
+        ("system", "suffix"), [("Windows", ".exe"), ("Linux", "")]
+    )
+    def test_falls_back_to_wow_forecaster_exe(
+        self, tmp_path, monkeypatch, system, suffix
+    ):
+        """Falls back to wow-forecaster when wowfc is absent."""
+        fake_exe = tmp_path / f"wow-forecaster{suffix}"
         fake_exe.touch()
+        monkeypatch.setattr(
+            "wow_forecaster.scheduler.platform.system", lambda: system
+        )
         monkeypatch.setattr("sys.executable", str(tmp_path / "python.exe"))
         result = _find_cli_exe()
         assert result == str(fake_exe)
