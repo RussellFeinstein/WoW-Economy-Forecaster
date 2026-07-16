@@ -17,6 +17,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - CI reaches the pytest step again on both Python versions; the lint step no longer fails on rules that postdate the code (issue #44)
+- CI matrix no longer cancels the second Python version when the first fails, so both report full test results (issue #44)
 
 ## [2.4.4] - 2026-07-15
 
