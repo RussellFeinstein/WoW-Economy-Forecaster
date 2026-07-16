@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.4.6] - 2026-07-16
 
 ### Fixed
 - Item-forecast tests no longer depend on the wall clock: _generate_item_forecasts() and _fetch_cold_start_blend_data() accept an optional run_date anchor (default: today, so pipeline behavior is unchanged), and the tests pin it to 2026-03-09 beside their fixture prices. This restores the 8 tests that started failing when the calendar moved past their fixed dates, and several neighboring tests that had been passing vacuously on empty query results now exercise their real assertions (issue #7)
