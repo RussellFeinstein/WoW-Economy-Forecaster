@@ -5,6 +5,13 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- check-data-health coverage windows are now anchored to the UTC calendar date instead of the local date, matching the UTC timestamps on observations, and collect_health_report() accepts an injectable as_of date. This fixes the health test that reported a phantom day-zero gap whenever the local date and UTC date disagreed, on the Linux CI runner and near midnight locally (issue #49)
+- The two CLI-locator scheduler tests now run both venv layouts (Windows Scripts/*.exe and Linux bin/ suffix-free) on every host by monkeypatching the platform check, instead of assuming the Windows layout and failing on the Linux runner. No production change: the locator already handled both platforms (issue #49)
+- With issues #7 and #8, this completes the green-CI tier: the full suite passes in CI on Python 3.11 and 3.12 (issue #49)
+
 ## [2.4.7] - 2026-07-16
 
 ### Fixed
