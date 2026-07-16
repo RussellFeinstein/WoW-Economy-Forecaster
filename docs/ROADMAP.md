@@ -1,6 +1,6 @@
 # Roadmap: from research system to validated, published forecaster
 
-Last updated: 2026-07-12. Work is tracked in [GitHub milestones](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/milestones); this document is the narrative companion. Milestones run in numeric order: M0, then M0.5 (unattended capture), then M1 through M6. Each milestone is scoped to one coherent arc of PRs and ends with a measurable result. The Work order section below is the issue-level sequence, most urgent first.
+Last updated: 2026-07-15. Work is tracked in [GitHub milestones](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/milestones); this document is the narrative companion. Milestones run in numeric order: M0, then M0.5 (unattended capture), then M1 through M6. Each milestone is scoped to one coherent arc of PRs and ends with a measurable result. The Work order section below is the issue-level sequence, most urgent first; each milestone description on GitHub opens with a numbered list rendered from it.
 
 ## Why this roadmap
 
@@ -11,7 +11,7 @@ Two findings drove it, both from the 2026-07-12 state-of-project review:
 
 ## Milestones
 
-### M0: Restore and harden operations (issues [#1](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/1)-[#12](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/12), [#40](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/40), [#44](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/44))
+### M0: Restore and harden operations (issues [#1](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/1)-[#12](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/12), [#40](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/40), [#44](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/44), [#46](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/46))
 
 Restore ingestion safely (the pruner would delete the surviving history if the lock were simply removed; see the runbook in #1), add age-based lock takeover, schedule `check-data-health` with visible alerting, gate the daily forecast on freshness, fix the failing tests and the CI lint drift (#44), and let the machine sleep between runs with wake-to-run task settings (#40). Everything else depends on this. The long-lived `feature/portfolio-showcase` branch was merged and frozen 2026-07-12 (#10); development now uses short-lived type-prefixed branches per issue (see Branch Workflow in CLAUDE.md).
 
@@ -48,7 +48,7 @@ A public Streamlit dashboard on Community Cloud reading the Supabase marts, a RE
 Most urgent first. Milestone numbers match this sequence; within milestones, follow the issue order given here rather than raw issue numbers.
 
 1. **Stop the permanent loss (M0.5 front, plus one insurance step).** #41 design, then #42 cloud fetcher. From the fetcher's first green run, no more hours are lost for good. Pull one runbook step forward now: dump `daily_rollup_archetype` and `daily_rollup_item` to `data/outputs/backups/` (read-only, minutes), so an accidental lock deletion can no longer destroy the only durable history.
-2. **Green CI (M0).** #44 first: CI currently fails at the ruff step before tests run (`ruff>=0.4` floats to releases with rules the code predates), so nothing else is visible. Then #7 and #8, so the hardening changes that follow are validated by a trustworthy suite.
+2. **Green CI (M0).** #46 first: repo governance (PR-only merges, delete-after-merge, milestone work-order lists) so every change from here on ships through a gated PR. Then #44: CI currently fails at the ruff step before tests run (`ruff>=0.4` floats to releases with rules the code predates), so nothing else is visible. Then #7 and #8, so the hardening changes that follow are validated by a trustworthy suite.
 3. **Harden before restoring (M0).** #3 stale-lock takeover, #12 daily freshness gate, #4 scheduled health check, #5 lock-age and retention checks, #6 commit setup_tasks.bat and register tasks, #40 wake timers. All of it lands before the lock is touched, so the restored system is born hardened.
 4. **Restore (M0, then M0.5).** #1, the runbook, in its documented order. Then #43 catch-up ingestion drains the cloud backlog into the DB; capture is now desktop-independent end to end.
 5. **Close out M0.** #11 gap verification (passive, over the following days), #2 postmortem, #9 gitignore, #45 README badge. (#10, the merge to main, was pulled forward and done on 2026-07-12 when the umbrella-branch model was retired.)

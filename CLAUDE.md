@@ -26,11 +26,17 @@ BLIZZARD_CLIENT_SECRET=...
 ```
 
 ## Branch Workflow
-- main is the integration branch; nothing is developed directly on it.
+- main is the only permanent branch. A branch protection ruleset (main-pr-only, no bypass actors) requires a pull request for every merge and blocks direct pushes, force pushes, and deletion. This applies to admins too.
 - Every piece of work gets a short-lived type-prefixed branch cut from the latest main: feat/, fix/, improvement/, docs/, chore/, refactor/, test/ plus a short kebab slug, with the issue number when one exists (e.g. fix/44-ci-ruff-drift).
-- One issue or one concern per branch. Merge to main with a merge commit, push, then the branch is frozen: retained forever, never reused.
-- Scope check before every commit: if the work does not match the current branch's type and slug, stop and cut the right branch from main. A branch whose scoped work is delivered is frozen even if no PR was ever opened for it.
-- No umbrella or long-lived topic branches. feature/portfolio-showcase (v1.9.0-v2.4.1) was the last; merged and frozen 2026-07-12 (issue #10).
+- One issue or one concern per branch. Ship it by opening a PR to main and merging via the PR with a merge commit (`gh pr merge --merge`). CI runs on the PR before merge.
+- The head branch is deleted on merge (delete_branch_on_merge is on); delete the local copy with `git branch -d`. The merge commit and PR record are the durable history. Never `git branch -D` unmerged work without explicit instruction.
+- Scope check before every commit: if the work does not match the current branch's type and slug, stop and cut the right branch from main.
+- No umbrella or long-lived topic branches. feature/portfolio-showcase (v1.9.0-v2.4.1) was the last; merged 2026-07-12 (issue #10), deleted with the freeze-convention retirement (issue #46).
+
+## Versioning (stamp commits)
+- Work commits take no version bump. Their CHANGELOG lines accumulate under `## [Unreleased]`.
+- A dedicated stamp commit at PR-open bumps pyproject.toml once and moves the [Unreleased] entries under the `## [X.Y.Z] - YYYY-MM-DD` header. One version per PR; PR titles carry the `(vX.Y.Z)` suffix.
+- If two open PRs stamp the same number, the later-to-merge PR re-stamps to the next free number during rebase.
 
 ## Key Files
 - [wow_forecaster/taxonomy/archetype_taxonomy.py](wow_forecaster/taxonomy/archetype_taxonomy.py) — ArchetypeTag, ArchetypeCategory, CATEGORY_TAG_MAP
@@ -188,7 +194,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - GitHub Actions CI workflow (.github/workflows/ci.yml)
 
 ## Roadmap
-Next-phase work (M0 restore/harden ops -> M0.5 unattended capture -> M1 model validation -> M2 paper-trading P&L + ranking A/B -> M3 PostgreSQL+dbt warehouse -> M4 Power BI/Tableau -> M5 event impact study -> M6 publish) is tracked in [docs/ROADMAP.md](docs/ROADMAP.md) and GitHub milestones M0-M6 plus M0.5 (issues #1-#44). Session protocol: follow the Work order section in docs/ROADMAP.md (milestone numbers match it; within a milestone use its issue sequence, not raw issue numbers). M0.5 issues #41-#42 depend on nothing local and may start before the M0 runbook. When remaining issues are waiting on wall clock (#11, #33), advance to the next milestone and circle back.
+Next-phase work (M0 restore/harden ops -> M0.5 unattended capture -> M1 model validation -> M2 paper-trading P&L + ranking A/B -> M3 PostgreSQL+dbt warehouse -> M4 Power BI/Tableau -> M5 event impact study -> M6 publish) is tracked in [docs/ROADMAP.md](docs/ROADMAP.md) and GitHub milestones M0-M6 plus M0.5 (issues #1-#46). Session protocol: follow the Work order section in docs/ROADMAP.md (milestone numbers match it; within a milestone use its issue sequence, not raw issue numbers). Each milestone description on GitHub opens with a numbered work-order list rendered from ROADMAP.md; when filing, closing, or reordering an issue, update that milestone's list in the same session (a stale list is a doc bug, same as any Documentation Sync miss). M0.5 issues #41-#42 depend on nothing local and may start before the M0 runbook. When remaining issues are waiting on wall clock (#11, #33), advance to the next milestone and circle back.
 
 ## ACTIVE OPERATIONAL HAZARD (2026-07-12)
 - **Hourly ingestion has been dead since 2026-04-15**: a crashed run leaked `data/db/.hourly.lock`; run_hourly.bat logs SKIPPED and exits 0 on every run since. Last successful ingest 2026-04-07. The daily forecast task still runs on frozen data.
