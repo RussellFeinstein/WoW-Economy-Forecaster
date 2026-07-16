@@ -11,6 +11,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -142,7 +143,7 @@ class TestSaveSnapshot:
     def test_hash_deterministic(self, tmp_path):
         p1 = tmp_path / "s1.json"
         p2 = tmp_path / "s2.json"
-        import time; time.sleep(0.01)  # ensure written_at differs
+        time.sleep(0.01)  # written_at must differ between the two saves
         # same payload → hashes differ because written_at differs
         h1, _ = save_snapshot(p1, _SAMPLE_RECORDS, metadata={"fixed": True})
         h2, _ = save_snapshot(p2, _SAMPLE_RECORDS, metadata={"fixed": True})

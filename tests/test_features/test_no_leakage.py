@@ -186,16 +186,8 @@ class TestNewEventFeatures:
     def test_event_impact_magnitude_from_category_impacts(self):
         """event_impact_magnitude is populated from category impacts for the active event."""
         obs_date = date(2025, 1, 15)
-        active_event = _make_event(
-            "rtwf",
-            start=date(2025, 1, 10),
-            end=date(2025, 1, 24),
-            announced_at=datetime(2025, 1, 1, tzinfo=UTC),
-            severity=EventSeverity.MAJOR,
-        )
-        # event_id must be set on the model; patch via object to simulate DB lookup
-        # Since _make_event sets event_id=None, we need a real event_id for impacts dict.
-        # Use event_id=99 by constructing manually.
+        # The event needs a real event_id for the impacts dict, which
+        # _make_event cannot set; construct it manually.
         from wow_forecaster.models.event import WoWEvent
         from wow_forecaster.taxonomy.event_taxonomy import EventScope, EventType
         evt = WoWEvent(

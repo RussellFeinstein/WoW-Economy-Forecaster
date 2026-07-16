@@ -107,7 +107,7 @@ class TestImplementedStages:
         from wow_forecaster.db.schema import apply_schema
 
         # ── Build and seed the DB ──────────────────────────────────────────────
-        FIXTURE_ITEM_IDS = [191528, 204783, 206448]
+        fixture_item_ids = [191528, 204783, 206448]
 
         db_file = str(tmp_path / "test.db")
         conn = sqlite3.connect(db_file)
@@ -125,7 +125,7 @@ class TestImplementedStages:
         category_id = conn.execute("SELECT last_insert_rowid() AS id;").fetchone()["id"]
 
         # Insert the three fixture items
-        for item_id in FIXTURE_ITEM_IDS:
+        for item_id in fixture_item_ids:
             conn.execute(
                 """
                 INSERT INTO items (item_id, name, category_id, expansion_slug, quality,

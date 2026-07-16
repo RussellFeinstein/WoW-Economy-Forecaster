@@ -80,7 +80,8 @@ class ScoreComponents:
         opportunity_score:   0–100, derived from expected ROI.
         liquidity_score:     0–100, derived from quantity / auction depth.
         volatility_penalty:  0–100, derived from price coefficient of variation.
-        event_boost:         -100–100, derived from active/upcoming events; negative for net-negative impact.
+        event_boost:         -100–100, derived from active/upcoming events; negative for
+                             net-negative impact.
         uncertainty_penalty: 0–100, derived from CI width / predicted price.
         roi:                 Raw expected return (can be negative).
         volatility_cv:       Raw CV = price_roll_std_7d / price_mean.

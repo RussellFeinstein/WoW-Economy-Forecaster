@@ -276,8 +276,7 @@ class TestParseEventCsvErrors:
         clean_lines = [ln for ln in lines if not ln.strip().startswith("#")]
         import io
         reader = csv.DictReader(io.StringIO("\n".join(clean_lines)))
-        rows = list(reader)
-        # Just confirm no crash and at least the header was read
+        list(reader)  # consume; confirms no crash and populates fieldnames
         assert reader.fieldnames is not None
 
     def test_midnight_example_file_is_parseable(self):

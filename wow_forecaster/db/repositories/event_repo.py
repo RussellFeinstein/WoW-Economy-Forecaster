@@ -102,7 +102,9 @@ class WoWEventRepository(BaseRepository):
         )
         row = self.fetchone("SELECT event_id FROM wow_events WHERE slug = ?;", (event.slug,))
         if row is None:
-            raise RuntimeError(f"Event slug '{event.slug}' not found after insert — unexpected SQLite state.")
+            raise RuntimeError(
+                f"Event slug '{event.slug}' not found after insert — unexpected SQLite state."
+            )
         return int(row["event_id"])
 
     def get_by_id(self, event_id: int) -> WoWEvent | None:

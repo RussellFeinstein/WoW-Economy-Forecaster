@@ -124,7 +124,6 @@ def _seed(conn: sqlite3.Connection) -> None:
     )
 
     # Normalised observations: 30 days × 3 obs/day × 2 archetypes.
-    rows = []
     obs_id = 1
     # We need raw obs first; FK requires market_observations_raw, but actually
     # the FK on market_observations_normalized references obs_id in

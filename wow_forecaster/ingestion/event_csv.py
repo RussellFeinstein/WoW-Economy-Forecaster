@@ -13,7 +13,8 @@ See ``config/events/event_import_template.csv`` for a full example with all colu
 Valid enum values:
   event_type  → any EventType.value  (e.g. "expansion_launch", "rtwf", "holiday_event")
   scope       → any EventScope.value (e.g. "global", "region", "realm_cluster", "faction")
-  severity    → any EventSeverity.value (e.g. "critical", "major", "moderate", "minor", "negligible")
+  severity    → any EventSeverity.value (e.g. "critical", "major", "moderate", "minor",
+                "negligible")
 
 Date formats:
   start_date / end_date   → YYYY-MM-DD
@@ -169,10 +170,10 @@ def _parse_date(
         return None
     try:
         return date.fromisoformat(v)
-    except ValueError:
+    except ValueError as exc:
         raise ValueError(
             f"Invalid date for '{key}': '{v}'. Expected YYYY-MM-DD format."
-        )
+        ) from exc
 
 
 def _parse_datetime(row: dict[str, str], key: str) -> datetime | None:
@@ -183,11 +184,11 @@ def _parse_datetime(row: dict[str, str], key: str) -> datetime | None:
     try:
         # Accept both trailing 'Z' and explicit '+00:00'
         return datetime.fromisoformat(v.replace("Z", "+00:00"))
-    except ValueError:
+    except ValueError as exc:
         raise ValueError(
             f"Invalid datetime for '{key}': '{v}'. "
             "Expected ISO 8601 with timezone, e.g. '2025-11-03T18:00:00Z'."
-        )
+        ) from exc
 
 
 def _parse_bool(row: dict[str, str], key: str, default: bool = False) -> bool:
@@ -205,9 +206,9 @@ def _parse_enum(enum_cls, key: str, row: dict[str, str]):
         raise ValueError(f"Required enum field '{key}' is empty.")
     try:
         return enum_cls(raw)
-    except ValueError:
+    except ValueError as exc:
         valid = sorted(e.value for e in enum_cls)
         raise ValueError(
             f"Invalid {key} value '{raw}'. "
             f"Valid values: {valid}"
-        )
+        ) from exc

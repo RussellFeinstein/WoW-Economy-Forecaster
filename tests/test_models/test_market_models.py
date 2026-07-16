@@ -82,7 +82,7 @@ class TestRawMarketObservation:
         assert obs.min_buyout_raw is None
 
     def test_frozen_immutable(self, sample_raw_observation):
-        with pytest.raises(Exception):  # ValidationError or TypeError (frozen)
+        with pytest.raises(ValidationError):
             sample_raw_observation.item_id = 99999
 
     def test_all_factions_valid(self):
@@ -115,7 +115,7 @@ class TestNormalizedMarketObservation:
             )
 
     def test_frozen_immutable(self, sample_normalized_observation):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             sample_normalized_observation.price_gold = 999.0
 
     def test_optional_fields_default_none(self):

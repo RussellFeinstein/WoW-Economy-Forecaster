@@ -162,8 +162,16 @@ class LightGBMForecaster:
 
         X_train = np.array(build_feature_matrix(train_valid, feature_cols), dtype=np.float64)
         y_train = np.array([to_float(r[target_col]) for r in train_valid], dtype=np.float64)
-        X_val   = np.array(build_feature_matrix(val_valid, feature_cols), dtype=np.float64) if val_valid else np.empty((0, len(feature_cols)), dtype=np.float64)
-        y_val   = np.array([to_float(r[target_col]) for r in val_valid], dtype=np.float64)  if val_valid else np.array([], dtype=np.float64)
+        X_val   = (
+            np.array(build_feature_matrix(val_valid, feature_cols), dtype=np.float64)
+            if val_valid
+            else np.empty((0, len(feature_cols)), dtype=np.float64)
+        )
+        y_val   = (
+            np.array([to_float(r[target_col]) for r in val_valid], dtype=np.float64)
+            if val_valid
+            else np.array([], dtype=np.float64)
+        )
 
         lgb_params = {
             "objective":        "regression_l1",  # MAE loss — robust to outlier prices
@@ -260,7 +268,7 @@ class LightGBMForecaster:
             return {}
         mae_sum = rmse_sum = mape_sum = 0.0
         mape_n = 0
-        for actual, pred in zip(y, preds):
+        for actual, pred in zip(y, preds, strict=False):
             err = actual - pred
             mae_sum  += abs(err)
             rmse_sum += err * err

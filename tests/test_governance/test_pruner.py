@@ -38,7 +38,9 @@ def _make_pruner(
     )
 
 
-def _make_snapshot_file(raw_dir: Path, obs_date: date, filename: str = "realm_us_test.json") -> Path:
+def _make_snapshot_file(
+    raw_dir: Path, obs_date: date, filename: str = "realm_us_test.json"
+) -> Path:
     """Create a dummy snapshot file at raw/snapshots/blizzard_api/YYYY/MM/DD/filename."""
     day_dir = (
         raw_dir

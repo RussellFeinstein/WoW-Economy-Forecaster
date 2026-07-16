@@ -223,7 +223,9 @@ def check_source_freshness(
 
     last_at  = _query_last_snapshot_at(conn, source_id, realm_slug)
     age_h    = _compute_age_hours(last_at)
-    status   = _classify_status(age_h, fc.ttl_hours, fc.stale_threshold_hours, fc.critical_threshold_hours)
+    status   = _classify_status(
+        age_h, fc.ttl_hours, fc.stale_threshold_hours, fc.critical_threshold_hours
+    )
 
     return FreshnessResult(
         source_id=source_id,

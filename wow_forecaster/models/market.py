@@ -18,7 +18,9 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, field_validator
 
 # Valid source identifiers for raw observations
-VALID_SOURCES = frozenset({"tsm_export", "ah_scan", "manual", "blizzard_api", "auctionator_posting"})
+VALID_SOURCES = frozenset(
+    {"tsm_export", "ah_scan", "manual", "blizzard_api", "auctionator_posting"}
+)
 VALID_FACTIONS = frozenset({"alliance", "horde", "neutral"})
 
 

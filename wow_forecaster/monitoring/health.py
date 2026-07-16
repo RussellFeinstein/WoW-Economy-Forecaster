@@ -123,8 +123,7 @@ def compute_health_summary(
     live_dir_acc  = None
 
     if n_evaluated > 0:
-        errors   = []
-        dir_hits = []
+        errors = []
         for row in live_rows:
             pred   = row["predicted_price_gold"]
             actual = row["actual_price"]

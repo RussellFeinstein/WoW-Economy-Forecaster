@@ -117,7 +117,8 @@ class MarketObservationRepository(BaseRepository):
             return 0
         placeholders = ",".join("?" for _ in obs_ids)
         cursor = self.execute(
-            f"UPDATE market_observations_raw SET is_processed = 1 WHERE obs_id IN ({placeholders});",
+            "UPDATE market_observations_raw SET is_processed = 1 "
+            f"WHERE obs_id IN ({placeholders});",
             tuple(obs_ids),
         )
         return cursor.rowcount

@@ -1,0 +1,12 @@
+# Scoped to ruff only: the linter is exact-pinned (issue #44), so new rule
+# sets arrive as reviewable PRs whose CI run shows exactly what they flag.
+# Runtime dependencies keep their floating floors in pyproject.toml.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    allow:
+      - dependency-name: "ruff"
+    labels: []

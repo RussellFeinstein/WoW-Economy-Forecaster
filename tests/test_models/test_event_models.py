@@ -71,7 +71,7 @@ class TestWoWEventConstruction:
             )
 
     def test_frozen_immutable(self, sample_event):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             sample_event.severity = EventSeverity.CRITICAL
 
 

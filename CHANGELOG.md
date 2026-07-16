@@ -7,8 +7,16 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Dependabot config scoped to ruff: new linter releases arrive as monthly PRs gated by CI instead of drifting into the build (issue #44)
+
 ### Changed
 - Mechanical ruff 0.15.2 conformance sweep across wow_forecaster/ and tests/: modern union syntax for optional types, datetime.UTC alias, unused imports removed, imports sorted (issue #44)
+- Manual lint conformance: all long lines rewrapped to the 100-char limit, exception chaining made explicit (raise from), zip calls declare strict=, blind pytest.raises(Exception) narrowed to ValidationError, dead test scaffolding removed (issue #44)
+- ruff pinned exactly (==0.15.2) with per-file exemptions for the Typer and sklearn API conventions; UP042 ignored because StrEnum conversion would change str() output persisted to DB and CSV (issue #44)
+
+### Fixed
+- CI reaches the pytest step again on both Python versions; the lint step no longer fails on rules that postdate the code (issue #44)
 
 ## [2.4.4] - 2026-07-15
 

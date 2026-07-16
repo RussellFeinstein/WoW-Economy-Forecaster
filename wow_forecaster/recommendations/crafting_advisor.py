@@ -226,7 +226,9 @@ def build_crafting_opportunities(
         best_window_sell_price = window_sell_prices.get(best_window)
         best_margin_pct = (
             best_margin_gold / best_window_sell_price
-            if best_margin_gold is not None and best_window_sell_price and best_window_sell_price > 0
+            if best_margin_gold is not None
+            and best_window_sell_price
+            and best_window_sell_price > 0
             else None
         )
 
@@ -306,7 +308,8 @@ def _load_recipes(
         placeholders = ",".join("?" * len(allowed_expansions))
         rows = conn.execute(
             f"""
-            SELECT r.recipe_id, r.profession_slug, r.output_item_id, r.output_quantity, r.recipe_name
+            SELECT r.recipe_id, r.profession_slug, r.output_item_id, r.output_quantity,
+                   r.recipe_name
             FROM recipes r
             WHERE r.expansion_slug IN ({placeholders})
               AND EXISTS (
@@ -320,7 +323,8 @@ def _load_recipes(
     else:
         rows = conn.execute(
             """
-            SELECT r.recipe_id, r.profession_slug, r.output_item_id, r.output_quantity, r.recipe_name
+            SELECT r.recipe_id, r.profession_slug, r.output_item_id, r.output_quantity,
+                   r.recipe_name
             FROM recipes r
             WHERE EXISTS (
                 SELECT 1 FROM recipe_reagents rr
@@ -741,7 +745,7 @@ def _find_best_window(
 
     Ties broken by earliest sell horizon (prefer immediate over deferred).
     """
-    _TIE_ORDER: dict[CraftingWindow, int] = {
+    _TIE_ORDER: dict[CraftingWindow, int] = {  # noqa: N806 - module-style constant, scoped here for locality
         CraftingWindow.NOW_NOW:  0,
         CraftingWindow.NOW_7D:   1,
         CraftingWindow._7D_7D:   2,
@@ -792,7 +796,7 @@ def _compute_margin_status(
     xs = list(range(n))
     mean_x = (n - 1) / 2.0
     mean_y = sum(values) / n
-    num = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, values))
+    num = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, values, strict=True))
     den = sum((x - mean_x) ** 2 for x in xs)
     slope = num / den if den > 0 else 0.0
 

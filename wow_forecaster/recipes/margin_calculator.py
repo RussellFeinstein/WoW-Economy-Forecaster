@@ -80,7 +80,8 @@ _INSERT_CTE = f"""
             op.output_price,
             op.output_quantity,
             COUNT(rr.id)                                                      AS total_ingredients,
-            SUM(CASE WHEN dp.avg_price IS NOT NULL THEN 1 ELSE 0 END)         AS ingredients_with_price,
+            SUM(CASE WHEN dp.avg_price IS NOT NULL THEN 1 ELSE 0 END)
+                AS ingredients_with_price,
             SUM(COALESCE(dp.avg_price, 0.0) * rr.quantity)                    AS total_reagent_cost
         FROM output_prices op
         JOIN recipe_reagents rr

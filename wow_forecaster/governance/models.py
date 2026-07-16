@@ -94,7 +94,8 @@ class BackoffConfig(BaseModel):
     def valid_strategy(cls, v: str) -> str:
         if v not in VALID_BACKOFF_STRATEGIES:
             raise ValueError(
-                f"BackoffConfig.strategy must be one of {sorted(VALID_BACKOFF_STRATEGIES)}, got '{v}'."
+                "BackoffConfig.strategy must be one of "
+                f"{sorted(VALID_BACKOFF_STRATEGIES)}, got '{v}'."
             )
         return v
 
@@ -299,6 +300,7 @@ class SourcePolicy(BaseModel):
     def valid_access_method(cls, v: str) -> str:
         if v not in VALID_ACCESS_METHODS:
             raise ValueError(
-                f"SourcePolicy.access_method must be one of {sorted(VALID_ACCESS_METHODS)}, got '{v}'."
+                "SourcePolicy.access_method must be one of "
+                f"{sorted(VALID_ACCESS_METHODS)}, got '{v}'."
             )
         return v

@@ -249,7 +249,8 @@ class TestRecipeSeeder:
                         {"slot_type": {"name": "Sunglass Vial", "id": 405}, "display_order": 0},
                         {"slot_type": {"name": "Peacebloom", "id": 432}, "display_order": 1},
                         # Optional slot — should be skipped
-                        {"slot_type": {"name": "Artisan's Authenticity", "id": 396}, "display_order": 2},
+                        {"slot_type": {"name": "Artisan's Authenticity", "id": 396},
+                         "display_order": 2},
                     ],
                 }
             return original(recipe_id)
@@ -269,7 +270,8 @@ class TestRecipeSeeder:
             tier_keywords=["midnight"],
         )
         reagents = conn.execute(
-            "SELECT ingredient_item_id FROM recipe_reagents WHERE recipe_id = 101 ORDER BY ingredient_item_id;"
+            "SELECT ingredient_item_id FROM recipe_reagents "
+            "WHERE recipe_id = 101 ORDER BY ingredient_item_id;"
         ).fetchall()
         ingredient_ids = {r["ingredient_item_id"] for r in reagents}
         # Mote (200) + Sunglass Vial (9001) + Peacebloom (9002); authenticity skipped
@@ -343,7 +345,8 @@ class TestResolveRecipeByName:
                 "reagents": [],
                 "modified_crafting_slots": [
                     {"slot_type": {"name": "Peacebloom", "id": 432}, "display_order": 0},
-                    {"slot_type": {"name": "Artisan's Authenticity", "id": 396}, "display_order": 1},
+                    {"slot_type": {"name": "Artisan's Authenticity", "id": 396},
+                     "display_order": 1},
                 ],
             },
             profession_slug="alchemy",

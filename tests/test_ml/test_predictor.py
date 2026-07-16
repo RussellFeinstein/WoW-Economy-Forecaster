@@ -114,7 +114,9 @@ class TestRunInferenceBlending:
     def test_warm_archetype_not_blended(self, tmp_path):
         """Warm (non-cold-start) archetypes are never blended."""
         parquet_path = tmp_path / "inference_us_test.parquet"
-        _write_parquet([_archetype_row(archetype_id=10, price=80.0, is_cold_start=False)], parquet_path)
+        _write_parquet(
+            [_archetype_row(archetype_id=10, price=80.0, is_cold_start=False)], parquet_path
+        )
 
         forecaster_prediction = 120.0
         fc = _make_forecaster(forecaster_prediction)

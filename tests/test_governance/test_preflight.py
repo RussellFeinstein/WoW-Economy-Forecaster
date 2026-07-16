@@ -12,6 +12,7 @@ Covers:
   - PreflightCheckResult.passed is True only when ALL checks pass
 """
 
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -169,7 +170,7 @@ class TestRunPreflightChecks:
     def test_result_is_frozen(self):
         policy = _make_policy(enabled=True)
         result = run_preflight_checks("test_source", policy)
-        with pytest.raises(Exception):
+        with pytest.raises(FrozenInstanceError):
             result.passed = False  # type: ignore[misc]
 
     def test_cooldown_warning_mentions_remaining_time(self):

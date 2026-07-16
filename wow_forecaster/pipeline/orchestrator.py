@@ -114,8 +114,10 @@ class OrchestratorResult:
     realm_results:      list[RealmIngestionResult] = field(default_factory=list)
     normalize_success:  bool                   = False
     normalize_rows:     int                    = 0
-    drift_results:      dict                   = field(default_factory=dict)  # realm -> DriftCheckResult
-    provenance:         dict                   = field(default_factory=dict)  # realm -> ProvenanceSummary
+    # realm -> DriftCheckResult
+    drift_results:      dict                   = field(default_factory=dict)
+    # realm -> ProvenanceSummary
+    provenance:         dict                   = field(default_factory=dict)
     monitoring_files:   list[str]              = field(default_factory=list)
     errors:             list[str]              = field(default_factory=list)
     status:             str                    = "started"
@@ -236,7 +238,10 @@ class HourlyOrchestrator:
             logger.info("[3/4] Drift check skipped (check_drift=False).")
 
         # ── Step 5: Retention prune (API ToS §2.r) ───────────────────────────
-        logger.info("[4/5] Retention prune (raw data > %d days) ...", self.config.retention.raw_snapshot_days)
+        logger.info(
+            "[4/5] Retention prune (raw data > %d days) ...",
+            self.config.retention.raw_snapshot_days,
+        )
         self._run_prune()
 
         # ── Step 5.5: WAL checkpoint (keep WAL file bounded) ────────────────
@@ -530,7 +535,12 @@ class HourlyOrchestrator:
                 )
 
         except Exception as exc:
-            logger.error("Drift/provenance check failed for realm=%s: %s", realm_slug, exc, exc_info=True)
+            logger.error(
+                "Drift/provenance check failed for realm=%s: %s",
+                realm_slug,
+                exc,
+                exc_info=True,
+            )
 
         return drift_result, prov
 

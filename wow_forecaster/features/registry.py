@@ -68,9 +68,12 @@ class FeatureSpec:
 FEATURE_REGISTRY: list[FeatureSpec] = [
 
     # ── Identifiers / keys ─────────────────────────────────────────────────
-    FeatureSpec("archetype_id",   "int32",   "price", "Economic archetype primary key.",        is_nullable=False),
-    FeatureSpec("realm_slug",     "utf8",    "price", "Blizzard realm slug (e.g. 'area-52').",  is_nullable=False),
-    FeatureSpec("obs_date",       "date32",  "price", "Calendar date of the daily aggregate.",   is_nullable=False),
+    FeatureSpec("archetype_id",   "int32",   "price",
+                "Economic archetype primary key.", is_nullable=False),
+    FeatureSpec("realm_slug",     "utf8",    "price",
+                "Blizzard realm slug (e.g. 'area-52').", is_nullable=False),
+    FeatureSpec("obs_date",       "date32",  "price",
+                "Calendar date of the daily aggregate.", is_nullable=False),
 
     # ── Price summary ──────────────────────────────────────────────────────
     FeatureSpec("price_mean",              "float32", "price",
@@ -97,33 +100,47 @@ FEATURE_REGISTRY: list[FeatureSpec] = [
                 is_nullable=False, is_proxy=True),
 
     # ── Lag features ───────────────────────────────────────────────────────
-    FeatureSpec("price_lag_1d",  "float32", "lag", "price_mean N=1  calendar day prior.",  requires_history_days=1),
-    FeatureSpec("price_lag_3d",  "float32", "lag", "price_mean N=3  calendar days prior.", requires_history_days=3),
-    FeatureSpec("price_lag_7d",  "float32", "lag", "price_mean N=7  calendar days prior.", requires_history_days=7),
-    FeatureSpec("price_lag_14d", "float32", "lag", "price_mean N=14 calendar days prior.", requires_history_days=14),
-    FeatureSpec("price_lag_28d", "float32", "lag", "price_mean N=28 calendar days prior.", requires_history_days=28),
+    FeatureSpec("price_lag_1d",  "float32", "lag",
+                "price_mean N=1  calendar day prior.", requires_history_days=1),
+    FeatureSpec("price_lag_3d",  "float32", "lag",
+                "price_mean N=3  calendar days prior.", requires_history_days=3),
+    FeatureSpec("price_lag_7d",  "float32", "lag",
+                "price_mean N=7  calendar days prior.", requires_history_days=7),
+    FeatureSpec("price_lag_14d", "float32", "lag",
+                "price_mean N=14 calendar days prior.", requires_history_days=14),
+    FeatureSpec("price_lag_28d", "float32", "lag",
+                "price_mean N=28 calendar days prior.", requires_history_days=28),
 
     # ── Rolling stats ──────────────────────────────────────────────────────
     FeatureSpec("price_roll_mean_7d",  "float32", "rolling",
-                "Rolling mean of price_mean over the past 7 calendar days.",  requires_history_days=7),
+                "Rolling mean of price_mean over the past 7 calendar days.",
+                requires_history_days=7),
     FeatureSpec("price_roll_std_7d",   "float32", "rolling",
-                "Rolling std-dev of price_mean over the past 7 calendar days.",  requires_history_days=7),
+                "Rolling std-dev of price_mean over the past 7 calendar days.",
+                requires_history_days=7),
     FeatureSpec("price_roll_mean_14d", "float32", "rolling",
-                "Rolling mean of price_mean over the past 14 calendar days.", requires_history_days=14),
+                "Rolling mean of price_mean over the past 14 calendar days.",
+                requires_history_days=14),
     FeatureSpec("price_roll_std_14d",  "float32", "rolling",
-                "Rolling std-dev of price_mean over the past 14 calendar days.", requires_history_days=14),
+                "Rolling std-dev of price_mean over the past 14 calendar days.",
+                requires_history_days=14),
     FeatureSpec("price_roll_mean_28d", "float32", "rolling",
-                "Rolling mean of price_mean over the past 28 calendar days.", requires_history_days=28),
+                "Rolling mean of price_mean over the past 28 calendar days.",
+                requires_history_days=28),
     FeatureSpec("price_roll_std_28d",  "float32", "rolling",
-                "Rolling std-dev of price_mean over the past 28 calendar days.", requires_history_days=28),
+                "Rolling std-dev of price_mean over the past 28 calendar days.",
+                requires_history_days=28),
 
     # ── Momentum / pct-change ──────────────────────────────────────────────
     FeatureSpec("price_pct_change_7d",  "float32", "momentum",
-                "% change in price_mean vs 7 days ago: (today - 7d) / 7d.",  requires_history_days=7),
+                "% change in price_mean vs 7 days ago: (today - 7d) / 7d.",
+                requires_history_days=7),
     FeatureSpec("price_pct_change_14d", "float32", "momentum",
-                "% change in price_mean vs 14 days ago.",                     requires_history_days=14),
+                "% change in price_mean vs 14 days ago.",
+                requires_history_days=14),
     FeatureSpec("price_pct_change_28d", "float32", "momentum",
-                "% change in price_mean vs 28 days ago.",                     requires_history_days=28),
+                "% change in price_mean vs 28 days ago.",
+                requires_history_days=28),
 
     # ── Temporal / calendar ────────────────────────────────────────────────
     FeatureSpec("day_of_week",           "int32", "temporal",

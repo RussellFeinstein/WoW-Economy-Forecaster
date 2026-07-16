@@ -124,7 +124,9 @@ def load_known_events(conn: sqlite3.Connection) -> list[WoWEvent]:
                 patch_version=r["patch_version"],
                 start_date=date.fromisoformat(r["start_date"]),
                 end_date=date.fromisoformat(r["end_date"]) if r["end_date"] else None,
-                announced_at=datetime.fromisoformat(r["announced_at"]) if r["announced_at"] else None,
+                announced_at=(
+                    datetime.fromisoformat(r["announced_at"]) if r["announced_at"] else None
+                ),
                 is_recurring=bool(r["is_recurring"]),
                 recurrence_rule=r["recurrence_rule"],
                 notes=r["notes"],

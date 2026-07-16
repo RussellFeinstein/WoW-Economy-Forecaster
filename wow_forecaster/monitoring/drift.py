@@ -627,7 +627,8 @@ class DriftChecker:
         drift_level = _classify_error_drift(mae_ratio, self._mae_thresholds)
 
         logger.info(
-            "Error drift | realm=%s | h=%dd | n=%d | live_mae=%s | baseline_mae=%s | ratio=%s | level=%s",
+            "Error drift | realm=%s | h=%dd | n=%d | live_mae=%s | "
+            "baseline_mae=%s | ratio=%s | level=%s",
             realm_slug, horizon_days, n_evaluated,
             f"{live_mae:.2f}g" if live_mae else "N/A",
             f"{baseline_mae:.2f}g" if baseline_mae else "N/A",

@@ -27,7 +27,8 @@ class ItemCategoryRepository(BaseRepository):
         """
         self.execute(
             """
-            INSERT INTO item_categories (slug, display_name, parent_slug, archetype_tag, expansion_slug)
+            INSERT INTO item_categories
+                (slug, display_name, parent_slug, archetype_tag, expansion_slug)
             VALUES (?, ?, ?, ?, ?);
             """,
             (

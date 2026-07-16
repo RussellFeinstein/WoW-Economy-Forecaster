@@ -202,7 +202,9 @@ class RunMetadataRepository(BaseRepository):
         )
         return _row_to_run(row) if row else None
 
-    def get_recent_runs(self, pipeline_stage: str | None = None, limit: int = 20) -> list[RunMetadata]:
+    def get_recent_runs(
+        self, pipeline_stage: str | None = None, limit: int = 20
+    ) -> list[RunMetadata]:
         """Fetch recent run records, optionally filtered by stage.
 
         Args:

@@ -220,12 +220,15 @@ def migration_0005_add_crafting_tables(conn: sqlite3.Connection) -> None:
             margin_gold             REAL,
             margin_pct              REAL,
             ingredient_coverage_pct REAL    NOT NULL,
-            created_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+            created_at              TEXT    NOT NULL
+                DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
             UNIQUE(recipe_id, realm_slug, obs_date)
         );
 
-        CREATE INDEX IF NOT EXISTS idx_margin_recipe_date ON crafting_margin_snapshots(recipe_id, obs_date);
-        CREATE INDEX IF NOT EXISTS idx_margin_realm_date  ON crafting_margin_snapshots(realm_slug, obs_date);
+        CREATE INDEX IF NOT EXISTS idx_margin_recipe_date
+            ON crafting_margin_snapshots(recipe_id, obs_date);
+        CREATE INDEX IF NOT EXISTS idx_margin_realm_date
+            ON crafting_margin_snapshots(realm_slug, obs_date);
     """)
     conn.commit()
 

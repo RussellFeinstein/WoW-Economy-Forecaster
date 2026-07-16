@@ -283,8 +283,10 @@ def test_format_volatility_watchlist_truncation() -> None:
 def test_format_volatility_watchlist_skips_invalid_rows() -> None:
     """Rows with unparseable CI values are silently skipped."""
     records = [
-        {"archetype_id": "bad",   "horizon": "1d", "predicted_price": "bad", "ci_lower": "x", "ci_upper": "y", "score": "50", "action": "hold"},
-        {"archetype_id": "good",  "horizon": "1d", "predicted_price": "100.0", "ci_lower": "80.0", "ci_upper": "120.0", "score": "60", "action": "buy"},
+        {"archetype_id": "bad",   "horizon": "1d", "predicted_price": "bad",
+         "ci_lower": "x", "ci_upper": "y", "score": "50", "action": "hold"},
+        {"archetype_id": "good",  "horizon": "1d", "predicted_price": "100.0",
+         "ci_lower": "80.0", "ci_upper": "120.0", "score": "60", "action": "buy"},
     ]
     out = format_volatility_watchlist(records, "area-52", is_fresh=True, age_hours=0.5)
     assert "good" in out
@@ -300,7 +302,8 @@ _DRIFT = {
     "checked_at": "2025-01-15T12:00:00+00:00",
     "data_drift":  {"drift_level": "medium", "n_series_drifted": 3, "n_series_checked": 10},
     "error_drift": {"drift_level": "low",    "n_evaluated": 20, "mae_ratio": 1.3},
-    "event_shock": {"shock_active": False, "active_count": 0, "upcoming_count": 1, "active_events": []},
+    "event_shock": {"shock_active": False, "active_count": 0, "upcoming_count": 1,
+                    "active_events": []},
 }
 
 _HEALTH = {

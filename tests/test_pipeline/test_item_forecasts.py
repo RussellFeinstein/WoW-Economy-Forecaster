@@ -56,7 +56,8 @@ def _insert_archetype(conn, archetype_id: int, slug: str = "mat.herb.common") ->
 def _insert_item(conn, item_id: int, archetype_id: int | None = None) -> None:
     cat_id = _ensure_category(conn)
     conn.execute(
-        "INSERT OR IGNORE INTO items (item_id, name, category_id, expansion_slug, quality, archetype_id) "
+        "INSERT OR IGNORE INTO items "
+        "(item_id, name, category_id, expansion_slug, quality, archetype_id) "
         "VALUES (?, 'Item', ?, 'midnight', 'common', ?);",
         (item_id, cat_id, archetype_id),
     )
@@ -206,7 +207,9 @@ class TestGenerateItemForecasts:
             _make_archetype_forecast(10, "7d", predicted=60.0, ci_lower=54.0, ci_upper=66.0),
         ]
 
-        results = _generate_item_forecasts(conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us")
+        results = _generate_item_forecasts(
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+        )
         assert len(results) == 1
         fc = results[0]
         assert fc.item_id == 100
@@ -232,7 +235,9 @@ class TestGenerateItemForecasts:
             _make_archetype_forecast(10, "7d", predicted=60.0, ci_lower=54.0, ci_upper=66.0),
         ]
 
-        results = _generate_item_forecasts(conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us")
+        results = _generate_item_forecasts(
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+        )
         # ratio = 60/50 = 1.2
         # item 101 (20g): forecast = 20 × 1.2 = 24g
         # item 102 (80g): forecast = 80 × 1.2 = 96g
@@ -252,7 +257,9 @@ class TestGenerateItemForecasts:
             _make_archetype_forecast(10, "7d", predicted=60.0, ci_lower=54.0, ci_upper=66.0),
         ]
 
-        results = _generate_item_forecasts(conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us")
+        results = _generate_item_forecasts(
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+        )
         assert results == []
 
     def test_skips_item_without_archetype(self):
@@ -266,7 +273,9 @@ class TestGenerateItemForecasts:
             _make_archetype_forecast(10, "7d", predicted=60.0, ci_lower=54.0, ci_upper=66.0),
         ]
 
-        results = _generate_item_forecasts(conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us")
+        results = _generate_item_forecasts(
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+        )
         assert results == []
 
     def test_returns_empty_when_no_archetype_forecasts(self):
@@ -294,7 +303,9 @@ class TestGenerateItemForecasts:
             _make_archetype_forecast(10, "28d", predicted=60.0, ci_lower=54.0, ci_upper=66.0),
         ]
 
-        results = _generate_item_forecasts(conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us")
+        results = _generate_item_forecasts(
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+        )
         horizons = {fc.forecast_horizon for fc in results}
         assert horizons == {"1d", "7d", "28d"}
 
@@ -311,7 +322,9 @@ class TestGenerateItemForecasts:
             _make_archetype_forecast(10, "7d", predicted=60.0, ci_lower=54.0, ci_upper=66.0),
         ]
 
-        results = _generate_item_forecasts(conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us")
+        results = _generate_item_forecasts(
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+        )
         for fc in results:
             assert fc.confidence_lower <= fc.confidence_upper, (
                 f"CI ordering violated: lower={fc.confidence_lower} upper={fc.confidence_upper}"
@@ -330,14 +343,18 @@ class TestFetchItemForecastsInAdvisor:
 
         # Insert a run and an item-level forecast
         run_id = conn.execute(
-            "INSERT INTO run_metadata (run_slug, pipeline_stage, status, config_snapshot, started_at) "
-            "VALUES ('test-slug', 'forecast', 'success', '{}', '2026-03-09T00:00:00') RETURNING run_id;"
+            "INSERT INTO run_metadata "
+            "(run_slug, pipeline_stage, status, config_snapshot, started_at) "
+            "VALUES ('test-slug', 'forecast', 'success', '{}', '2026-03-09T00:00:00') "
+            "RETURNING run_id;"
         ).fetchone()[0]
         conn.execute(
             "INSERT INTO forecast_outputs "
             "(run_id, archetype_id, item_id, realm_slug, forecast_horizon, target_date, "
-            " predicted_price_gold, confidence_lower, confidence_upper, confidence_pct, model_slug) "
-            "VALUES (?, NULL, ?, 'us', '7d', '2026-03-16', 75.0, 67.5, 82.5, 0.80, 'item_ratio_lgbm_7d');",
+            " predicted_price_gold, confidence_lower, confidence_upper, "
+            "confidence_pct, model_slug) "
+            "VALUES (?, NULL, ?, 'us', '7d', '2026-03-16', "
+            "75.0, 67.5, 82.5, 0.80, 'item_ratio_lgbm_7d');",
             (run_id, 100),
         )
         conn.commit()
@@ -440,7 +457,9 @@ class TestFetchColdStartBlendData:
         _insert_item(conn, 100, archetype_id=1)
         _insert_price(conn, 100, "2026-03-06", 60.0, qty=100)
         # Mapping for different expansion pair
-        _insert_mapping(conn, 1, 2, confidence=0.9, source_expansion="dragonflight", target_expansion="tww")
+        _insert_mapping(
+            conn, 1, 2, confidence=0.9, source_expansion="dragonflight", target_expansion="tww"
+        )
         conn.commit()
 
         # Query for tww→midnight should return nothing
@@ -592,7 +611,8 @@ class TestFetchItemsWithHistory:
             ).fetchone()[0]
             conn.execute(
                 "INSERT INTO market_observations_normalized "
-                "(obs_id, item_id, realm_slug, observed_at, price_gold, quantity_listed, is_outlier) "
+                "(obs_id, item_id, realm_slug, observed_at, "
+                "price_gold, quantity_listed, is_outlier) "
                 "VALUES (?, ?, 'us', ?, 50.0, 100, 1);",
                 (obs_id, 100, f"{obs_date}T12:00:00Z"),
             )
@@ -621,7 +641,9 @@ class TestGenerateItemForecastsExtended:
             _make_archetype_forecast(10, "7d", predicted=60.0, ci_lower=54.0, ci_upper=66.0),
         ]
 
-        results = _generate_item_forecasts(conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us")
+        results = _generate_item_forecasts(
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+        )
         item_ids = {fc.item_id for fc in results}
         assert 999 in item_ids
 
@@ -639,7 +661,9 @@ class TestGenerateItemForecastsExtended:
             _make_archetype_forecast(10, "7d", predicted=60.0, ci_lower=54.0, ci_upper=66.0),
         ]
 
-        results = _generate_item_forecasts(conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us")
+        results = _generate_item_forecasts(
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+        )
         item_ids = {fc.item_id for fc in results}
         assert 100 in item_ids
 
@@ -659,7 +683,9 @@ class TestGenerateItemForecastsExtended:
             _make_archetype_forecast(10, "7d", predicted=60.0, ci_lower=54.0, ci_upper=66.0),
         ]
 
-        results = _generate_item_forecasts(conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us")
+        results = _generate_item_forecasts(
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+        )
         # item 100 should appear exactly once for horizon "7d"
         count_7d = sum(1 for fc in results if fc.item_id == 100 and fc.forecast_horizon == "7d")
         assert count_7d == 1

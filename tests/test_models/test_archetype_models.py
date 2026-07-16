@@ -70,7 +70,7 @@ class TestEconomicArchetype:
             )
 
     def test_frozen_immutable(self, sample_archetype):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             sample_archetype.transfer_confidence = 0.5
 
     def test_optional_sub_tag_defaults_none(self):
@@ -135,5 +135,5 @@ class TestArchetypeMapping:
         assert m.mapping_rationale == "Leading spaces trimmed."
 
     def test_frozen_immutable(self, sample_archetype_mapping):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             sample_archetype_mapping.confidence_score = 0.5

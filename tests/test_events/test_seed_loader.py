@@ -156,7 +156,9 @@ class TestUpsertEvents:
         upsert_events(mem_db, records)
         count = upsert_events(mem_db, records)  # Second upsert
         assert count == 1
-        rows = mem_db.execute("SELECT COUNT(*) as n FROM wow_events WHERE slug = 'evt-1'").fetchone()
+        rows = mem_db.execute(
+            "SELECT COUNT(*) as n FROM wow_events WHERE slug = 'evt-1'"
+        ).fetchone()
         assert rows["n"] == 1
 
     def test_upsert_updates_fields(self, mem_db):

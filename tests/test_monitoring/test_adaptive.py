@@ -73,22 +73,22 @@ class TestAutoRetrain:
     def test_auto_retrain_off_by_default_for_all_levels(self):
         for level in DriftLevel:
             result = evaluate_policy(level)
-            assert result.auto_retrain == False, (
+            assert not result.auto_retrain, (
                 f"auto_retrain should be False by default for {level}"
             )
 
     def test_auto_retrain_off_by_default_for_critical(self):
         result = evaluate_policy(DriftLevel.CRITICAL)
-        assert result.auto_retrain == False
+        assert not result.auto_retrain
 
     def test_auto_retrain_enabled_for_critical_when_allowed(self):
         result = evaluate_policy(DriftLevel.CRITICAL, allow_auto_retrain=True)
-        assert result.auto_retrain == True
+        assert result.auto_retrain
 
     def test_auto_retrain_not_enabled_below_critical_even_when_allowed(self):
         for level in (DriftLevel.NONE, DriftLevel.LOW, DriftLevel.MEDIUM, DriftLevel.HIGH):
             result = evaluate_policy(level, allow_auto_retrain=True)
-            assert result.auto_retrain == False, (
+            assert not result.auto_retrain, (
                 f"auto_retrain should not trigger for {level} even when allow_auto_retrain=True"
             )
 
@@ -105,13 +105,13 @@ class TestStringInput:
     def test_string_critical(self):
         result = evaluate_policy("critical")
         assert result.uncertainty_multiplier == 3.0
-        assert result.retrain_recommended == True
+        assert result.retrain_recommended
 
     def test_unknown_string_falls_back_gracefully(self):
         result = evaluate_policy("unknown_level")
         assert result.uncertainty_multiplier == 1.0
-        assert result.retrain_recommended == False
-        assert result.auto_retrain == False
+        assert not result.retrain_recommended
+        assert not result.auto_retrain
 
 
 # ── AdaptivePolicyResult type ─────────────────────────────────────────────────

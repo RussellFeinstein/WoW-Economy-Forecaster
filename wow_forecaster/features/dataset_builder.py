@@ -440,7 +440,9 @@ def build_datasets(
     total_rows = 0
 
     for realm_slug in realm_slugs:
-        log.info("Building features for realm=%s  window=%s -> %s", realm_slug, start_date, end_date)
+        log.info(
+            "Building features for realm=%s  window=%s -> %s", realm_slug, start_date, end_date
+        )
 
         # Step 1: Daily aggregation.
         agg_rows = fetch_daily_agg(conn, realm_slug, start_date, end_date)

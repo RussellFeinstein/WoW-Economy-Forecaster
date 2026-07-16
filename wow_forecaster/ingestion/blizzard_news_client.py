@@ -145,7 +145,9 @@ class BlizzardNewsClient:
             # Detect patch notes
             is_patch_notes = any(
                 kw in title_lower
-                for kw in ("hotfix", "patch notes", "ptr development", "maintenance", "update notes")
+                for kw in (
+                    "hotfix", "patch notes", "ptr development", "maintenance", "update notes"
+                )
             )
 
             # Extract patch version like "11.2.7" or "11.1" from title

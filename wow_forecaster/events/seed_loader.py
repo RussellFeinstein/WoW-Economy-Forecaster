@@ -380,20 +380,24 @@ def export_impacts_parquet(
 
     table = pa.table(
         {
-            "event_id":           pa.array([r["event_slug"]          for r in rows], type=pa.string()),
-            "archetype_category": pa.array([r["archetype_category"]  for r in rows], type=pa.string()),
-            "impact_direction":   pa.array([r["impact_direction"]    for r in rows], type=pa.string()),
+            "event_id":           pa.array([r["event_slug"] for r in rows], type=pa.string()),
+            "archetype_category": pa.array(
+                [r["archetype_category"] for r in rows],
+                type=pa.string()
+            ),
+            "impact_direction":   pa.array([r["impact_direction"] for r in rows], type=pa.string()),
             "typical_magnitude":  pa.array(
-                [float(r["typical_magnitude"]) if r["typical_magnitude"] is not None else None for r in rows],
+                [float(r["typical_magnitude"]) if r["typical_magnitude"] is not None else None
+                 for r in rows],
                 type=pa.float32()
             ),
-            "lag_days":           pa.array([int(r["lag_days"])       for r in rows], type=pa.int32()),
+            "lag_days":           pa.array([int(r["lag_days"]) for r in rows], type=pa.int32()),
             "duration_days":      pa.array(
                 [int(r["duration_days"]) if r["duration_days"] is not None else None for r in rows],
                 type=pa.int32()
             ),
-            "source":             pa.array([r["source"]              for r in rows], type=pa.string()),
-            "notes":              pa.array([r["notes"]               for r in rows], type=pa.string()),
+            "source":             pa.array([r["source"] for r in rows], type=pa.string()),
+            "notes":              pa.array([r["notes"] for r in rows], type=pa.string()),
         },
         schema=_IMPACTS_PA_SCHEMA,
     )

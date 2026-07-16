@@ -228,7 +228,9 @@ def test_flatten_recommendations_all_expected_columns() -> None:
 
 def test_flatten_recommendations_empty_categories() -> None:
     """Empty categories dict produces an empty list."""
-    empty = {"realm_slug": "area-52", "generated_at": "2025-01-15", "run_slug": "", "categories": {}}
+    empty = {
+        "realm_slug": "area-52", "generated_at": "2025-01-15", "run_slug": "", "categories": {}
+    }
     assert flatten_recommendations_for_export(empty) == []
 
 
@@ -268,7 +270,9 @@ def test_flatten_forecast_records_zero_predicted() -> None:
 
 def test_flatten_forecast_records_invalid_values() -> None:
     """Rows with unparseable numbers get None for derived columns."""
-    records = [{"archetype_id": "bad", "ci_lower": "N/A", "ci_upper": "N/A", "predicted_price": "N/A"}]
+    records = [
+        {"archetype_id": "bad", "ci_lower": "N/A", "ci_upper": "N/A", "predicted_price": "N/A"}
+    ]
     result = flatten_forecast_records_for_export(records)
     assert result[0]["ci_width_gold"]   is None
     assert result[0]["ci_pct_of_price"] is None
@@ -319,8 +323,10 @@ _RECS_JSON_WITH_ITEMS = {
                 },
                 "model_slug": "lgbm_v1",
                 "recommended_items": [
-                    {"item_id": 10, "name": "Ore A",  "item_price_gold": 80.0,  "discount_pct": 0.20,  "price_z_score":  1.0,  "obs_count": 5},
-                    {"item_id": 11, "name": "Ore B",  "item_price_gold": 90.0,  "discount_pct": 0.10,  "price_z_score":  0.5,  "obs_count": 3},
+                    {"item_id": 10, "name": "Ore A",  "item_price_gold": 80.0,
+                     "discount_pct": 0.20,  "price_z_score":  1.0,  "obs_count": 5},
+                    {"item_id": 11, "name": "Ore B",  "item_price_gold": 90.0,
+                     "discount_pct": 0.10,  "price_z_score":  0.5,  "obs_count": 3},
                 ],
             }
         ],
@@ -378,10 +384,12 @@ def test_flatten_recommendations_single_item_no_pipe() -> None:
                 "target_date": "2025-01-16", "current_price": 100.0,
                 "predicted_price": 110.0, "ci_lower": 105.0, "ci_upper": 115.0,
                 "roi_pct": 0.10, "score": 50.0, "action": "buy", "reasoning": "",
-                "score_components": {"opportunity": 0, "liquidity": 0, "volatility": 0, "event_boost": 0, "uncertainty": 0},
+                "score_components": {"opportunity": 0, "liquidity": 0, "volatility": 0,
+                                     "event_boost": 0, "uncertainty": 0},
                 "model_slug": "lgbm_v1",
                 "recommended_items": [
-                    {"item_id": 1, "name": "Solo Item", "item_price_gold": 95.0, "discount_pct": 0.05, "obs_count": 2}
+                    {"item_id": 1, "name": "Solo Item", "item_price_gold": 95.0,
+                     "discount_pct": 0.05, "obs_count": 2}
                 ],
             }],
         },

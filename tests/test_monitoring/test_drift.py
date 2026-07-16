@@ -154,7 +154,9 @@ class TestClassifyErrorDrift:
 
     def test_custom_thresholds(self):
         # Very tight thresholds
-        assert _classify_error_drift(1.05, thresholds=(1.01, 1.02, 1.03, 1.04)) == DriftLevel.CRITICAL
+        assert (
+            _classify_error_drift(1.05, thresholds=(1.01, 1.02, 1.03, 1.04)) == DriftLevel.CRITICAL
+        )
 
 
 # ── _overall_drift_level ───────────────────────────────────────────────────────
@@ -172,7 +174,9 @@ class TestOverallDriftLevel:
         # HIGH + shock -> CRITICAL (not beyond)
         assert _overall_drift_level(DriftLevel.HIGH, DriftLevel.NONE, True) == DriftLevel.CRITICAL
         # CRITICAL + shock -> CRITICAL (clamped)
-        assert _overall_drift_level(DriftLevel.CRITICAL, DriftLevel.NONE, True) == DriftLevel.CRITICAL
+        assert (
+            _overall_drift_level(DriftLevel.CRITICAL, DriftLevel.NONE, True) == DriftLevel.CRITICAL
+        )
 
     def test_no_shock_no_bump(self):
         assert _overall_drift_level(DriftLevel.MEDIUM, DriftLevel.NONE, False) == DriftLevel.MEDIUM
@@ -283,7 +287,7 @@ class TestCheckEventShocks:
     def test_empty_db_no_shock(self, drift_db: sqlite3.Connection):
         checker = DriftChecker(drift_db)
         report  = checker.check_event_shocks()
-        assert report.shock_active       == False
+        assert not report.shock_active
         assert report.active_events      == []
         assert report.upcoming_events    == []
 
@@ -296,7 +300,7 @@ class TestCheckEventShocks:
         checker = DriftChecker(drift_db, shock_window_days=7)
         report  = checker.check_event_shocks()
         assert len(report.active_events) == 1
-        assert report.shock_active == False  # minor doesn't trigger
+        assert not report.shock_active  # minor doesn't trigger
 
     def test_active_major_event_triggers_shock(self, drift_db: sqlite3.Connection):
         """Active MAJOR event triggers shock_active=True."""
@@ -306,7 +310,7 @@ class TestCheckEventShocks:
 
         checker = DriftChecker(drift_db, shock_window_days=7)
         report  = checker.check_event_shocks()
-        assert report.shock_active == True
+        assert report.shock_active
 
     def test_upcoming_critical_event_triggers_shock(self, drift_db: sqlite3.Connection):
         """Upcoming CRITICAL event within window triggers shock flag."""
@@ -316,7 +320,7 @@ class TestCheckEventShocks:
         checker = DriftChecker(drift_db, shock_window_days=7)
         report  = checker.check_event_shocks()
         assert len(report.upcoming_events) == 1
-        assert report.shock_active == True
+        assert report.shock_active
 
     def test_past_event_not_active(self, drift_db: sqlite3.Connection):
         """Events that ended yesterday are not in active list."""
@@ -327,7 +331,7 @@ class TestCheckEventShocks:
         checker = DriftChecker(drift_db, shock_window_days=7)
         report  = checker.check_event_shocks()
         assert len(report.active_events) == 0
-        assert report.shock_active == False
+        assert not report.shock_active
 
     def test_far_future_event_not_upcoming(self, drift_db: sqlite3.Connection):
         """Events starting beyond shock_window_days are not in upcoming list."""
@@ -337,7 +341,7 @@ class TestCheckEventShocks:
         checker = DriftChecker(drift_db, shock_window_days=7)
         report  = checker.check_event_shocks()
         assert len(report.upcoming_events) == 0
-        assert report.shock_active == False
+        assert not report.shock_active
 
 
 # ── DriftChecker.run_all ──────────────────────────────────────────────────────
@@ -363,7 +367,7 @@ class TestRunAll:
 
         assert result.overall_drift_level    == DriftLevel.NONE
         assert result.uncertainty_multiplier == 1.0
-        assert result.retrain_recommended    == False
+        assert not result.retrain_recommended
 
     def test_uncertainty_multiplier_matches_policy(self, drift_db: sqlite3.Connection):
         """Verify that the uncertainty_multiplier in the result matches adaptive policy."""

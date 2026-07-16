@@ -315,7 +315,7 @@ def build_recommendation_outputs(
     """
     outputs: list[RecommendationOutput] = []
 
-    for cat, items in top_by_category.items():
+    for _cat, items in top_by_category.items():
         for rank, sf in enumerate(items, start=1):
             if sf.forecast.forecast_id is None:
                 continue  # forecast_id FK required

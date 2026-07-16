@@ -169,10 +169,6 @@ def _load_recent_forecasts(conn, realm_slug: str, run_id: int | None):
     """Load the most recent forecast outputs for a realm from the DB."""
     from datetime import date
 
-    from wow_forecaster.db.repositories.forecast_repo import ForecastOutputRepository
-
-    repo = ForecastOutputRepository(conn)
-
     if run_id is not None:
         # Specific run
         rows = conn.execute(

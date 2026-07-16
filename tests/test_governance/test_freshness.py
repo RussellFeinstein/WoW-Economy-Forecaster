@@ -167,7 +167,9 @@ class TestComputeAgeHours:
 class TestCheckSourceFreshness:
     def test_fresh_snapshot(self, fresh_db):
         _insert_snapshot(fresh_db, "test_api", _ts(0.5))
-        policy = _make_freshness_policy(source_id="test_api", ttl_hours=1.0, stale_threshold_hours=3.0)
+        policy = _make_freshness_policy(
+            source_id="test_api", ttl_hours=1.0, stale_threshold_hours=3.0
+        )
         result = check_source_freshness(fresh_db, "test_api", policy)
 
         assert result.source_id == "test_api"
@@ -179,7 +181,9 @@ class TestCheckSourceFreshness:
 
     def test_stale_snapshot(self, fresh_db):
         _insert_snapshot(fresh_db, "test_api", _ts(5.0))
-        policy = _make_freshness_policy(source_id="test_api", ttl_hours=1.0, stale_threshold_hours=3.0)
+        policy = _make_freshness_policy(
+            source_id="test_api", ttl_hours=1.0, stale_threshold_hours=3.0
+        )
         result = check_source_freshness(fresh_db, "test_api", policy)
 
         assert result.status == FreshnessStatus.STALE
@@ -189,7 +193,8 @@ class TestCheckSourceFreshness:
     def test_critical_snapshot(self, fresh_db):
         _insert_snapshot(fresh_db, "test_api", _ts(30.0))
         policy = _make_freshness_policy(
-            source_id="test_api", ttl_hours=1.0, stale_threshold_hours=3.0, critical_threshold_hours=25.0
+            source_id="test_api", ttl_hours=1.0, stale_threshold_hours=3.0,
+            critical_threshold_hours=25.0
         )
         result = check_source_freshness(fresh_db, "test_api", policy)
 

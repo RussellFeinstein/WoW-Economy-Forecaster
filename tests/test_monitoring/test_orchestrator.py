@@ -106,7 +106,9 @@ class TestPerRealmFailureIsolation:
 
         def fake_ingest(realm_slug, run_id):
             if realm_slug == "bad-realm":
-                return RealmIngestionResult(realm_slug=realm_slug, success=False, rows_written=0, error="API timeout")
+                return RealmIngestionResult(
+                    realm_slug=realm_slug, success=False, rows_written=0, error="API timeout"
+                )
             return RealmIngestionResult(realm_slug=realm_slug, success=True, rows_written=3)
 
         with patch.object(orch, "_ensure_schema"):
@@ -184,7 +186,7 @@ class TestNormalizeFailure:
                             with patch.object(orch, "_persist_run_finish"):
                                 result = orch.run(["r1"])
 
-        assert result.normalize_success == False
+        assert not result.normalize_success
         assert result.normalize_rows    == 0
         assert any("NormalizeStage" in e for e in result.errors)
 

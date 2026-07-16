@@ -194,7 +194,9 @@ class SnapshotPruner:
                                     result.errors.append(err)
                                     continue
                             result.files_deleted += 1
-                            logger.debug("%sDeleted snapshot file: %s", "[DRY] " if dry_run else "", f)
+                            logger.debug(
+                                "%sDeleted snapshot file: %s", "[DRY] " if dry_run else "", f
+                            )
 
                     # Remove the now-empty day directory
                     if not dry_run and day_dir.exists() and not any(day_dir.iterdir()):

@@ -314,7 +314,8 @@ class TestComputeWindowsTrendRatio:
         return {"recipe_id": 1, "output_item_id": 100, "output_quantity": 1}
 
     def test_ratio_scaling_applied_when_item_price_differs_from_archetype_avg(self):
-        """Item at 20g in archetype averaging 50g; archetype forecast 60g → item projected at 24g."""
+        """Item at 20g in archetype averaging 50g; archetype forecast 60g → item
+        projected at 24g."""
         recipe = self._make_base_recipe()
         # Archetype avg = 50g, forecast 7d = 60g → ratio = 1.2
         # Reagent item current = 20g → projected = 20 × 1.2 = 24g
@@ -334,8 +335,10 @@ class TestComputeWindowsTrendRatio:
         margin_now_7d = windows.get(CraftingWindow.NOW_7D)
         assert margin_now_7d is not None
         # Reagent projected via ratio: 20 × (60/50) = 24g
-        # Output projected: current craft_cost used for buy=now; output_price from archetype forecast
-        # For NOW_7D: buy_h=0 → uses current_craft_cost=20g; sell_h=7 → output = 100 × (60/50) = 120g
+        # Output projected: current craft_cost used for buy=now;
+        # output_price from archetype forecast
+        # For NOW_7D: buy_h=0 → uses current_craft_cost=20g;
+        # sell_h=7 → output = 100 × (60/50) = 120g
         assert abs(margin_now_7d - (120.0 - 20.0)) < 1.0
 
     def test_ratio_scaling_for_reagent_future_buy(self):
@@ -353,7 +356,8 @@ class TestComputeWindowsTrendRatio:
             current_price_map={100: 100.0, 200: 16.0},
             archetype_current_prices={10: 40.0},
         )
-        # +7d->+7d: buy reagent at 7d horizon (projected = 20g); sell output at 7d (projected = 100×1.25=125g)
+        # +7d->+7d: buy reagent at 7d horizon (projected = 20g);
+        # sell output at 7d (projected = 100×1.25=125g)
         margin_7d_7d = windows.get(CraftingWindow._7D_7D)
         assert margin_7d_7d is not None
         # craft_cost = 20g (reagent at 7d); output = 125g
@@ -379,7 +383,8 @@ class TestComputeWindowsTrendRatio:
         assert abs(margin_now_7d - (55.0 - 30.0)) < 1.0
 
     def test_fallback_to_current_price_when_no_forecast_at_all(self):
-        """When no archetype forecast exists, falls back to current item price (no change assumed)."""
+        """When no archetype forecast exists, falls back to current item price
+        (no change assumed)."""
         recipe = self._make_base_recipe()
         windows, _ = _compute_windows(
             recipe=recipe,

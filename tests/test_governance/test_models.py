@@ -60,7 +60,9 @@ class TestRateLimitConfig:
         assert r.cooldown_seconds == 0.0
 
     def test_valid_values(self):
-        r = RateLimitConfig(requests_per_minute=20, requests_per_hour=500, burst_limit=5, cooldown_seconds=3.0)
+        r = RateLimitConfig(
+            requests_per_minute=20, requests_per_hour=500, burst_limit=5, cooldown_seconds=3.0
+        )
         assert r.requests_per_minute == 20
         assert r.cooldown_seconds == 3.0
 
@@ -83,7 +85,7 @@ class TestRateLimitConfig:
 
     def test_frozen(self):
         r = RateLimitConfig(cooldown_seconds=1.0)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             r.cooldown_seconds = 2.0  # type: ignore[misc]
 
 
@@ -218,7 +220,7 @@ class TestSourcePolicy:
 
     def test_frozen(self):
         p = _make_policy()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             p.enabled = True  # type: ignore[misc]
 
     def test_enabled_true(self):
@@ -231,7 +233,9 @@ class TestSourcePolicy:
             requires_auth=False,
             source_type="manual_event",
             rate_limit=RateLimitConfig(),
-            backoff=BackoffConfig(strategy="fixed", base_seconds=0.0, max_seconds=0.0, max_retries=0),
+            backoff=BackoffConfig(
+                strategy="fixed", base_seconds=0.0, max_seconds=0.0, max_retries=0
+            ),
             freshness=FreshnessConfig(
                 ttl_hours=720.0,
                 refresh_cadence_hours=720.0,

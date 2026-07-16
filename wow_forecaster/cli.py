@@ -48,10 +48,10 @@ def _load_config_or_exit(config_path: str | None = None):
         return load_config(cfg_path)
     except FileNotFoundError as exc:
         typer.echo(f"[ERROR] {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     except Exception as exc:
         typer.echo(f"[ERROR] Config validation failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
 
 def _configure_logging(config):
@@ -215,7 +215,7 @@ def import_events(
             validated = parse_event_csv(events_path)
         except (FileNotFoundError, ValueError) as exc:
             typer.echo(f"[ERROR] CSV parse failed:\n{exc}", err=True)
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
 
     elif fmt == ".json":
         try:
@@ -223,7 +223,7 @@ def import_events(
                 raw_events = json.load(f)
         except (json.JSONDecodeError, OSError) as exc:
             typer.echo(f"[ERROR] JSON parse error: {exc}", err=True)
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
 
         if not isinstance(raw_events, list):
             typer.echo("[ERROR] JSON events file must contain an array.", err=True)
@@ -370,7 +370,7 @@ def import_auctionator(
         )
     except Exception as exc:
         typer.echo(f"[ERROR] Auctionator import failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo(f"  Inserted: {inserted:,} observations")
     typer.echo(f"  Skipped:  {skipped:,} (unknown item IDs — run init-db to populate items table)")
@@ -464,10 +464,10 @@ def bootstrap_items_cmd(
         )
     except FileNotFoundError as exc:
         typer.echo(f"[ERROR] {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     except Exception as exc:
         typer.echo(f"[ERROR] Bootstrap failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo("")
     typer.echo(f"  item_categories:    {cats:>5}")
@@ -697,7 +697,7 @@ def train_model(
         result_run = stage.run(realm_slugs=target_realms)
     except Exception as exc:
         typer.echo(f"[ERROR] Training failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo(
         f"  status={result_run.status} | models_trained={result_run.rows_processed}"
@@ -804,7 +804,7 @@ def run_daily_forecast(
         )
     except Exception as exc:
         typer.echo(f"[ERROR] ForecastStage failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     # ── Step 3: RecommendStage ─────────────────────────────────────────────────
     if not skip_recommend:
@@ -904,7 +904,7 @@ def recommend_top_items(
         )
     except Exception as exc:
         typer.echo(f"[ERROR] Recommend failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo(
         f"  status={result.status} | recommendations={result.rows_processed}"
@@ -999,7 +999,7 @@ def backtest(
         end   = date.fromisoformat(end_date)
     except ValueError as exc:
         typer.echo(f"[ERROR] Invalid date format: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     if end <= start:
         typer.echo("[ERROR] --end-date must be after --start-date.", err=True)
@@ -1014,7 +1014,7 @@ def backtest(
                 raise ValueError("All horizons must be >= 1.")
         except ValueError as exc:
             typer.echo(f"[ERROR] Invalid --horizons value: {exc}", err=True)
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
 
     target_db    = db_path or config.database.db_path
     target_realm = realm or config.realms.defaults[0]
@@ -1061,7 +1061,7 @@ def backtest(
         )
     except Exception as exc:
         typer.echo(f"[ERROR] Backtest failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo(
         f"  status={result_run.status} | records={result_run.rows_processed}"
@@ -1217,7 +1217,10 @@ def report_backtest(
     model_metrics = slice_by_model_and_horizon(records)
     typer.echo("")
     typer.echo("Per-model metrics (MAE in gold | RMSE | MAPE | Dir.Acc):")
-    header = f"  {'Model':<22} {'H':>3}  {'N':>6}  {'MAE':>8}  {'RMSE':>8}  {'MAPE':>7}  {'DirAcc':>7}"
+    header = (
+        f"  {'Model':<22} {'H':>3}  {'N':>6}  {'MAE':>8}  "
+        f"{'RMSE':>8}  {'MAPE':>7}  {'DirAcc':>7}"
+    )
     typer.echo(header)
     typer.echo("  " + "-" * (len(header) - 2))
     for (model_name, h), m in sorted(model_metrics.items()):
@@ -1262,7 +1265,8 @@ def build_events_cmd(
     impacts_file: str | None = typer.Option(
         None,
         "--impacts-file",
-        help="Path to category impacts JSON seed file. Defaults to config/events/tww_event_impacts.json.",
+        help="Path to category impacts JSON seed file. "
+        "Defaults to config/events/tww_event_impacts.json.",
     ),
     output_dir: str | None = typer.Option(
         None,
@@ -1314,14 +1318,19 @@ def build_events_cmd(
     target_db = db_path or config.database.db_path
 
     resolved_events  = Path(events_file)  if events_file  else Path("config/events/tww_events.json")
-    resolved_impacts = Path(impacts_file) if impacts_file else Path("config/events/tww_event_impacts.json")
+    resolved_impacts = (
+        Path(impacts_file) if impacts_file else Path("config/events/tww_event_impacts.json")
+    )
     resolved_out     = Path(output_dir)   if output_dir   else Path("data/processed/events")
 
     if not resolved_events.exists():
         typer.echo(f"[ERROR] Events file not found: {resolved_events}", err=True)
         raise typer.Exit(code=1)
 
-    typer.echo(f"build-events | events={resolved_events} | impacts={resolved_impacts} | db={target_db}")
+    typer.echo(
+        f"build-events | events={resolved_events} | "
+        f"impacts={resolved_impacts} | db={target_db}"
+    )
 
     with get_connection(
         target_db,
@@ -1387,7 +1396,10 @@ def list_events_cmd(
         conn.row_factory = __import__("sqlite3").Row
         cur = conn.cursor()
 
-        sql  = "SELECT slug, expansion_slug, event_type, severity, start_date, end_date, display_name FROM wow_events"
+        sql  = (
+            "SELECT slug, expansion_slug, event_type, severity, start_date, end_date, "
+            "display_name FROM wow_events"
+        )
         args: list = []
         where: list[str] = []
 
@@ -1506,7 +1518,7 @@ def build_datasets_cmd(
         )
     except ValueError as exc:
         typer.echo(f"[ERROR] Invalid date format: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     if end <= start:
         typer.echo("[ERROR] --end-date must be after --start-date.", err=True)
@@ -1520,10 +1532,19 @@ def build_datasets_cmd(
     if dry_run:
         typer.echo("[DRY RUN] Would build:")
         for r in target_realms:
-            typer.echo(f"  training:  data/processed/features/training/train_{r}_{start}_{end}.parquet")
+            typer.echo(
+                f"  training:  data/processed/features/training/"
+                f"train_{r}_{start}_{end}.parquet"
+            )
             if not no_inference:
-                typer.echo(f"  inference: data/processed/features/inference/inference_{r}_{date.today()}.parquet")
-            typer.echo(f"  manifest:  data/processed/features/manifests/manifest_{r}_{date.today()}.json")
+                typer.echo(
+                    f"  inference: data/processed/features/inference/"
+                    f"inference_{r}_{date.today()}.parquet"
+                )
+            typer.echo(
+                f"  manifest:  data/processed/features/manifests/"
+                f"manifest_{r}_{date.today()}.json"
+            )
         return
 
     # Ensure schema exists.
@@ -1560,7 +1581,7 @@ def build_datasets_cmd(
             )
     except Exception as exc:
         typer.echo(f"[ERROR] Dataset build failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo(f"[OK] Built {total} training rows across {len(target_realms)} realm(s).")
 
@@ -1611,7 +1632,7 @@ def validate_datasets_cmd(
             manifest_data = json.load(f)
     except (json.JSONDecodeError, OSError) as exc:
         typer.echo(f"[ERROR] Failed to read manifest: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     training_info = manifest_data.get("files", {}).get("training", {})
     training_path = Path(training_info.get("path", ""))
@@ -1626,7 +1647,7 @@ def validate_datasets_cmd(
         rows = table.to_pylist()
     except Exception as exc:
         typer.echo(f"[ERROR] Failed to read Parquet: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo(f"Running quality report on {len(rows)} rows...")
     items_excluded = manifest_data.get("quality", {}).get("items_excluded_no_archetype", 0)
@@ -1636,7 +1657,10 @@ def validate_datasets_cmd(
     typer.echo("")
     typer.echo("=== Data Quality Report ===")
     typer.echo(f"  Realm:            {manifest_data.get('realm_slug', '?')}")
-    typer.echo(f"  Date range:       {manifest_data.get('date_range', {}).get('start')} -> {manifest_data.get('date_range', {}).get('end')}")
+    typer.echo(
+        f"  Date range:       {manifest_data.get('date_range', {}).get('start')} -> "
+        f"{manifest_data.get('date_range', {}).get('end')}"
+    )
     typer.echo(f"  Total rows:       {report.total_rows}")
     typer.echo(f"  Total archetypes: {report.total_archetypes}")
     typer.echo(f"  Total realms:     {report.total_realms}")
@@ -1762,7 +1786,10 @@ def evaluate_live_forecast(
     typer.echo("=== Live Forecast Health ===")
     typer.echo(f"  Realm: {target_realm}")
     typer.echo("")
-    header = f"  {'Horizon':>8}  {'Status':>10}  {'N':>5}  {'LiveMAE':>9}  {'BaseMAE':>9}  {'Ratio':>7}  {'DirAcc':>7}"
+    header = (
+        f"  {'Horizon':>8}  {'Status':>10}  {'N':>5}  {'LiveMAE':>9}  "
+        f"{'BaseMAE':>9}  {'Ratio':>7}  {'DirAcc':>7}"
+    )
     typer.echo(header)
     typer.echo("  " + "-" * (len(header) - 2))
     for s in summaries:
@@ -2671,12 +2698,15 @@ def list_sources_cmd(
         policies = list_sources(sources_path)
     except FileNotFoundError as exc:
         typer.echo(f"[ERROR] {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     n_enabled  = sum(1 for p in policies if p.enabled)
     n_disabled = len(policies) - n_enabled
 
-    typer.echo(f"\n  Source Registry  ({len(policies)} sources, {n_enabled} enabled, {n_disabled} disabled)")
+    typer.echo(
+        f"\n  Source Registry  ({len(policies)} sources, "
+        f"{n_enabled} enabled, {n_disabled} disabled)"
+    )
     typer.echo(f"  Config: {sources_path}")
     typer.echo("")
 
@@ -2781,7 +2811,9 @@ def validate_source_policies_cmd(
             )
             policies.append(policy)
         except (ValidationError, TypeError) as exc:
-            errors[sid] = [str(e) for e in (exc.errors() if isinstance(exc, ValidationError) else [exc])]
+            errors[sid] = [
+                str(e) for e in (exc.errors() if isinstance(exc, ValidationError) else [exc])
+            ]
 
     typer.echo(format_validation_report(policies, errors))
 
@@ -2857,7 +2889,7 @@ def check_source_freshness_cmd(
         policies = list_sources(sources_path)
     except FileNotFoundError as exc:
         typer.echo(f"[ERROR] {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo("\n  Source Freshness Check")
     typer.echo(f"  Sources config : {sources_path}")
@@ -3272,7 +3304,10 @@ def report_crafting(
             f"    Status: {opp.margin_status.upper()}  "
             f"(slope={slope_str}, {rank_str}, {config.crafting.margin_history_days}-day history)"
         )
-        typer.echo(f"    Volume: {opp.quantity_sum_7d:.0f} units/week  (vol_score={opp.volume_score:.2f})")
+        typer.echo(
+            f"    Volume: {opp.quantity_sum_7d:.0f} units/week  "
+            f"(vol_score={opp.volume_score:.2f})"
+        )
         typer.echo(f"    Ingredient coverage: {opp.ingredient_coverage_pct * 100:.0f}%")
         typer.echo("    Windows:")
 
@@ -3297,7 +3332,7 @@ def report_crafting(
         export_path = Path(export)
         export_path.parent.mkdir(parents=True, exist_ok=True)
 
-        from wow_forecaster.recommendations.crafting_advisor import CraftingWindow as _CW
+        from wow_forecaster.recommendations.crafting_advisor import CraftingWindow
 
         fieldnames = [
             "rank", "recipe_id", "recipe_name", "profession_slug", "output_item_id",
@@ -3305,7 +3340,7 @@ def report_crafting(
             "best_window", "best_window_margin_gold", "best_window_margin_pct",
             "current_output_price_gold", "current_craft_cost_gold", "current_margin_gold",
             "ingredient_coverage_pct", "quantity_sum_7d", "volume_score", "opportunity_score",
-        ] + [f"margin_{w.name.lower()}_gold" for w in _CW]
+        ] + [f"margin_{w.name.lower()}_gold" for w in CraftingWindow]
 
         with open(export_path, "w", newline="", encoding="utf-8") as f:
             writer = _csv.DictWriter(f, fieldnames=fieldnames)
@@ -3331,7 +3366,7 @@ def report_crafting(
                     "volume_score": opp.volume_score,
                     "opportunity_score": opp.opportunity_score,
                 }
-                for w in _CW:
+                for w in CraftingWindow:
                     row[f"margin_{w.name.lower()}_gold"] = opp.windows.get(w)
                 writer.writerow(row)
 
@@ -3350,7 +3385,8 @@ def report_recipe_status(
     db_path: str | None = typer.Option(None, "--db-path", help="Override DB path."),
     config_path: Path | None = typer.Option(None, "--config", help="Config file path."),
 ) -> None:
-    """Show recipe seeding status: counts by expansion + profession, reagent coverage, margin snapshots.
+    """Show recipe seeding status: counts by expansion + profession, reagent coverage,
+    margin snapshots.
 
     Use this to verify that seed-recipes and build-margins ran successfully.
 
@@ -3420,7 +3456,10 @@ def report_recipe_status(
             return
 
         typer.echo("")
-        typer.echo(f"  {'Expansion':<18} {'Profession':<20} {'Recipes':>8} {'w/Reagents':>11} {'Coverage':>9}")
+        typer.echo(
+            f"  {'Expansion':<18} {'Profession':<20} {'Recipes':>8} "
+            f"{'w/Reagents':>11} {'Coverage':>9}"
+        )
         typer.echo("  " + "-" * 70)
 
         current_exp = None
@@ -3519,7 +3558,9 @@ def report_feature_importance(
     config = _load_config_or_exit(config_path)
     target_realm    = realm or list(config.realms.defaults)[0]
     target_horizons = list(horizon) if horizon else ["1d", "7d", "28d"]
-    art_dir         = Path(artifact_dir_override) if artifact_dir_override else Path(config.model.artifact_dir)
+    art_dir         = (
+        Path(artifact_dir_override) if artifact_dir_override else Path(config.model.artifact_dir)
+    )
 
     if importance_type not in ("gain", "split"):
         typer.echo(
@@ -3574,7 +3615,7 @@ def report_feature_importance(
                 "splits":    int(s),
                 "split_pct": float(s) / total_split * 100.0,
             }
-            for col, g, s in zip(feat_cols, gain_vals, split_vals)
+            for col, g, s in zip(feat_cols, gain_vals, split_vals, strict=False)
         ]
 
         sort_key = "gain" if importance_type == "gain" else "splits"
@@ -3770,7 +3811,10 @@ def checkpoint_db_cmd(
         typer.echo("  WAL size after:  0.0 MB")
 
     if busy:
-        typer.echo(f"  [WARN] Checkpoint incomplete (busy). log={log_pages} checkpointed={checkpointed}")
+        typer.echo(
+            f"  [WARN] Checkpoint incomplete (busy). "
+            f"log={log_pages} checkpointed={checkpointed}"
+        )
         typer.echo("  Another process may be using the database. Retry when idle.")
         raise typer.Exit(code=1)
     else:
@@ -3945,7 +3989,10 @@ def generate_charts(
             for aid in arch_ids:
                 aid_int = int(aid)
                 name_row = df_arch[df_arch["archetype_id"] == aid_int]
-                name = name_row.iloc[0]["display_name"] if not name_row.empty else f"Archetype {aid_int}"
+                name = (
+                    name_row.iloc[0]["display_name"] if not name_row.empty
+                    else f"Archetype {aid_int}"
+                )
                 df_hist = fetch_historical_prices(db_path, target_realm, aid_int)
                 df_fc_arch = df_fc[df_fc["archetype_id"] == aid_int]
                 fig = plot_forecast_timeline(df_hist, df_fc_arch, archetype_name=name)
