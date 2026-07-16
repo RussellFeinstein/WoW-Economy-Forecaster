@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.4.9] - 2026-07-16
 
 ### Fixed
 - run_hourly.bat no longer treats a leaked lock file as an active run forever. Before skipping, it now checks the lock age with PowerShell (LastWriteTime); a lock older than 180 minutes is deleted, STALE LOCK TAKEOVER is logged to hourly.log, and the run continues. A fresh lock still logs SKIPPED and exits 0. A failed age check also continues the run, because skip-on-uncertainty is what turned one crashed run on 2026-04-15 into a 96-day silent outage, while a rare double run is covered by the SQLite busy timeout. Covered by the repo's first Windows-only tests (tests/test_scripts/), which run the script in an isolated temp tree with no venv so the real pipeline cannot start (issue #3)
