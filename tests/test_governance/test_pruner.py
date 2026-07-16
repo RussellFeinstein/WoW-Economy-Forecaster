@@ -21,6 +21,11 @@ from pathlib import Path
 from wow_forecaster.db.schema import apply_schema
 from wow_forecaster.governance.pruner import PruneResult, SnapshotPruner
 
+# Injected into prune() so file-fixture dates and the pruner cutoff share one
+# clock; fixtures built with local date.today() flaked whenever the local date
+# and the pruner's UTC date disagreed.
+FIXED_NOW = datetime(2026, 3, 15, 12, 0, tzinfo=UTC)
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -133,11 +138,11 @@ def test_missing_snapshot_dir_no_crash(tmp_path: Path) -> None:
 
 def test_stale_file_deleted(tmp_path: Path) -> None:
     raw_dir = tmp_path / "raw"
-    stale_date = date.today() - timedelta(days=45)
+    stale_date = FIXED_NOW.date() - timedelta(days=45)
     stale_file = _make_snapshot_file(raw_dir, stale_date)
 
     pruner = _make_pruner(tmp_path, retention_days=30)
-    result = pruner.prune(dry_run=False)
+    result = pruner.prune(dry_run=False, now=FIXED_NOW)
 
     assert result.files_deleted == 1
     assert not stale_file.exists()
@@ -145,38 +150,56 @@ def test_stale_file_deleted(tmp_path: Path) -> None:
 
 def test_fresh_file_not_deleted(tmp_path: Path) -> None:
     raw_dir = tmp_path / "raw"
-    fresh_date = date.today() - timedelta(days=5)
+    fresh_date = FIXED_NOW.date() - timedelta(days=5)
     fresh_file = _make_snapshot_file(raw_dir, fresh_date)
 
     pruner = _make_pruner(tmp_path, retention_days=30)
-    result = pruner.prune(dry_run=False)
+    result = pruner.prune(dry_run=False, now=FIXED_NOW)
 
     assert result.files_deleted == 0
     assert fresh_file.exists()
 
 
 def test_boundary_day_not_deleted(tmp_path: Path) -> None:
-    """A file exactly at retention_days boundary (cutoff date itself) is NOT deleted."""
+    """A file dated exactly retention_days before the reference clock is kept.
+
+    Regression test for the time-of-day flake: the fixture date and the
+    pruner cutoff must come from the same injected clock, not from local
+    date.today() on one side and UTC on the other.
+    """
     raw_dir = tmp_path / "raw"
-    cutoff_date = date.today() - timedelta(days=30)
+    cutoff_date = FIXED_NOW.date() - timedelta(days=30)
     boundary_file = _make_snapshot_file(raw_dir, cutoff_date)
 
     pruner = _make_pruner(tmp_path, retention_days=30)
-    result = pruner.prune(dry_run=False)
+    result = pruner.prune(dry_run=False, now=FIXED_NOW)
 
     assert result.files_deleted == 0
     assert boundary_file.exists()
 
 
+def test_day_past_boundary_deleted(tmp_path: Path) -> None:
+    """A file dated one day past the retention boundary is deleted."""
+    raw_dir = tmp_path / "raw"
+    past_boundary = FIXED_NOW.date() - timedelta(days=31)
+    stale_file = _make_snapshot_file(raw_dir, past_boundary)
+
+    pruner = _make_pruner(tmp_path, retention_days=30)
+    result = pruner.prune(dry_run=False, now=FIXED_NOW)
+
+    assert result.files_deleted == 1
+    assert not stale_file.exists()
+
+
 def test_multiple_files_some_stale(tmp_path: Path) -> None:
     raw_dir = tmp_path / "raw"
-    stale = date.today() - timedelta(days=60)
-    fresh = date.today() - timedelta(days=10)
+    stale = FIXED_NOW.date() - timedelta(days=60)
+    fresh = FIXED_NOW.date() - timedelta(days=10)
     _make_snapshot_file(raw_dir, stale, "realm_us_stale.json")
     fresh_file = _make_snapshot_file(raw_dir, fresh, "realm_us_fresh.json")
 
     pruner = _make_pruner(tmp_path, retention_days=30)
-    result = pruner.prune(dry_run=False)
+    result = pruner.prune(dry_run=False, now=FIXED_NOW)
 
     assert result.files_deleted == 1
     assert fresh_file.exists()
@@ -184,7 +207,7 @@ def test_multiple_files_some_stale(tmp_path: Path) -> None:
 
 def test_empty_dirs_removed_after_prune(tmp_path: Path) -> None:
     raw_dir = tmp_path / "raw"
-    stale_date = date.today() - timedelta(days=45)
+    stale_date = FIXED_NOW.date() - timedelta(days=45)
     _make_snapshot_file(raw_dir, stale_date)
 
     stale_day_dir = (
@@ -196,18 +219,18 @@ def test_empty_dirs_removed_after_prune(tmp_path: Path) -> None:
     assert stale_day_dir.exists()
 
     pruner = _make_pruner(tmp_path, retention_days=30)
-    pruner.prune(dry_run=False)
+    pruner.prune(dry_run=False, now=FIXED_NOW)
 
     assert not stale_day_dir.exists()
 
 
 def test_dry_run_does_not_delete_files(tmp_path: Path) -> None:
     raw_dir = tmp_path / "raw"
-    stale_date = date.today() - timedelta(days=45)
+    stale_date = FIXED_NOW.date() - timedelta(days=45)
     stale_file = _make_snapshot_file(raw_dir, stale_date)
 
     pruner = _make_pruner(tmp_path, retention_days=30)
-    result = pruner.prune(dry_run=True)
+    result = pruner.prune(dry_run=True, now=FIXED_NOW)
 
     assert result.dry_run is True
     assert result.files_deleted == 1   # counted but not deleted
