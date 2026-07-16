@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -39,7 +39,7 @@ class _JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict = {
-            "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).strftime(
+            "ts": datetime.fromtimestamp(record.created, tz=UTC).strftime(
                 LOG_DATE_FORMAT
             ),
             "level": record.levelname,
@@ -55,7 +55,7 @@ class _JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
-def configure_logging(config: "LoggingConfig") -> None:
+def configure_logging(config: LoggingConfig) -> None:
     """Configure the root logger from a ``LoggingConfig`` instance.
 
     Sets up:

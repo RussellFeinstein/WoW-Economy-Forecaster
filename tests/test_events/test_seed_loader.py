@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import date
-from pathlib import Path
 
 import pyarrow.parquet as pq
 import pytest
@@ -27,7 +26,6 @@ from wow_forecaster.events.seed_loader import (
     upsert_category_impacts,
     upsert_events,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

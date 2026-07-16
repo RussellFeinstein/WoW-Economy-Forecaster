@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Mechanical ruff 0.15.2 conformance sweep across wow_forecaster/ and tests/: modern union syntax for optional types, datetime.UTC alias, unused imports removed, imports sorted (issue #44)
+
 ## [2.4.4] - 2026-07-15
 
 ### Changed

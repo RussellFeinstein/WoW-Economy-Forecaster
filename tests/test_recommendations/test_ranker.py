@@ -29,11 +29,13 @@ build_recommendation_outputs():
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import date
 
 import pytest
 
-from wow_forecaster.models.forecast import ForecastOutput, RecommendationOutput
+from wow_forecaster.models.forecast import ForecastOutput
+from wow_forecaster.recommendations.item_overlay import ItemDiscountRow
 from wow_forecaster.recommendations.ranker import (
     ScoredForecast,
     build_recommendation_outputs,
@@ -41,11 +43,7 @@ from wow_forecaster.recommendations.ranker import (
     enrich_with_item_discounts,
     top_n_per_category,
 )
-import sqlite3
-
-from wow_forecaster.recommendations.item_overlay import ItemDiscountRow
 from wow_forecaster.recommendations.scorer import ScoreComponents
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

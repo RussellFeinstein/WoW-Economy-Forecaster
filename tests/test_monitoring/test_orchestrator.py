@@ -17,19 +17,13 @@ What we test
 
 from __future__ import annotations
 
-import sqlite3
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from wow_forecaster.config import AppConfig, MonitoringConfig, RealmsConfig
-from wow_forecaster.db.schema import apply_schema
+from wow_forecaster.config import AppConfig, RealmsConfig
 from wow_forecaster.pipeline.orchestrator import (
     HourlyOrchestrator,
-    OrchestratorResult,
     RealmIngestionResult,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

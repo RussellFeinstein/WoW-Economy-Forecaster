@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class BaseRepository:
         self,
         sql: str,
         params: tuple[Any, ...] | dict[str, Any] = (),
-    ) -> Optional[sqlite3.Row]:
+    ) -> sqlite3.Row | None:
         """Execute a query and return the first row, or ``None``.
 
         Args:

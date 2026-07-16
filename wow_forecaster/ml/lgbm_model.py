@@ -310,7 +310,7 @@ class LightGBMForecaster:
         logger.info("Model artifact saved: %s", artifact_path)
 
     @classmethod
-    def load(cls, artifact_path: Path) -> "LightGBMForecaster":
+    def load(cls, artifact_path: Path) -> LightGBMForecaster:
         """Load a serialized LightGBMForecaster from disk.
 
         Args:

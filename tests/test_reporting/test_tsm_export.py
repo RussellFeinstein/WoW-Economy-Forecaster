@@ -27,7 +27,7 @@ write_tsm_export():
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -38,7 +38,6 @@ from wow_forecaster.reporting.tsm_export import (
     fetch_tsm_export_items,
     write_tsm_export,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -115,7 +114,7 @@ def _insert_obs(
     is_outlier: int = 0,
 ) -> None:
     observed_at = (
-        datetime.now(tz=timezone.utc) - timedelta(days=days_ago)
+        datetime.now(tz=UTC) - timedelta(days=days_ago)
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
     conn.execute(
         "INSERT INTO market_observations_normalized "
@@ -136,7 +135,7 @@ def _insert_forecast(
     ts_offset_seconds: int = 0,
 ) -> None:
     created_at = (
-        datetime.now(tz=timezone.utc) + timedelta(seconds=ts_offset_seconds)
+        datetime.now(tz=UTC) + timedelta(seconds=ts_offset_seconds)
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
     conn.execute(
         "INSERT INTO forecast_outputs "

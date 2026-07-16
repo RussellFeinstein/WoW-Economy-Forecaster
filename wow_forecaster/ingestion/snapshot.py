@@ -39,7 +39,7 @@ import hashlib
 import json
 import logging
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -141,7 +141,7 @@ def save_snapshot(
     record_count = len(serializable) if isinstance(serializable, list) else 1
 
     meta = dict(metadata or {})
-    meta["written_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    meta["written_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     envelope = {"_meta": meta, "data": serializable}
     content_hash = compute_hash(envelope)

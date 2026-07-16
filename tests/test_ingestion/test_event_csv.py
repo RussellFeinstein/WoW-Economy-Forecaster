@@ -17,7 +17,6 @@ from wow_forecaster.ingestion.event_csv import REQUIRED_CSV_COLUMNS, parse_event
 from wow_forecaster.models.event import WoWEvent
 from wow_forecaster.taxonomy.event_taxonomy import EventScope, EventSeverity, EventType
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _write_csv(tmp_path: Path, content: str) -> Path:

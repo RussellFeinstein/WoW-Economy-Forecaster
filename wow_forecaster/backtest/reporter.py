@@ -25,12 +25,11 @@ import csv
 import json
 import logging
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
 from wow_forecaster.backtest.metrics import BacktestMetrics, PredictionRecord, compute_metrics
-from wow_forecaster.backtest.slices import slice_by_category, slice_by_model_and_horizon
 from wow_forecaster.backtest.splits import BacktestFold
 
 log = logging.getLogger(__name__)
@@ -250,7 +249,7 @@ def build_backtest_manifest(
     overall = compute_metrics(records)
     return {
         "schema_version": "1.0",
-        "built_at":   datetime.now(tz=timezone.utc).isoformat(),
+        "built_at":   datetime.now(tz=UTC).isoformat(),
         "run_slug":   run_slug,
         "realm_slug": realm_slug,
         "date_range": {

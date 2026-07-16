@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, datetime, timezone
-
-import pytest
+from datetime import date
 
 from wow_forecaster.db.schema import apply_schema
 from wow_forecaster.recipes.margin_calculator import MarginCalculator
-from wow_forecaster.recipes.recipe_repo import RecipeRepository
 
 
 def _setup_db() -> sqlite3.Connection:

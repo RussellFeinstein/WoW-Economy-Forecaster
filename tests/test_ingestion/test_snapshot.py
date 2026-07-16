@@ -11,8 +11,7 @@ Covers:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 
 import pytest
 
@@ -25,7 +24,7 @@ from wow_forecaster.ingestion.snapshot import (
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
-_FIXED_DT = datetime(2026, 2, 24, 15, 0, 0, tzinfo=timezone.utc)
+_FIXED_DT = datetime(2026, 2, 24, 15, 0, 0, tzinfo=UTC)
 _SAMPLE_RECORDS = [
     {"item_id": 191528, "min_buyout": 1_500_000, "quantity": 10},
     {"item_id": 204783, "min_buyout": 80_000, "quantity": 200},
@@ -59,7 +58,7 @@ class TestBuildSnapshotPath:
         assert path1 == path2
 
     def test_different_timestamps_produce_different_paths(self):
-        dt2 = datetime(2026, 2, 24, 16, 0, 0, tzinfo=timezone.utc)
+        dt2 = datetime(2026, 2, 24, 16, 0, 0, tzinfo=UTC)
         p1 = build_snapshot_path("data/raw", "undermine", "area-52_neutral", _FIXED_DT)
         p2 = build_snapshot_path("data/raw", "undermine", "area-52_neutral", dt2)
         assert p1 != p2

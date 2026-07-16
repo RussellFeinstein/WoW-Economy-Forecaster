@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 
 from wow_forecaster.features.archetype_features import (
-    ArchetypeMetadata,
     compute_archetype_features,
     count_items_per_archetype,
     count_items_without_archetype,

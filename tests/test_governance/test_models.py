@@ -22,7 +22,6 @@ from wow_forecaster.governance.models import (
     SourcePolicy,
 )
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 

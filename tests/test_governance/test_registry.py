@@ -15,7 +15,6 @@ Tests use a temporary TOML file rather than the real config/sources.toml to
 avoid coupling test outcomes to production config state changes.
 """
 
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -28,7 +27,6 @@ from wow_forecaster.governance.registry import (
     get_source_policy,
     list_sources,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

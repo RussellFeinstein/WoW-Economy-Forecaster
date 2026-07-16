@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from wow_forecaster.recipes.recipe_repo import RecipeRepository
 
 

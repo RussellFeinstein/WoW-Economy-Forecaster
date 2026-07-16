@@ -10,22 +10,20 @@ Provides:
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, datetime, timezone
-from typing import Generator
+from collections.abc import Generator
+from datetime import UTC, date, datetime
 
 import pytest
 
-from wow_forecaster.db.connection import get_connection
 from wow_forecaster.db.schema import apply_schema
 from wow_forecaster.models.archetype import ArchetypeMapping, EconomicArchetype
 from wow_forecaster.models.event import WoWEvent
-from wow_forecaster.models.forecast import ForecastOutput, RecommendationOutput
+from wow_forecaster.models.forecast import ForecastOutput
 from wow_forecaster.models.item import Item, ItemCategory
 from wow_forecaster.models.market import NormalizedMarketObservation, RawMarketObservation
 from wow_forecaster.models.meta import ModelMetadata, RunMetadata
 from wow_forecaster.taxonomy.archetype_taxonomy import ArchetypeCategory, ArchetypeTag
 from wow_forecaster.taxonomy.event_taxonomy import EventScope, EventSeverity, EventType
-
 
 # ── Database fixture ──────────────────────────────────────────────────────────
 
@@ -53,7 +51,7 @@ def sample_raw_observation() -> RawMarketObservation:
         item_id=12345,
         realm_slug="area-52",
         faction="neutral",
-        observed_at=datetime(2024, 9, 15, 12, 0, 0, tzinfo=timezone.utc),
+        observed_at=datetime(2024, 9, 15, 12, 0, 0, tzinfo=UTC),
         source="tsm_export",
         min_buyout_raw=50_000_00,   # 500 gold in copper
         market_value_raw=55_000_00,
@@ -73,7 +71,7 @@ def sample_normalized_observation() -> NormalizedMarketObservation:
         archetype_id=1,
         realm_slug="area-52",
         faction="neutral",
-        observed_at=datetime(2024, 9, 15, 12, 0, 0, tzinfo=timezone.utc),
+        observed_at=datetime(2024, 9, 15, 12, 0, 0, tzinfo=UTC),
         price_gold=500.0,
         market_value_gold=550.0,
         historical_value_gold=480.0,
@@ -96,7 +94,7 @@ def sample_event() -> WoWEvent:
         expansion_slug="tww",
         start_date=date(2024, 9, 10),
         end_date=date(2024, 9, 24),
-        announced_at=datetime(2024, 8, 19, 17, 0, 0, tzinfo=timezone.utc),
+        announced_at=datetime(2024, 8, 19, 17, 0, 0, tzinfo=UTC),
         notes="Test RTWF event fixture.",
     )
 
@@ -170,7 +168,7 @@ def sample_run_metadata() -> RunMetadata:
         pipeline_stage="ingest",
         status="started",
         config_snapshot={"database": {"db_path": ":memory:"}, "debug": True},
-        started_at=datetime(2024, 9, 15, 12, 0, 0, tzinfo=timezone.utc),
+        started_at=datetime(2024, 9, 15, 12, 0, 0, tzinfo=UTC),
     )
 
 

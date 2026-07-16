@@ -76,7 +76,7 @@ import json
 import logging
 import sqlite3
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -106,7 +106,6 @@ from wow_forecaster.features.registry import (
     feature_groups,
     feature_names,
     inference_feature_names,
-    target_feature_names,
     training_feature_names,
 )
 from wow_forecaster.models.meta import RunMetadata
@@ -291,7 +290,7 @@ def build_manifest(
 
     manifest: dict[str, Any] = {
         "schema_version": "1.0",
-        "built_at":   datetime.now(tz=timezone.utc).isoformat(),
+        "built_at":   datetime.now(tz=UTC).isoformat(),
         "run_slug":   run_slug,
         "realm_slug": realm_slug,
         "date_range": {

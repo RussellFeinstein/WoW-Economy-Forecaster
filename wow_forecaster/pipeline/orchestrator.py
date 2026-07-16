@@ -62,9 +62,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 from uuid import uuid4
 
 from wow_forecaster.config import AppConfig
@@ -88,7 +87,7 @@ class RealmIngestionResult:
     realm_slug:   str
     success:      bool
     rows_written: int = 0
-    error:        Optional[str] = None
+    error:        str | None = None
 
 
 @dataclass
@@ -109,9 +108,9 @@ class OrchestratorResult:
         status:            "success", "partial", or "failed".
     """
 
-    run_id:             Optional[int]          = None
-    started_at:         Optional[datetime]     = None
-    finished_at:        Optional[datetime]     = None
+    run_id:             int | None          = None
+    started_at:         datetime | None     = None
+    finished_at:        datetime | None     = None
     realm_results:      list[RealmIngestionResult] = field(default_factory=list)
     normalize_success:  bool                   = False
     normalize_rows:     int                    = 0
@@ -135,14 +134,14 @@ class HourlyOrchestrator:
     def __init__(
         self,
         config: AppConfig,
-        db_path: Optional[str] = None,
+        db_path: str | None = None,
     ) -> None:
         self.config  = config
         self.db_path = db_path or config.database.db_path
 
     def run(
         self,
-        realm_slugs: Optional[list[str]] = None,
+        realm_slugs: list[str] | None = None,
         check_drift: bool   = True,
         apply_adaptive: bool = True,
     ) -> OrchestratorResult:
@@ -157,7 +156,7 @@ class HourlyOrchestrator:
             OrchestratorResult summarising all steps.
         """
         realms  = realm_slugs or list(self.config.realms.defaults)
-        result  = OrchestratorResult(started_at=datetime.now(tz=timezone.utc))
+        result  = OrchestratorResult(started_at=datetime.now(tz=UTC))
         run_slug = str(uuid4())
 
         # ── Step 1: Pre-flight ────────────────────────────────────────────────
@@ -167,7 +166,7 @@ class HourlyOrchestrator:
         except Exception as exc:
             result.status = "failed"
             result.errors.append(f"Pre-flight schema check failed: {exc}")
-            result.finished_at = datetime.now(tz=timezone.utc)
+            result.finished_at = datetime.now(tz=UTC)
             logger.error("Pre-flight failed: %s", exc, exc_info=True)
             return result
 
@@ -288,7 +287,7 @@ class HourlyOrchestrator:
                     logger.warning("Failed to write provenance for realm=%s: %s", realm, exc)
 
         # ── Finalise result ───────────────────────────────────────────────────
-        result.finished_at = datetime.now(tz=timezone.utc)
+        result.finished_at = datetime.now(tz=UTC)
         n_ingest_ok = sum(1 for r in result.realm_results if r.success)
 
         if not result.errors:
@@ -324,7 +323,7 @@ class HourlyOrchestrator:
             run_migrations(conn)
 
     def _run_ingest(
-        self, realm_slug: str, run_id: Optional[int]
+        self, realm_slug: str, run_id: int | None
     ) -> RealmIngestionResult:
         """Run IngestStage for one realm, isolating failures.
 
@@ -382,7 +381,7 @@ class HourlyOrchestrator:
                 error=str(exc),
             )
 
-    def _run_governance_preflight(self, realm_slug: str) -> Optional[str]:
+    def _run_governance_preflight(self, realm_slug: str) -> str | None:
         """Run governance preflight checks for the sources used by IngestStage.
 
         Checks ``blizzard_api`` against the source registry.  Disabled sources
@@ -455,8 +454,8 @@ class HourlyOrchestrator:
         return None
 
     def _run_normalize(
-        self, run_id: Optional[int]
-    ) -> tuple[int, bool, Optional[str]]:
+        self, run_id: int | None
+    ) -> tuple[int, bool, str | None]:
         """Run NormalizeStage for all unprocessed observations.
 
         Returns:
@@ -475,7 +474,7 @@ class HourlyOrchestrator:
     def _run_drift_and_provenance(
         self,
         realm_slug: str,
-        run_id: Optional[int],
+        run_id: int | None,
         apply_adaptive: bool,
     ):
         """Run drift detection + provenance for one realm.
@@ -564,7 +563,7 @@ class HourlyOrchestrator:
 
     def _persist_run_start(
         self, run_slug: str, realms: list[str]
-    ) -> Optional[int]:
+    ) -> int | None:
         """Write the initial orchestrator run_metadata record.
 
         Returns the run_id, or None if persistence fails (non-fatal).
@@ -597,7 +596,7 @@ class HourlyOrchestrator:
             return None
 
     def _persist_run_finish(
-        self, run_id: Optional[int], result: OrchestratorResult
+        self, run_id: int | None, result: OrchestratorResult
     ) -> None:
         """Update the orchestrator run_metadata record with final status."""
         if run_id is None:

@@ -45,8 +45,8 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
 
-from wow_forecaster.features.daily_agg import DailyAggRow
 from wow_forecaster.config import FeatureConfig
+from wow_forecaster.features.daily_agg import DailyAggRow
 
 
 def compute_lag_rolling_features(

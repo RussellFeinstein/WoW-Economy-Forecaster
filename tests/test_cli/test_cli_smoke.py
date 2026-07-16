@@ -295,6 +295,7 @@ class TestReportRecipeStatus:
     def test_populated_db_shows_per_profession_rows(self, tmp_path):
         """Insert 2 recipes + reagents and verify they appear in the output."""
         import sqlite3
+
         from wow_forecaster.db.schema import apply_schema
 
         db = str(tmp_path / "recipes.db")
@@ -329,6 +330,7 @@ class TestReportRecipeStatus:
     def test_expansion_filter(self, tmp_path):
         """--expansion filters output to one expansion only."""
         import sqlite3
+
         from wow_forecaster.db.schema import apply_schema
 
         db = str(tmp_path / "recipes.db")

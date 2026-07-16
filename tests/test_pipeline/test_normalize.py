@@ -24,13 +24,15 @@ _normalize_batch():
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
 
 import pytest
 
 from wow_forecaster.db.schema import apply_schema
-from wow_forecaster.pipeline.normalize import _MIN_ROLLING_OBS, _fetch_archetype_map, _fetch_rolling_stats, _normalize_batch
-
+from wow_forecaster.pipeline.normalize import (
+    _fetch_archetype_map,
+    _fetch_rolling_stats,
+    _normalize_batch,
+)
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 

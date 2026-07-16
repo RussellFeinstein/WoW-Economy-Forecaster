@@ -5,14 +5,12 @@ from __future__ import annotations
 import sqlite3
 from unittest.mock import MagicMock
 
-import pytest
-
 from wow_forecaster.db.schema import apply_schema
 from wow_forecaster.recipes.blizzard_recipe_client import (
     _is_optional_slot,
     _resolve_recipe_by_name,
 )
-from wow_forecaster.recipes.recipe_seeder import RecipeSeeder, SeedStats
+from wow_forecaster.recipes.recipe_seeder import RecipeSeeder
 
 
 def _make_db() -> sqlite3.Connection:

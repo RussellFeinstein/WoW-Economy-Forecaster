@@ -24,10 +24,7 @@ BackoffConfig strategy must be one of: "exponential", "linear", "fixed".
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
-
 
 # ── Rate-limit sub-model ──────────────────────────────────────────────────────
 
@@ -151,7 +148,7 @@ class FreshnessConfig(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def thresholds_non_decreasing(self) -> "FreshnessConfig":
+    def thresholds_non_decreasing(self) -> FreshnessConfig:
         if self.stale_threshold_hours < self.ttl_hours:
             raise ValueError(
                 f"stale_threshold_hours ({self.stale_threshold_hours}) must be >= "

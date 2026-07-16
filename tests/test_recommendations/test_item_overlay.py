@@ -30,7 +30,7 @@ fetch_item_rois():
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -40,7 +40,6 @@ from wow_forecaster.recommendations.item_overlay import (
     fetch_item_discounts,
     fetch_item_rois,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -83,7 +82,7 @@ def conn() -> sqlite3.Connection:
 
 def _now_iso(delta_days: int = 0) -> str:
     """Return an ISO datetime string relative to now."""
-    dt = datetime.now(tz=timezone.utc) + timedelta(days=delta_days)
+    dt = datetime.now(tz=UTC) + timedelta(days=delta_days)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

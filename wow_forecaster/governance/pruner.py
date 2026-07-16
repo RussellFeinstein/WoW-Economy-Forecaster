@@ -33,9 +33,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +122,7 @@ class SnapshotPruner:
             PruneResult summarising the operation.
         """
         cutoff = (
-            datetime.now(tz=timezone.utc) - timedelta(days=self.retention_days)
+            datetime.now(tz=UTC) - timedelta(days=self.retention_days)
         ).date()
         result = PruneResult(cutoff_date=cutoff, dry_run=dry_run)
 

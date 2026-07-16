@@ -58,12 +58,11 @@ from __future__ import annotations
 
 import sqlite3
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 from wow_forecaster.models.event import WoWEvent
 from wow_forecaster.taxonomy.event_taxonomy import EventScope, EventSeverity, EventType
-
 
 # Ordinal map used internally for max-severity computation.
 _SEVERITY_ORDINAL: dict[str, int] = {
@@ -250,7 +249,7 @@ def compute_event_features(
         # Layer 2: per-row is_known_at guard using end-of-day boundary.
         as_of = datetime(
             obs_date.year, obs_date.month, obs_date.day,
-            23, 59, 59, tzinfo=timezone.utc
+            23, 59, 59, tzinfo=UTC
         )
         known = [e for e in events if e.is_known_at(as_of)]
 

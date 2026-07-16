@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from wow_forecaster.features.quality import DataQualityReport, build_quality_report
+from wow_forecaster.features.quality import build_quality_report
 
 
 def _make_clean_rows(n: int = 10) -> list[dict[str, Any]]:

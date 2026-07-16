@@ -64,8 +64,9 @@ class TestImplementedStages:
         Snapshots and ingestion_snapshots rows are still written.
         """
         import sqlite3
-        from wow_forecaster.db.schema import apply_schema
+
         from wow_forecaster.config import AppConfig, DatabaseConfig, DataConfig
+        from wow_forecaster.db.schema import apply_schema
 
         db_file = str(tmp_path / "test.db")
         conn = sqlite3.connect(db_file)
@@ -101,8 +102,9 @@ class TestImplementedStages:
         With those items seeded in the DB, all 3 records should be inserted and returned.
         """
         import sqlite3
-        from wow_forecaster.db.schema import apply_schema
+
         from wow_forecaster.config import AppConfig, DatabaseConfig, DataConfig
+        from wow_forecaster.db.schema import apply_schema
 
         # ── Build and seed the DB ──────────────────────────────────────────────
         FIXTURE_ITEM_IDS = [191528, 204783, 206448]
@@ -180,8 +182,9 @@ class TestImplementedStages:
     def test_normalize_returns_zero_for_empty_table(self, minimal_config, tmp_path):
         """NormalizeStage returns 0 when no unprocessed raw observations exist."""
         import sqlite3
-        from wow_forecaster.db.schema import apply_schema
+
         from wow_forecaster.config import AppConfig, DatabaseConfig
+        from wow_forecaster.db.schema import apply_schema
 
         db_file = str(tmp_path / "test.db")
         conn = sqlite3.connect(db_file)

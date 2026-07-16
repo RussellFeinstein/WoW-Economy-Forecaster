@@ -24,8 +24,6 @@ model formalizes that relationship with a confidence score and rationale.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from wow_forecaster.taxonomy.archetype_taxonomy import ArchetypeCategory, ArchetypeTag
@@ -51,15 +49,15 @@ class EconomicArchetype(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    archetype_id: Optional[int] = None
+    archetype_id: int | None = None
     slug: str
     display_name: str
     category_tag: ArchetypeCategory
-    sub_tag: Optional[ArchetypeTag] = None
-    description: Optional[str] = None
+    sub_tag: ArchetypeTag | None = None
+    description: str | None = None
     is_transferable: bool = True
     transfer_confidence: float = 0.5
-    transfer_notes: Optional[str] = None
+    transfer_notes: str | None = None
 
     @field_validator("transfer_confidence")
     @classmethod
@@ -100,7 +98,7 @@ class ArchetypeMapping(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    mapping_id: Optional[int] = None
+    mapping_id: int | None = None
     source_archetype_id: int
     target_archetype_id: int
     source_expansion: str = "tww"

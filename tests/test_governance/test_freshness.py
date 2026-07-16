@@ -10,16 +10,16 @@ Covers:
 """
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from wow_forecaster.governance.freshness import (
     FreshnessStatus,
-    check_all_sources_freshness,
-    check_source_freshness,
     _classify_status,
     _compute_age_hours,
+    check_all_sources_freshness,
+    check_source_freshness,
 )
 from wow_forecaster.governance.models import (
     BackoffConfig,
@@ -30,7 +30,6 @@ from wow_forecaster.governance.models import (
     RetentionConfig,
     SourcePolicy,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -102,7 +101,7 @@ def _insert_snapshot(
 
 
 def _utcnow() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def _ts(hours_ago: float) -> str:

@@ -11,12 +11,11 @@ Also verifies that the Parquet schema column counts match the feature registry.
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import pytest
 
 from wow_forecaster.config import AppConfig
-from wow_forecaster.db.schema import apply_schema
 from wow_forecaster.features.dataset_builder import (
     _EXPECTED_INFERENCE_COLS,
     _EXPECTED_TRAINING_COLS,
@@ -34,7 +33,7 @@ def _make_run() -> RunMetadata:
         run_slug="preflight-test",
         pipeline_stage="feature_build",
         config_snapshot={},
-        started_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        started_at=datetime(2025, 1, 1, tzinfo=UTC),
     )
 
 
@@ -129,6 +128,7 @@ class TestFindExpansionLaunch:
 
     def _make_event(self, event_type: str, start_date: date):
         from types import SimpleNamespace
+
         from wow_forecaster.taxonomy.event_taxonomy import EventType
         return SimpleNamespace(
             event_type=EventType(event_type),

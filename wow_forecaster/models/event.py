@@ -20,12 +20,11 @@ Event attributes use three orthogonal taxonomy dimensions:
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from wow_forecaster.taxonomy.event_taxonomy import EventScope, EventSeverity, EventType
 from wow_forecaster.models.item import VALID_EXPANSIONS
+from wow_forecaster.taxonomy.event_taxonomy import EventScope, EventSeverity, EventType
 
 
 class WoWEvent(BaseModel):
@@ -51,23 +50,23 @@ class WoWEvent(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    event_id: Optional[int] = None
+    event_id: int | None = None
     slug: str
     display_name: str
     event_type: EventType
     scope: EventScope
     severity: EventSeverity
     expansion_slug: str
-    patch_version: Optional[str] = None
+    patch_version: str | None = None
     start_date: date
-    end_date: Optional[date] = None
-    announced_at: Optional[datetime] = None
+    end_date: date | None = None
+    announced_at: datetime | None = None
     is_recurring: bool = False
-    recurrence_rule: Optional[str] = None
-    notes: Optional[str] = None
+    recurrence_rule: str | None = None
+    notes: str | None = None
 
     @model_validator(mode="after")
-    def validate_date_ordering(self) -> "WoWEvent":
+    def validate_date_ordering(self) -> WoWEvent:
         """Ensure end_date is not before start_date when both are provided."""
         if self.end_date is not None and self.end_date < self.start_date:
             raise ValueError(
@@ -76,7 +75,7 @@ class WoWEvent(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_expansion_slug(self) -> "WoWEvent":
+    def validate_expansion_slug(self) -> WoWEvent:
         if self.expansion_slug not in VALID_EXPANSIONS:
             raise ValueError(
                 f"Unknown expansion '{self.expansion_slug}'. "

@@ -17,7 +17,7 @@ What we test
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
 import pytest
 
@@ -29,7 +29,6 @@ from wow_forecaster.monitoring.drift import (
     _classify_error_drift,
     _overall_drift_level,
 )
-
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 

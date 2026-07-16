@@ -16,9 +16,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
-from typing import Optional
-
+from datetime import UTC, date, datetime, timedelta
 
 # ── Data classes ──────────────────────────────────────────────────────────────
 
@@ -40,14 +38,14 @@ class RealmHealthStats:
     """
 
     realm_slug:            str
-    first_obs_date:        Optional[str]   = None
-    last_obs_date:         Optional[str]   = None
+    first_obs_date:        str | None   = None
+    last_obs_date:         str | None   = None
     days_with_data:        int             = 0
     days_checked:          int             = 0
     coverage_pct:          float           = 0.0
     gap_dates:             list[str]       = field(default_factory=list)
-    last_ingest_at:        Optional[str]   = None
-    last_ingest_age_hours: Optional[float] = None
+    last_ingest_at:        str | None   = None
+    last_ingest_age_hours: float | None = None
 
 
 @dataclass
@@ -71,11 +69,11 @@ class HealthReport:
 
     generated_at:           str
     realms:                 list[RealmHealthStats] = field(default_factory=list)
-    last_hourly_run:        Optional[str]          = None
-    last_hourly_status:     Optional[str]          = None
-    last_hourly_age_hours:  Optional[float]        = None
-    last_forecast_run:      Optional[str]          = None
-    last_forecast_age_hours: Optional[float]       = None
+    last_hourly_run:        str | None          = None
+    last_hourly_status:     str | None          = None
+    last_hourly_age_hours:  float | None        = None
+    last_forecast_run:      str | None          = None
+    last_forecast_age_hours: float | None       = None
     item_forecast_count:    int                    = 0
     is_stale:               bool                   = False
     stale_threshold_hours:  float                  = 4.0
@@ -93,8 +91,8 @@ def _age_hours(ts_iso: str | None) -> float | None:
         else:
             dt = datetime.fromisoformat(ts_iso + "T00:00:00+00:00")
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return (datetime.now(tz=timezone.utc) - dt).total_seconds() / 3600.0
+            dt = dt.replace(tzinfo=UTC)
+        return (datetime.now(tz=UTC) - dt).total_seconds() / 3600.0
     except (ValueError, OverflowError):
         return None
 
@@ -184,7 +182,7 @@ def collect_health_report(
     Returns:
         :class:`HealthReport` with all findings populated.
     """
-    now_iso = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_iso = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     report  = HealthReport(
         generated_at          = now_iso,
         stale_threshold_hours = stale_threshold_hours,

@@ -14,7 +14,7 @@ not be mutated. Historical forecasts form the ground truth for backtesting.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -55,10 +55,10 @@ class ForecastOutput(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    forecast_id: Optional[int] = None
+    forecast_id: int | None = None
     run_id: int
-    archetype_id: Optional[int] = None
-    item_id: Optional[int] = None
+    archetype_id: int | None = None
+    item_id: int | None = None
     realm_slug: str
     forecast_horizon: ForecastHorizon
     target_date: date
@@ -67,11 +67,11 @@ class ForecastOutput(BaseModel):
     confidence_upper: float
     confidence_pct: float = 0.80
     model_slug: str
-    features_hash: Optional[str] = None
+    features_hash: str | None = None
     ci_quality: CiQuality = "good"
 
     @model_validator(mode="after")
-    def validate_forecast_consistency(self) -> "ForecastOutput":
+    def validate_forecast_consistency(self) -> ForecastOutput:
         if self.confidence_lower > self.confidence_upper:
             raise ValueError(
                 f"confidence_lower ({self.confidence_lower}) must be <= "
@@ -112,16 +112,16 @@ class RecommendationOutput(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    rec_id: Optional[int] = None
+    rec_id: int | None = None
     forecast_id: int
     action: RecommendationAction
     risk_level: RiskLevel = "low"
     reasoning: str
     priority: int = 5
-    expires_at: Optional[datetime] = None
+    expires_at: datetime | None = None
     score: float = 0.0
-    score_components: Optional[str] = None  # JSON blob of ScoreComponents
-    category_tag: Optional[str] = None
+    score_components: str | None = None  # JSON blob of ScoreComponents
+    category_tag: str | None = None
 
     @field_validator("priority")
     @classmethod

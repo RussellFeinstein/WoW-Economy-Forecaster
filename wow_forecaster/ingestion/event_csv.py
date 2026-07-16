@@ -30,7 +30,6 @@ import csv
 import logging
 from datetime import date, datetime
 from pathlib import Path
-from typing import Optional
 
 from pydantic import ValidationError
 
@@ -151,7 +150,7 @@ def _req(row: dict[str, str], key: str) -> str:
     return v
 
 
-def _opt(row: dict[str, str], key: str) -> Optional[str]:
+def _opt(row: dict[str, str], key: str) -> str | None:
     """Return an optional string field, or None if absent/empty."""
     v = row.get(key, "").strip()
     return v if v else None
@@ -161,7 +160,7 @@ def _parse_date(
     row: dict[str, str],
     key: str,
     required: bool = False,
-) -> Optional[date]:
+) -> date | None:
     """Parse an ISO date string (YYYY-MM-DD) from a CSV row field."""
     v = _opt(row, key)
     if v is None:
@@ -176,7 +175,7 @@ def _parse_date(
         )
 
 
-def _parse_datetime(row: dict[str, str], key: str) -> Optional[datetime]:
+def _parse_datetime(row: dict[str, str], key: str) -> datetime | None:
     """Parse an ISO 8601 datetime string (with timezone) from a CSV row field."""
     v = _opt(row, key)
     if v is None:

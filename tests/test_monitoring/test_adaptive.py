@@ -15,9 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from wow_forecaster.monitoring.adaptive import AdaptivePolicyResult, evaluate_policy
+from wow_forecaster.monitoring.adaptive import evaluate_policy
 from wow_forecaster.monitoring.drift import DriftLevel
-
 
 # ── Uncertainty multiplier ────────────────────────────────────────────────────
 

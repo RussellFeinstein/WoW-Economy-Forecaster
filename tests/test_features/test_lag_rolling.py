@@ -7,7 +7,6 @@ Prices are deterministic so expected values can be computed by hand.
 
 from __future__ import annotations
 
-import math
 from datetime import date, timedelta
 
 import pytest

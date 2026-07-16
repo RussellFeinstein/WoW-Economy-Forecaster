@@ -6,15 +6,12 @@ import csv
 import json
 from pathlib import Path
 
-import pytest
-
 from wow_forecaster.reporting.export import (
     export_to_csv,
     export_to_json,
     flatten_forecast_records_for_export,
     flatten_recommendations_for_export,
 )
-
 
 # ── export_to_csv ─────────────────────────────────────────────────────────────
 

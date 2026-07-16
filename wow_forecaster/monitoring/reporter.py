@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -32,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def write_drift_report(
-    result: "DriftCheckResult",
+    result: DriftCheckResult,
     output_dir: Path,
 ) -> Path:
     """Serialise a DriftCheckResult to a dated JSON file.
@@ -85,7 +84,7 @@ def write_drift_report(
 
 
 def write_health_report(
-    summaries: list["ModelHealthSummary"],
+    summaries: list[ModelHealthSummary],
     output_dir: Path,
     realm_slug: str,
 ) -> Path:
@@ -127,7 +126,7 @@ def write_health_report(
 
 
 def write_provenance_report(
-    summary: "ProvenanceSummary",
+    summary: ProvenanceSummary,
     output_dir: Path,
 ) -> Path:
     """Serialise a ProvenanceSummary to a dated JSON file.
@@ -169,7 +168,7 @@ def write_provenance_report(
 def persist_drift_to_db(
     conn,
     run_id: int,
-    result: "DriftCheckResult",
+    result: DriftCheckResult,
 ) -> None:
     """Persist a DriftCheckResult to the drift_check_results table.
 
@@ -220,7 +219,7 @@ def persist_drift_to_db(
 def persist_health_to_db(
     conn,
     run_id: int,
-    summary: "ModelHealthSummary",
+    summary: ModelHealthSummary,
 ) -> None:
     """Persist a ModelHealthSummary to the model_health_snapshots table.
 

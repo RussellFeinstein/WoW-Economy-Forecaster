@@ -17,8 +17,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ class SourceProvenance:
     """
 
     source:              str
-    last_snapshot_at:    Optional[str]
+    last_snapshot_at:    str | None
     snapshot_count_24h:  int
     total_records_24h:   int
     success_rate_24h:    float
@@ -66,7 +65,7 @@ class ProvenanceSummary:
     realm_slug:      str
     checked_at:      str
     sources:         list[SourceProvenance]
-    freshness_hours: Optional[float]
+    freshness_hours: float | None
     is_fresh:        bool
 
 
@@ -91,12 +90,12 @@ def build_provenance_summary(
     from wow_forecaster.monitoring.drift import _utc_now_iso
 
     now_str  = _utc_now_iso()
-    now_dt   = datetime.now(tz=timezone.utc)
+    now_dt   = datetime.now(tz=UTC)
     cutoff   = (now_dt - timedelta(hours=lookback_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
     stale_dt = now_dt - timedelta(hours=stale_threshold_hours)
 
     sources: list[SourceProvenance] = []
-    most_recent_dt: Optional[datetime] = None
+    most_recent_dt: datetime | None = None
 
     for source in _KNOWN_SOURCES:
         try:
@@ -147,12 +146,12 @@ def build_provenance_summary(
         success_rate = n_success / n_total if n_total > 0 else 0.0
 
         # Most recent snapshot for this source
-        last_ts: Optional[str] = None
+        last_ts: str | None = None
         if merged:
             last_ts = merged[0]["fetched_at"]
             try:
                 last_dt = datetime.strptime(last_ts, "%Y-%m-%dT%H:%M:%SZ").replace(
-                    tzinfo=timezone.utc
+                    tzinfo=UTC
                 )
                 if most_recent_dt is None or last_dt > most_recent_dt:
                     most_recent_dt = last_dt
@@ -164,7 +163,7 @@ def build_provenance_summary(
         if last_ts is not None:
             try:
                 last_dt = datetime.strptime(last_ts, "%Y-%m-%dT%H:%M:%SZ").replace(
-                    tzinfo=timezone.utc
+                    tzinfo=UTC
                 )
                 is_stale = last_dt < stale_dt
             except ValueError:
@@ -180,7 +179,7 @@ def build_provenance_summary(
         ))
 
     # Freshness: hours since the most recent snapshot across any source
-    freshness_hours: Optional[float] = None
+    freshness_hours: float | None = None
     if most_recent_dt is not None:
         freshness_hours = round((now_dt - most_recent_dt).total_seconds() / 3600.0, 2)
 

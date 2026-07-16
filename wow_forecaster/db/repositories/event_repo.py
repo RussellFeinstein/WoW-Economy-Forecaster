@@ -4,10 +4,8 @@ Repository for WoW events — insert, fetch, and update operations.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import date, datetime
-from typing import Optional
 
 from wow_forecaster.db.repositories.base import BaseRepository
 from wow_forecaster.models.event import WoWEvent
@@ -107,7 +105,7 @@ class WoWEventRepository(BaseRepository):
             raise RuntimeError(f"Event slug '{event.slug}' not found after insert — unexpected SQLite state.")
         return int(row["event_id"])
 
-    def get_by_id(self, event_id: int) -> Optional[WoWEvent]:
+    def get_by_id(self, event_id: int) -> WoWEvent | None:
         """Fetch a single event by primary key.
 
         Args:
@@ -121,7 +119,7 @@ class WoWEventRepository(BaseRepository):
         )
         return _row_to_event(row) if row else None
 
-    def get_by_slug(self, slug: str) -> Optional[WoWEvent]:
+    def get_by_slug(self, slug: str) -> WoWEvent | None:
         """Fetch a single event by slug.
 
         Args:

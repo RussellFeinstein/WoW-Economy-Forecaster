@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import ClassVar, Optional
+from datetime import UTC, datetime
+from typing import ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class NewsItem:
     category: str           # "patch-notes" | "announcement" | "developer-update" | "hotfixes"
     summary: str = ""
     is_patch_notes: bool = False
-    patch_version: Optional[str] = None
+    patch_version: str | None = None
 
 
 @dataclass
@@ -49,7 +49,7 @@ class NewsResponse:
 
     source: str = "blizzard_news"
     endpoint: str = ""
-    fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    fetched_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     items: list[NewsItem] = field(default_factory=list)
     is_fixture: bool = True
 
@@ -132,9 +132,9 @@ class BlizzardNewsClient:
             # Publication timestamp
             if hasattr(entry, "published_parsed") and entry.published_parsed:
                 ts = time.mktime(entry.published_parsed)
-                published_at = datetime.fromtimestamp(ts, tz=timezone.utc)
+                published_at = datetime.fromtimestamp(ts, tz=UTC)
             else:
-                published_at = datetime.now(timezone.utc)
+                published_at = datetime.now(UTC)
 
             title   = getattr(entry, "title", "")
             summary = getattr(entry, "summary", "")[:500]
@@ -179,7 +179,7 @@ class BlizzardNewsClient:
         return NewsResponse(
             source="blizzard_news",
             endpoint=self.RSS_URL,
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
             items=items,
             is_fixture=False,
         )
@@ -223,7 +223,7 @@ class BlizzardNewsClient:
         logger.debug("BlizzardNewsClient: returning %d fixture items", len(items))
         return NewsResponse(
             endpoint="fixture/recent-news",
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
             items=items,
             is_fixture=True,
         )

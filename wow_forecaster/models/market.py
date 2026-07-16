@@ -14,7 +14,6 @@ accidental mutation as records pass through pipeline stages.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -51,12 +50,12 @@ class RawMarketObservation(BaseModel):
     faction: str = "neutral"
     observed_at: datetime
     source: str
-    min_buyout_raw: Optional[int] = None
-    market_value_raw: Optional[int] = None
-    historical_value_raw: Optional[int] = None
-    quantity_listed: Optional[int] = None
-    num_auctions: Optional[int] = None
-    raw_json: Optional[str] = None
+    min_buyout_raw: int | None = None
+    market_value_raw: int | None = None
+    historical_value_raw: int | None = None
+    quantity_listed: int | None = None
+    num_auctions: int | None = None
+    raw_json: str | None = None
 
     @field_validator("faction")
     @classmethod
@@ -74,14 +73,14 @@ class RawMarketObservation(BaseModel):
 
     @field_validator("min_buyout_raw", "market_value_raw", "historical_value_raw")
     @classmethod
-    def validate_copper_non_negative(cls, v: Optional[int]) -> Optional[int]:
+    def validate_copper_non_negative(cls, v: int | None) -> int | None:
         if v is not None and v < 0:
             raise ValueError("Copper monetary values must be non-negative.")
         return v
 
     @field_validator("quantity_listed", "num_auctions")
     @classmethod
-    def validate_counts_non_negative(cls, v: Optional[int]) -> Optional[int]:
+    def validate_counts_non_negative(cls, v: int | None) -> int | None:
         if v is not None and v < 0:
             raise ValueError("Quantity and auction count values must be non-negative.")
         return v
@@ -117,21 +116,21 @@ class NormalizedMarketObservation(BaseModel):
 
     obs_id: int
     item_id: int
-    archetype_id: Optional[int] = None
+    archetype_id: int | None = None
     realm_slug: str
     faction: str = "neutral"
     observed_at: datetime
     price_gold: float
-    market_value_gold: Optional[float] = None
-    historical_value_gold: Optional[float] = None
-    quantity_listed: Optional[int] = None
-    num_auctions: Optional[int] = None
-    z_score: Optional[float] = None
+    market_value_gold: float | None = None
+    historical_value_gold: float | None = None
+    quantity_listed: int | None = None
+    num_auctions: int | None = None
+    z_score: float | None = None
     is_outlier: bool = False
 
     @field_validator("price_gold", "market_value_gold", "historical_value_gold")
     @classmethod
-    def validate_gold_non_negative(cls, v: Optional[float]) -> Optional[float]:
+    def validate_gold_non_negative(cls, v: float | None) -> float | None:
         if v is not None and v < 0:
             raise ValueError("Gold monetary values must be non-negative.")
         return v

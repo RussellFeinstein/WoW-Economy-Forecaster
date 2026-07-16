@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from wow_forecaster.reporting.formatters import (
     format_drift_health_summary,
     format_forecast_summary,
@@ -12,7 +10,6 @@ from wow_forecaster.reporting.formatters import (
     format_top_items_table,
     format_volatility_watchlist,
 )
-
 
 # ── format_freshness_banner ───────────────────────────────────────────────────
 

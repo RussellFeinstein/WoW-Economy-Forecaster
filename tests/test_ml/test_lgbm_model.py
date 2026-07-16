@@ -30,19 +30,15 @@ LightGBMForecaster.write_metadata():
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 
 import pytest
 
 from wow_forecaster.ml.feature_selector import (
     CATEGORICAL_FEATURE_COLS,
-    TARGET_COL_MAP,
     TRAINING_FEATURE_COLS,
-    encode_row,
 )
 from wow_forecaster.ml.lgbm_model import LightGBMForecaster
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

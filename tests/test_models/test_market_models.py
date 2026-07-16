@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -24,7 +24,7 @@ class TestRawMarketObservation:
                 item_id=1,
                 realm_slug="area-52",
                 faction="nightelf",
-                observed_at=datetime(2024, 9, 15, tzinfo=timezone.utc),
+                observed_at=datetime(2024, 9, 15, tzinfo=UTC),
                 source="tsm_export",
             )
 
@@ -34,7 +34,7 @@ class TestRawMarketObservation:
                 item_id=1,
                 realm_slug="area-52",
                 faction="neutral",
-                observed_at=datetime(2024, 9, 15, tzinfo=timezone.utc),
+                observed_at=datetime(2024, 9, 15, tzinfo=UTC),
                 source="unknown_source",
             )
 
@@ -44,7 +44,7 @@ class TestRawMarketObservation:
                 item_id=1,
                 realm_slug="area-52",
                 faction="neutral",
-                observed_at=datetime(2024, 9, 15, tzinfo=timezone.utc),
+                observed_at=datetime(2024, 9, 15, tzinfo=UTC),
                 source="tsm_export",
                 min_buyout_raw=-100,
             )
@@ -55,7 +55,7 @@ class TestRawMarketObservation:
                 item_id=1,
                 realm_slug="area-52",
                 faction="neutral",
-                observed_at=datetime(2024, 9, 15, tzinfo=timezone.utc),
+                observed_at=datetime(2024, 9, 15, tzinfo=UTC),
                 source="tsm_export",
                 quantity_listed=-5,
             )
@@ -65,7 +65,7 @@ class TestRawMarketObservation:
             item_id=1,
             realm_slug="area-52",
             faction="neutral",
-            observed_at=datetime(2024, 9, 15, tzinfo=timezone.utc),
+            observed_at=datetime(2024, 9, 15, tzinfo=UTC),
             source="tsm_export",
             min_buyout_raw=0,
         )
@@ -76,7 +76,7 @@ class TestRawMarketObservation:
             item_id=1,
             realm_slug="area-52",
             faction="neutral",
-            observed_at=datetime(2024, 9, 15, tzinfo=timezone.utc),
+            observed_at=datetime(2024, 9, 15, tzinfo=UTC),
             source="tsm_export",
         )
         assert obs.min_buyout_raw is None
@@ -91,7 +91,7 @@ class TestRawMarketObservation:
                 item_id=1,
                 realm_slug="area-52",
                 faction=faction,
-                observed_at=datetime(2024, 9, 15, tzinfo=timezone.utc),
+                observed_at=datetime(2024, 9, 15, tzinfo=UTC),
                 source="tsm_export",
             )
             assert obs.faction == faction
@@ -110,7 +110,7 @@ class TestNormalizedMarketObservation:
                 item_id=1,
                 realm_slug="area-52",
                 faction="neutral",
-                observed_at=datetime(2024, 9, 15, tzinfo=timezone.utc),
+                observed_at=datetime(2024, 9, 15, tzinfo=UTC),
                 price_gold=-1.0,
             )
 
@@ -124,7 +124,7 @@ class TestNormalizedMarketObservation:
             item_id=1,
             realm_slug="area-52",
             faction="neutral",
-            observed_at=datetime(2024, 9, 15, tzinfo=timezone.utc),
+            observed_at=datetime(2024, 9, 15, tzinfo=UTC),
             price_gold=100.0,
         )
         assert norm.archetype_id is None

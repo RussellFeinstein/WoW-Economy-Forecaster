@@ -31,7 +31,6 @@ from wow_forecaster.scheduler import (
     _next_daily_run,
 )
 
-
 # ── _find_cli_exe ─────────────────────────────────────────────────────────────
 
 class TestFindCliExe:

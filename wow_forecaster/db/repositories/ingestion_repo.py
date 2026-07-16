@@ -17,7 +17,6 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 from wow_forecaster.db.repositories.base import BaseRepository
 
@@ -44,15 +43,15 @@ class IngestionSnapshot:
         fetched_at: UTC timestamp of the fetch attempt.
     """
 
-    snapshot_id: Optional[int]
-    run_id: Optional[int]
+    snapshot_id: int | None
+    run_id: int | None
     source: str
     endpoint: str
     snapshot_path: str
-    content_hash: Optional[str]
+    content_hash: str | None
     record_count: int
     success: bool
-    error_message: Optional[str]
+    error_message: str | None
     fetched_at: datetime
 
 
@@ -110,7 +109,7 @@ class IngestionSnapshotRepository(BaseRepository):
         )
         return [_row_to_snapshot(r) for r in rows]
 
-    def get_latest_by_source(self, source: str) -> Optional[IngestionSnapshot]:
+    def get_latest_by_source(self, source: str) -> IngestionSnapshot | None:
         """Fetch the most recent snapshot for a given source.
 
         Useful for deduplication — compare ``content_hash`` against the new
@@ -133,7 +132,7 @@ class IngestionSnapshotRepository(BaseRepository):
         )
         return _row_to_snapshot(row) if row else None
 
-    def get_latest_successful_by_source(self, source: str) -> Optional[IngestionSnapshot]:
+    def get_latest_successful_by_source(self, source: str) -> IngestionSnapshot | None:
         """Fetch the most recent *successful* snapshot for a given source.
 
         Args:

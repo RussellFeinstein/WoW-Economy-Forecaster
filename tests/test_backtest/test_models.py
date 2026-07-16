@@ -42,7 +42,6 @@ from wow_forecaster.backtest.models import (
     all_baseline_models,
 )
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _row(price: float | None, obs_date: date | None = None) -> dict:

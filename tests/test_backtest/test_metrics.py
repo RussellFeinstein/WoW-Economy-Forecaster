@@ -20,11 +20,9 @@ from datetime import date
 import pytest
 
 from wow_forecaster.backtest.metrics import (
-    BacktestMetrics,
     PredictionRecord,
     compute_metrics,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

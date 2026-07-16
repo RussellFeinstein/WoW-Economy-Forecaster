@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 import sqlite3
 from datetime import datetime
-from typing import Optional
 
 from wow_forecaster.db.repositories.base import BaseRepository
 from wow_forecaster.models.market import NormalizedMarketObservation, RawMarketObservation
@@ -163,7 +162,7 @@ class MarketObservationRepository(BaseRepository):
     def get_normalized_for_item(
         self,
         item_id: int,
-        realm_slug: Optional[str] = None,
+        realm_slug: str | None = None,
         limit: int = 500,
     ) -> list[NormalizedMarketObservation]:
         """Fetch normalized observations for a specific item.

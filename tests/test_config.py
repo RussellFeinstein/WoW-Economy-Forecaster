@@ -25,7 +25,6 @@ from wow_forecaster.config import (
     load_config,
 )
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)

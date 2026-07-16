@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -87,21 +87,21 @@ class TestIsKnownAt:
             start_date=date(2024, 9, 10),
             announced_at=None,
         )
-        as_of = datetime(2024, 9, 15, tzinfo=timezone.utc)
+        as_of = datetime(2024, 9, 15, tzinfo=UTC)
         assert ev.is_known_at(as_of) is False
 
     def test_returns_false_before_announced_at(self, sample_event):
         # sample_event announced 2024-08-19
-        before = datetime(2024, 8, 1, tzinfo=timezone.utc)
+        before = datetime(2024, 8, 1, tzinfo=UTC)
         assert sample_event.is_known_at(before) is False
 
     def test_returns_true_at_announced_at(self, sample_event):
         # exactly at announced_at timestamp
-        exactly_at = datetime(2024, 8, 19, 17, 0, 0, tzinfo=timezone.utc)
+        exactly_at = datetime(2024, 8, 19, 17, 0, 0, tzinfo=UTC)
         assert sample_event.is_known_at(exactly_at) is True
 
     def test_returns_true_after_announced_at(self, sample_event):
-        after = datetime(2024, 9, 5, tzinfo=timezone.utc)
+        after = datetime(2024, 9, 5, tzinfo=UTC)
         assert sample_event.is_known_at(after) is True
 
 
