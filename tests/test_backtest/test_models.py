@@ -42,7 +42,6 @@ from wow_forecaster.backtest.models import (
     all_baseline_models,
 )
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _row(price: float | None, obs_date: date | None = None) -> dict:
@@ -262,5 +261,5 @@ def test_all_baseline_models_are_independent_instances() -> None:
     """Two calls return completely independent model objects."""
     models_a = all_baseline_models()
     models_b = all_baseline_models()
-    for a, b in zip(models_a, models_b):
+    for a, b in zip(models_a, models_b, strict=True):
         assert a is not b

@@ -30,8 +30,8 @@ and is straightforward to unit-test with synthetic data.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
-from datetime import date, timedelta
+from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from wow_forecaster.features.registry import feature_names

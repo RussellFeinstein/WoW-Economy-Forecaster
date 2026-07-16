@@ -7,7 +7,7 @@ import sqlite3
 import pytest
 
 from wow_forecaster.db.migrations import run_migrations
-from wow_forecaster.db.schema import apply_schema, get_existing_tables, ALL_TABLE_NAMES
+from wow_forecaster.db.schema import ALL_TABLE_NAMES, apply_schema, get_existing_tables
 
 
 class TestCraftingTablesInSchema:

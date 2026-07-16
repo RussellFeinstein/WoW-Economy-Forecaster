@@ -17,13 +17,12 @@ The seeded prices are designed so lag/rolling tests can verify exact values:
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, datetime, timezone, timedelta
-from typing import Generator
+from collections.abc import Generator
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
 from wow_forecaster.db.schema import apply_schema
-
 
 # Base observation date for the seed window.
 _SEED_START = date(2025, 1, 1)
@@ -125,7 +124,6 @@ def _seed(conn: sqlite3.Connection) -> None:
     )
 
     # Normalised observations: 30 days × 3 obs/day × 2 archetypes.
-    rows = []
     obs_id = 1
     # We need raw obs first; FK requires market_observations_raw, but actually
     # the FK on market_observations_normalized references obs_id in
@@ -139,7 +137,7 @@ def _seed(conn: sqlite3.Connection) -> None:
         for hour_offset in [8, 14, 20]:
             observed_at = datetime(
                 obs_date.year, obs_date.month, obs_date.day,
-                hour_offset, 0, 0, tzinfo=timezone.utc
+                hour_offset, 0, 0, tzinfo=UTC
             ).isoformat()
 
             # Archetype 1 (flask): oscillating price

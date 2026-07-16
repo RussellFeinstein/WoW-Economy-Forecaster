@@ -28,7 +28,7 @@ import json
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from wow_forecaster.models.forecast import ForecastOutput, RecommendationOutput
@@ -315,12 +315,12 @@ def build_recommendation_outputs(
     """
     outputs: list[RecommendationOutput] = []
 
-    for cat, items in top_by_category.items():
+    for _cat, items in top_by_category.items():
         for rank, sf in enumerate(items, start=1):
             if sf.forecast.forecast_id is None:
                 continue  # forecast_id FK required
 
-            expires = datetime.now(tz=timezone.utc) + timedelta(
+            expires = datetime.now(tz=UTC) + timedelta(
                 days=sf.horizon_days or default_horizon_days
             )
 

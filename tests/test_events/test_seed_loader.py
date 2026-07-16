@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import date
-from pathlib import Path
 
 import pyarrow.parquet as pq
 import pytest
@@ -27,7 +26,6 @@ from wow_forecaster.events.seed_loader import (
     upsert_category_impacts,
     upsert_events,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -158,7 +156,9 @@ class TestUpsertEvents:
         upsert_events(mem_db, records)
         count = upsert_events(mem_db, records)  # Second upsert
         assert count == 1
-        rows = mem_db.execute("SELECT COUNT(*) as n FROM wow_events WHERE slug = 'evt-1'").fetchone()
+        rows = mem_db.execute(
+            "SELECT COUNT(*) as n FROM wow_events WHERE slug = 'evt-1'"
+        ).fetchone()
         assert rows["n"] == 1
 
     def test_upsert_updates_fields(self, mem_db):

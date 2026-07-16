@@ -16,7 +16,7 @@ frozen — its ``status``, ``rows_processed``, ``error_message``, and
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -50,17 +50,17 @@ class ModelMetadata(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    model_id: Optional[int] = None
+    model_id: int | None = None
     slug: str
     display_name: str
     model_type: str
     version: str = "0.1.0"
-    hyperparameters: Optional[dict[str, Any]] = None
-    training_data_start: Optional[datetime] = None
-    training_data_end: Optional[datetime] = None
-    validation_mae: Optional[float] = None
-    validation_rmse: Optional[float] = None
-    artifact_path: Optional[str] = None
+    hyperparameters: dict[str, Any] | None = None
+    training_data_start: datetime | None = None
+    training_data_end: datetime | None = None
+    validation_mae: float | None = None
+    validation_rmse: float | None = None
+    artifact_path: str | None = None
     is_active: bool = False
 
     @field_validator("model_type")
@@ -100,18 +100,18 @@ class RunMetadata(BaseModel):
     # Not frozen — status, rows_processed, etc. are updated during execution
     model_config = ConfigDict(frozen=False)
 
-    run_id: Optional[int] = None
+    run_id: int | None = None
     run_slug: str
     pipeline_stage: str
     status: str = "started"
-    model_id: Optional[int] = None
-    realm_slug: Optional[str] = None
-    expansion_slug: Optional[str] = None
+    model_id: int | None = None
+    realm_slug: str | None = None
+    expansion_slug: str | None = None
     config_snapshot: dict[str, Any]
     rows_processed: int = 0
-    error_message: Optional[str] = None
+    error_message: str | None = None
     started_at: datetime
-    finished_at: Optional[datetime] = None
+    finished_at: datetime | None = None
 
     @field_validator("pipeline_stage")
     @classmethod

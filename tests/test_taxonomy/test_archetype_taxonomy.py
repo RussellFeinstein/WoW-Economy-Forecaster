@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import re
 
-import pytest
-
 from wow_forecaster.taxonomy.archetype_taxonomy import (
     CATEGORY_TAG_MAP,
     ArchetypeCategory,

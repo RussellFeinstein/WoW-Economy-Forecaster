@@ -10,16 +10,16 @@ Covers:
 """
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from wow_forecaster.governance.freshness import (
     FreshnessStatus,
-    check_all_sources_freshness,
-    check_source_freshness,
     _classify_status,
     _compute_age_hours,
+    check_all_sources_freshness,
+    check_source_freshness,
 )
 from wow_forecaster.governance.models import (
     BackoffConfig,
@@ -30,7 +30,6 @@ from wow_forecaster.governance.models import (
     RetentionConfig,
     SourcePolicy,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -102,7 +101,7 @@ def _insert_snapshot(
 
 
 def _utcnow() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def _ts(hours_ago: float) -> str:
@@ -168,7 +167,9 @@ class TestComputeAgeHours:
 class TestCheckSourceFreshness:
     def test_fresh_snapshot(self, fresh_db):
         _insert_snapshot(fresh_db, "test_api", _ts(0.5))
-        policy = _make_freshness_policy(source_id="test_api", ttl_hours=1.0, stale_threshold_hours=3.0)
+        policy = _make_freshness_policy(
+            source_id="test_api", ttl_hours=1.0, stale_threshold_hours=3.0
+        )
         result = check_source_freshness(fresh_db, "test_api", policy)
 
         assert result.source_id == "test_api"
@@ -180,7 +181,9 @@ class TestCheckSourceFreshness:
 
     def test_stale_snapshot(self, fresh_db):
         _insert_snapshot(fresh_db, "test_api", _ts(5.0))
-        policy = _make_freshness_policy(source_id="test_api", ttl_hours=1.0, stale_threshold_hours=3.0)
+        policy = _make_freshness_policy(
+            source_id="test_api", ttl_hours=1.0, stale_threshold_hours=3.0
+        )
         result = check_source_freshness(fresh_db, "test_api", policy)
 
         assert result.status == FreshnessStatus.STALE
@@ -190,7 +193,8 @@ class TestCheckSourceFreshness:
     def test_critical_snapshot(self, fresh_db):
         _insert_snapshot(fresh_db, "test_api", _ts(30.0))
         policy = _make_freshness_policy(
-            source_id="test_api", ttl_hours=1.0, stale_threshold_hours=3.0, critical_threshold_hours=25.0
+            source_id="test_api", ttl_hours=1.0, stale_threshold_hours=3.0,
+            critical_threshold_hours=25.0
         )
         result = check_source_freshness(fresh_db, "test_api", policy)
 

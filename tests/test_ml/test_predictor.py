@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-import tempfile
-from datetime import date, timedelta
+from datetime import UTC
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 from wow_forecaster.ml.predictor import run_inference
-from wow_forecaster.models.forecast import ForecastOutput
 from wow_forecaster.models.meta import RunMetadata
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -25,14 +22,14 @@ def _make_config(confidence_pct: float = 0.80) -> MagicMock:
 
 
 def _make_run(run_id: int = 1) -> RunMetadata:
-    from datetime import datetime, timezone
     import uuid
+    from datetime import datetime
     run = RunMetadata(
         run_slug=str(uuid.uuid4()),
         pipeline_stage="forecast",
         realm_slug="us",
         config_snapshot={},
-        started_at=datetime.now(tz=timezone.utc),
+        started_at=datetime.now(tz=UTC),
     )
     run.run_id = run_id
     return run
@@ -117,7 +114,9 @@ class TestRunInferenceBlending:
     def test_warm_archetype_not_blended(self, tmp_path):
         """Warm (non-cold-start) archetypes are never blended."""
         parquet_path = tmp_path / "inference_us_test.parquet"
-        _write_parquet([_archetype_row(archetype_id=10, price=80.0, is_cold_start=False)], parquet_path)
+        _write_parquet(
+            [_archetype_row(archetype_id=10, price=80.0, is_cold_start=False)], parquet_path
+        )
 
         forecaster_prediction = 120.0
         fc = _make_forecaster(forecaster_prediction)

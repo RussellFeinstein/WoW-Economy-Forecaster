@@ -57,10 +57,9 @@ from __future__ import annotations
 import logging
 import math
 import sqlite3
-from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from enum import Enum
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -87,19 +86,19 @@ class DriftLevel(str, Enum):
     HIGH     = "high"
     CRITICAL = "critical"
 
-    def __ge__(self, other: "DriftLevel") -> bool:
+    def __ge__(self, other: DriftLevel) -> bool:
         _order = list(DriftLevel)
         return _order.index(self) >= _order.index(other)
 
-    def __gt__(self, other: "DriftLevel") -> bool:
+    def __gt__(self, other: DriftLevel) -> bool:
         _order = list(DriftLevel)
         return _order.index(self) > _order.index(other)
 
-    def __le__(self, other: "DriftLevel") -> bool:
+    def __le__(self, other: DriftLevel) -> bool:
         _order = list(DriftLevel)
         return _order.index(self) <= _order.index(other)
 
-    def __lt__(self, other: "DriftLevel") -> bool:
+    def __lt__(self, other: DriftLevel) -> bool:
         _order = list(DriftLevel)
         return _order.index(self) < _order.index(other)
 
@@ -125,10 +124,10 @@ class SeriesDriftStats:
 
     archetype_id:   int
     realm_slug:     str
-    recent_mean:    Optional[float]
-    baseline_mean:  Optional[float]
-    baseline_std:   Optional[float]
-    z_mean_shift:   Optional[float]
+    recent_mean:    float | None
+    baseline_mean:  float | None
+    baseline_std:   float | None
+    z_mean_shift:   float | None
     recent_n:       int
     baseline_n:     int
     is_drifted:     bool
@@ -184,9 +183,9 @@ class ErrorDriftReport:
     checked_at:   str
     horizon_days: int
     n_evaluated:  int
-    live_mae:     Optional[float]
-    baseline_mae: Optional[float]
-    mae_ratio:    Optional[float]
+    live_mae:     float | None
+    baseline_mae: float | None
+    mae_ratio:    float | None
     drift_level:  DriftLevel
 
 
@@ -268,7 +267,7 @@ def _classify_data_drift(
 
 
 def _classify_error_drift(
-    mae_ratio: Optional[float],
+    mae_ratio: float | None,
     thresholds: tuple[float, float, float, float] = _DEFAULT_MAE_THRESHOLDS,
 ) -> DriftLevel:
     """Map mae_ratio to a DriftLevel.
@@ -501,7 +500,7 @@ class DriftChecker:
             r_n    = r.get("n", 0)
 
             # Compute z-score of mean shift
-            z: Optional[float] = None
+            z: float | None = None
             if b_mean is not None and r_mean is not None and b_std and b_std > 1e-6:
                 z = (r_mean - b_mean) / b_std
 
@@ -586,14 +585,14 @@ class DriftChecker:
             live_rows = []
 
         n_evaluated = len(live_rows)
-        live_mae: Optional[float] = None
+        live_mae: float | None = None
         if n_evaluated > 0:
             errors = [r["abs_error"] for r in live_rows if r["abs_error"] is not None]
             if errors:
                 live_mae = sum(errors) / len(errors)
 
         # ── Baseline MAE: from most recent backtest run ────────────────────────
-        baseline_mae: Optional[float] = None
+        baseline_mae: float | None = None
         try:
             bt_row = self._conn.execute(
                 """
@@ -621,14 +620,15 @@ class DriftChecker:
         except Exception as exc:
             logger.warning("Error drift baseline query failed: %s", exc)
 
-        mae_ratio: Optional[float] = None
+        mae_ratio: float | None = None
         if live_mae is not None and baseline_mae is not None and baseline_mae > 1e-6:
             mae_ratio = round(live_mae / baseline_mae, 4)
 
         drift_level = _classify_error_drift(mae_ratio, self._mae_thresholds)
 
         logger.info(
-            "Error drift | realm=%s | h=%dd | n=%d | live_mae=%s | baseline_mae=%s | ratio=%s | level=%s",
+            "Error drift | realm=%s | h=%dd | n=%d | live_mae=%s | "
+            "baseline_mae=%s | ratio=%s | level=%s",
             realm_slug, horizon_days, n_evaluated,
             f"{live_mae:.2f}g" if live_mae else "N/A",
             f"{baseline_mae:.2f}g" if baseline_mae else "N/A",
@@ -725,7 +725,7 @@ class DriftChecker:
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 def _utc_now_iso() -> str:
-    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _days_ago(n: float) -> date:

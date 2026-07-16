@@ -314,7 +314,7 @@ def _normalize_batch(
             mean_p = 0.0
             std_p = 0.0
 
-        for row, price_gold in zip(rows, gold_prices):
+        for row, price_gold in zip(rows, gold_prices, strict=True):
             obs_ids.append(row["obs_id"])
 
             # Z-score: None when std is 0 (all prices identical) or price missing

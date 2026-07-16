@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from typing import Optional
 
 from wow_forecaster.db.repositories.base import BaseRepository
 from wow_forecaster.models.archetype import ArchetypeMapping, EconomicArchetype
@@ -47,7 +46,7 @@ class ArchetypeRepository(BaseRepository):
         )
         return self.last_insert_rowid()
 
-    def get_by_id(self, archetype_id: int) -> Optional[EconomicArchetype]:
+    def get_by_id(self, archetype_id: int) -> EconomicArchetype | None:
         """Fetch an archetype by primary key.
 
         Args:
@@ -61,7 +60,7 @@ class ArchetypeRepository(BaseRepository):
         )
         return _row_to_archetype(row) if row else None
 
-    def get_by_slug(self, slug: str) -> Optional[EconomicArchetype]:
+    def get_by_slug(self, slug: str) -> EconomicArchetype | None:
         """Fetch an archetype by its unique slug.
 
         Args:

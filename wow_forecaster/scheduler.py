@@ -34,7 +34,6 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -106,8 +105,8 @@ class SchedulerDaemon:
         db_path: str,
         daily_time: str = "07:00",
         skip_initial_hourly: bool = False,
-        log_dir: Optional[Path] = None,
-        cli_exe: Optional[str] = None,
+        log_dir: Path | None = None,
+        cli_exe: str | None = None,
     ) -> None:
         self.realm = realm
         self.db_path = db_path

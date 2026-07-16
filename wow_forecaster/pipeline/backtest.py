@@ -17,9 +17,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
-from typing import Any
 
-from wow_forecaster.config import AppConfig
 from wow_forecaster.models.meta import RunMetadata
 from wow_forecaster.pipeline.base import PipelineStage
 

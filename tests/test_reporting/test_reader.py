@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
-import pytest
 
 from wow_forecaster.reporting.reader import (
     check_freshness,
@@ -18,7 +16,6 @@ from wow_forecaster.reporting.reader import (
     load_provenance_report,
     load_recommendations_report,
 )
-
 
 # ── find_latest_file ──────────────────────────────────────────────────────────
 
@@ -65,7 +62,7 @@ def test_find_latest_file_empty_directory(tmp_path: Path) -> None:
 
 def test_check_freshness_fresh_datetime() -> None:
     """A datetime 1 h ago is within the 4 h default window."""
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     one_h_ago = now.replace(hour=now.hour - 1) if now.hour >= 1 else now
     ts = one_h_ago.isoformat()
     is_fresh, age = check_freshness(ts, max_hours=4.0)
@@ -77,7 +74,7 @@ def test_check_freshness_fresh_datetime() -> None:
 def test_check_freshness_stale_datetime() -> None:
     """A datetime 24 h ago is outside the 4 h window."""
     from datetime import timedelta
-    stale = datetime.now(tz=timezone.utc) - timedelta(hours=24)
+    stale = datetime.now(tz=UTC) - timedelta(hours=24)
     is_fresh, age = check_freshness(stale.isoformat(), max_hours=4.0)
     assert is_fresh is False
     assert age is not None
@@ -86,7 +83,7 @@ def test_check_freshness_stale_datetime() -> None:
 
 def test_check_freshness_date_only_today() -> None:
     """A date-only string for today is treated as midnight UTC today."""
-    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
     is_fresh, age = check_freshness(today, max_hours=25.0)
     # today midnight could be up to 24h in the past — use generous threshold
     assert age is not None
@@ -117,7 +114,7 @@ def test_check_freshness_invalid_string() -> None:
 def test_check_freshness_custom_max_hours() -> None:
     """Custom max_hours threshold is respected."""
     from datetime import timedelta
-    slightly_old = datetime.now(tz=timezone.utc) - timedelta(hours=2)
+    slightly_old = datetime.now(tz=UTC) - timedelta(hours=2)
     ts = slightly_old.isoformat()
     # Strict: 1 h threshold → stale
     is_fresh_strict, _ = check_freshness(ts, max_hours=1.0)

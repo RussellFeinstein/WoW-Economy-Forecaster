@@ -70,6 +70,8 @@ class RecommendStage(PipelineStage):
             build_scored_forecasts,
             enrich_with_item_discounts,
             enrich_with_top_item_rois,
+        )
+        from wow_forecaster.recommendations.ranker import (
             top_n_per_category as rank_top_n,
         )
         from wow_forecaster.recommendations.reporter import (
@@ -165,10 +167,7 @@ class RecommendStage(PipelineStage):
 
 def _load_recent_forecasts(conn, realm_slug: str, run_id: int | None):
     """Load the most recent forecast outputs for a realm from the DB."""
-    from wow_forecaster.db.repositories.forecast_repo import ForecastOutputRepository
     from datetime import date
-
-    repo = ForecastOutputRepository(conn)
 
     if run_id is not None:
         # Specific run

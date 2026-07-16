@@ -462,7 +462,7 @@ CREATE TABLE IF NOT EXISTS crafting_margin_snapshots (
 
 _DDL_CRAFTING_MARGIN_SNAPSHOTS_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_margin_recipe_date ON crafting_margin_snapshots(recipe_id, obs_date);
-CREATE INDEX IF NOT EXISTS idx_margin_realm_date  ON crafting_margin_snapshots(realm_slug, obs_date);
+CREATE INDEX IF NOT EXISTS idx_margin_realm_date ON crafting_margin_snapshots(realm_slug, obs_date);
 """
 
 _DDL_DAILY_ROLLUP_ARCHETYPE = """

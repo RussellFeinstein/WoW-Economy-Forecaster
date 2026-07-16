@@ -115,7 +115,7 @@ def run_inference(
 
         predictions = forecaster.predict(encoded_rows)
 
-        for raw_row, enc_row, pred in zip(raw_rows, encoded_rows, predictions):
+        for raw_row, enc_row, pred in zip(raw_rows, encoded_rows, predictions, strict=False):
             if pred is None:
                 continue
 

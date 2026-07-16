@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
-
 from wow_forecaster.recipes.recipe_repo import RecipeRepository
 
 
-def _insert_recipe(repo: RecipeRepository, recipe_id: int = 1001, profession: str = "alchemy") -> None:
+def _insert_recipe(
+    repo: RecipeRepository, recipe_id: int = 1001, profession: str = "alchemy"
+) -> None:
     repo.upsert_recipe(
         recipe_id=recipe_id,
         profession_slug=profession,

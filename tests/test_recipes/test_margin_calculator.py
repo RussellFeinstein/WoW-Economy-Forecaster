@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, datetime, timezone
-
-import pytest
+from datetime import date
 
 from wow_forecaster.db.schema import apply_schema
 from wow_forecaster.recipes.margin_calculator import MarginCalculator
-from wow_forecaster.recipes.recipe_repo import RecipeRepository
 
 
 def _setup_db() -> sqlite3.Connection:
@@ -95,7 +92,8 @@ class TestMarginCalculator:
 
         _insert_recipe(conn, 501, 1000)
         _insert_reagent(conn, 501, 2001, 2)   # 2 × 10g = 20g
-        _insert_reagent(conn, 501, 2002, 4)   # 4 × 6g  = 24g  => craft_cost = 44g (wait, output_qty=1)
+        _insert_reagent(conn, 501, 2002, 4)   # 4 × 6g  = 24g  => craft_cost = 44g
+        # (wait, output_qty=1)
         # Actually: craft_cost = (2*10 + 4*6) / 1 = 44g
         # margin = 100 - 44 = 56g
 
@@ -183,7 +181,7 @@ class TestMarginCalculator:
         )
         conn.commit()
 
-        stats = calc.compute_margins(realm_slug=realm, lookback_days=1, end_date=date(2026, 3, 6))
+        calc.compute_margins(realm_slug=realm, lookback_days=1, end_date=date(2026, 3, 6))
         # Second run updates the row
         row = conn.execute(
             "SELECT craft_cost_gold FROM crafting_margin_snapshots WHERE recipe_id = 501;"
@@ -215,7 +213,8 @@ class TestMarginCalculator:
         calc.compute_margins(realm_slug=realm, lookback_days=1, end_date=date(2026, 3, 6))
 
         row = conn.execute(
-            "SELECT craft_cost_gold, margin_gold FROM crafting_margin_snapshots WHERE recipe_id = 502;"
+            "SELECT craft_cost_gold, margin_gold FROM crafting_margin_snapshots "
+            "WHERE recipe_id = 502;"
         ).fetchone()
         assert abs(row["craft_cost_gold"] - 6.0) < 0.01   # 30 / 5 = 6
         assert abs(row["margin_gold"] - 4.0) < 0.01       # 10 - 6 = 4

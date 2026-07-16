@@ -30,19 +30,15 @@ LightGBMForecaster.write_metadata():
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 
 import pytest
 
 from wow_forecaster.ml.feature_selector import (
     CATEGORICAL_FEATURE_COLS,
-    TARGET_COL_MAP,
     TRAINING_FEATURE_COLS,
-    encode_row,
 )
 from wow_forecaster.ml.lgbm_model import LightGBMForecaster
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -263,7 +259,11 @@ def test_write_metadata_produces_valid_json(tmp_path: Path):
         target_col="target_price_7d",
     )
     meta_path = tmp_path / "lgbm_7d.json"
-    m.write_metadata(meta_path, realm_slug="area-52", dataset_version="train_area-52_2024-09-01_2025-01-31.parquet")
+    m.write_metadata(
+        meta_path,
+        realm_slug="area-52",
+        dataset_version="train_area-52_2024-09-01_2025-01-31.parquet",
+    )
 
     data = json.loads(meta_path.read_text())
     assert data["horizon_days"] == 7

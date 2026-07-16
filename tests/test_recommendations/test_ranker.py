@@ -29,11 +29,13 @@ build_recommendation_outputs():
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import date
 
 import pytest
 
-from wow_forecaster.models.forecast import ForecastOutput, RecommendationOutput
+from wow_forecaster.models.forecast import ForecastOutput
+from wow_forecaster.recommendations.item_overlay import ItemDiscountRow
 from wow_forecaster.recommendations.ranker import (
     ScoredForecast,
     build_recommendation_outputs,
@@ -41,11 +43,7 @@ from wow_forecaster.recommendations.ranker import (
     enrich_with_item_discounts,
     top_n_per_category,
 )
-import sqlite3
-
-from wow_forecaster.recommendations.item_overlay import ItemDiscountRow
 from wow_forecaster.recommendations.scorer import ScoreComponents
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -325,7 +323,9 @@ class TestTopNPerCategoryDeduplication:
         for arch_id in [1, 2, 3, 4]:
             for horizon in [1, 7, 28]:
                 scored.append(
-                    _scored_forecast(score=float(arch_id) * 10, archetype_id=arch_id, horizon_days=horizon)
+                    _scored_forecast(
+                        score=float(arch_id) * 10, archetype_id=arch_id, horizon_days=horizon
+                    )
                 )
         result = top_n_per_category(scored, n=2)
         assert len(result["consumable"]) == 2
@@ -408,7 +408,9 @@ class TestBuildRecommendationOutputs:
     def test_multiple_categories(self):
         top_by_cat = {
             "consumable": [_scored_forecast(score=50.0, archetype_id=1, forecast_id=10)],
-            "mat":        [_scored_forecast(score=40.0, archetype_id=2, category="mat", forecast_id=11)],
+            "mat":        [
+                _scored_forecast(score=40.0, archetype_id=2, category="mat", forecast_id=11)
+            ],
         }
         result = build_recommendation_outputs(top_by_cat)
         assert len(result) == 2
@@ -484,8 +486,12 @@ class TestEnrichWithItemDiscounts:
 
     def test_items_attached_for_winning_archetype(self):
         conn = _make_overlay_db()
-        _insert_item_and_obs(conn, 1, "Herb A", archetype_id=1, realm_slug="area-52", price_gold=80.0)
-        _insert_item_and_obs(conn, 2, "Herb B", archetype_id=1, realm_slug="area-52", price_gold=70.0)
+        _insert_item_and_obs(
+            conn, 1, "Herb A", archetype_id=1, realm_slug="area-52", price_gold=80.0
+        )
+        _insert_item_and_obs(
+            conn, 2, "Herb B", archetype_id=1, realm_slug="area-52", price_gold=70.0
+        )
 
         sf = _scored_forecast(archetype_id=1, action="buy", forecast_id=1)
         sf.realm_slug = "area-52"
@@ -499,8 +505,12 @@ class TestEnrichWithItemDiscounts:
     def test_buy_items_ordered_most_underpriced_first(self):
         conn = _make_overlay_db()
         # 60g = 40% under mean; 80g = 20% under mean
-        _insert_item_and_obs(conn, 1, "Cheap", archetype_id=1, realm_slug="area-52", price_gold=60.0)
-        _insert_item_and_obs(conn, 2, "Mid",   archetype_id=1, realm_slug="area-52", price_gold=80.0)
+        _insert_item_and_obs(
+            conn, 1, "Cheap", archetype_id=1, realm_slug="area-52", price_gold=60.0
+        )
+        _insert_item_and_obs(
+            conn, 2, "Mid",   archetype_id=1, realm_slug="area-52", price_gold=80.0
+        )
 
         sf = _scored_forecast(archetype_id=1, action="buy", forecast_id=1)
         sf.realm_slug = "area-52"
@@ -512,7 +522,9 @@ class TestEnrichWithItemDiscounts:
 
     def test_zero_current_price_skipped(self):
         conn = _make_overlay_db()
-        _insert_item_and_obs(conn, 1, "Herb A", archetype_id=1, realm_slug="area-52", price_gold=80.0)
+        _insert_item_and_obs(
+            conn, 1, "Herb A", archetype_id=1, realm_slug="area-52", price_gold=80.0
+        )
 
         sf = _scored_forecast(archetype_id=1, action="buy", forecast_id=1)
         sf.realm_slug = "area-52"
@@ -544,8 +556,12 @@ class TestEnrichWithItemDiscounts:
 
     def test_multiple_categories_all_enriched(self):
         conn = _make_overlay_db()
-        _insert_item_and_obs(conn, 1, "Flask A", archetype_id=1, realm_slug="area-52", price_gold=90.0)
-        _insert_item_and_obs(conn, 2, "Ore B",   archetype_id=2, realm_slug="area-52", price_gold=50.0)
+        _insert_item_and_obs(
+            conn, 1, "Flask A", archetype_id=1, realm_slug="area-52", price_gold=90.0
+        )
+        _insert_item_and_obs(
+            conn, 2, "Ore B",   archetype_id=2, realm_slug="area-52", price_gold=50.0
+        )
 
         sf1 = _scored_forecast(archetype_id=1, action="buy", forecast_id=1)
         sf1.realm_slug = "area-52"

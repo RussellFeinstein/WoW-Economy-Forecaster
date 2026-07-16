@@ -27,7 +27,6 @@ from __future__ import annotations
 import json
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -40,7 +39,7 @@ app = typer.Typer(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _load_config_or_exit(config_path: Optional[str] = None):
+def _load_config_or_exit(config_path: str | None = None):
     """Load AppConfig, printing a friendly error and exiting on failure."""
     from wow_forecaster.config import load_config
 
@@ -49,10 +48,10 @@ def _load_config_or_exit(config_path: Optional[str] = None):
         return load_config(cfg_path)
     except FileNotFoundError as exc:
         typer.echo(f"[ERROR] {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     except Exception as exc:
         typer.echo(f"[ERROR] Config validation failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
 
 def _configure_logging(config):
@@ -79,12 +78,12 @@ def _load_archetype_names(db_path: str) -> dict[int, str]:
 
 @app.command("init-db")
 def init_db(
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config (e.g. data/db/test.db).",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -97,7 +96,7 @@ def init_db(
     """
     from wow_forecaster.db.connection import get_connection
     from wow_forecaster.db.migrations import run_migrations
-    from wow_forecaster.db.schema import apply_schema, ALL_TABLE_NAMES
+    from wow_forecaster.db.schema import ALL_TABLE_NAMES, apply_schema
 
     config = _load_config_or_exit(config_path)
     _configure_logging(config)
@@ -120,7 +119,7 @@ def init_db(
 
 @app.command("validate-config")
 def validate_config(
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file (default: config/default.toml).",
@@ -158,7 +157,7 @@ def validate_config(
 
 @app.command("import-events")
 def import_events(
-    events_file: Optional[str] = typer.Option(
+    events_file: str | None = typer.Option(
         None,
         "--file",
         "-f",
@@ -167,7 +166,7 @@ def import_events(
             "Defaults to config.data.events_seed_file."
         ),
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -216,7 +215,7 @@ def import_events(
             validated = parse_event_csv(events_path)
         except (FileNotFoundError, ValueError) as exc:
             typer.echo(f"[ERROR] CSV parse failed:\n{exc}", err=True)
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
 
     elif fmt == ".json":
         try:
@@ -224,7 +223,7 @@ def import_events(
                 raw_events = json.load(f)
         except (json.JSONDecodeError, OSError) as exc:
             typer.echo(f"[ERROR] JSON parse error: {exc}", err=True)
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
 
         if not isinstance(raw_events, list):
             typer.echo("[ERROR] JSON events file must contain an array.", err=True)
@@ -274,7 +273,7 @@ def import_events(
 
 @app.command("import-auctionator")
 def import_auctionator(
-    path: Optional[str] = typer.Option(
+    path: str | None = typer.Option(
         None,
         "--path",
         "-p",
@@ -291,12 +290,12 @@ def import_auctionator(
             "Use 'us' for region-wide commodity AH data (default)."
         ),
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -371,7 +370,7 @@ def import_auctionator(
         )
     except Exception as exc:
         typer.echo(f"[ERROR] Auctionator import failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo(f"  Inserted: {inserted:,} observations")
     typer.echo(f"  Skipped:  {skipped:,} (unknown item IDs — run init-db to populate items table)")
@@ -386,12 +385,12 @@ def bootstrap_items_cmd(
         "-c",
         help="Max simultaneous Blizzard Item API requests (default 50).",
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -465,10 +464,10 @@ def bootstrap_items_cmd(
         )
     except FileNotFoundError as exc:
         typer.echo(f"[ERROR] {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     except Exception as exc:
         typer.echo(f"[ERROR] Bootstrap failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo("")
     typer.echo(f"  item_categories:    {cats:>5}")
@@ -481,12 +480,12 @@ def bootstrap_items_cmd(
 
 @app.command("run-hourly-refresh")
 def run_hourly_refresh(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm slug to refresh (e.g. area-52). Uses config defaults if omitted.",
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
@@ -501,7 +500,7 @@ def run_hourly_refresh(
         "--check-drift/--no-check-drift",
         help="Run drift detection after normalize (default: on).",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -627,12 +626,12 @@ def run_hourly_refresh(
 
 @app.command("train-model")
 def train_model(
-    realm: Optional[list[str]] = typer.Option(
+    realm: list[str] | None = typer.Option(
         None,
         "--realm",
         help="Realm slug(s) to train for. Repeatable; uses config defaults if omitted.",
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
@@ -642,7 +641,7 @@ def train_model(
         "--dry-run",
         help="Show what would train without executing.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -698,7 +697,7 @@ def train_model(
         result_run = stage.run(realm_slugs=target_realms)
     except Exception as exc:
         typer.echo(f"[ERROR] Training failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo(
         f"  status={result_run.status} | models_trained={result_run.rows_processed}"
@@ -709,7 +708,7 @@ def train_model(
 
 @app.command("run-daily-forecast")
 def run_daily_forecast(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm slug to forecast (e.g. area-52). Uses config defaults if omitted.",
@@ -724,12 +723,12 @@ def run_daily_forecast(
         "--skip-recommend",
         help="Skip RecommendStage (forecast only).",
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -805,7 +804,7 @@ def run_daily_forecast(
         )
     except Exception as exc:
         typer.echo(f"[ERROR] ForecastStage failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     # ── Step 3: RecommendStage ─────────────────────────────────────────────────
     if not skip_recommend:
@@ -834,27 +833,27 @@ def run_daily_forecast(
 
 @app.command("recommend-top-items")
 def recommend_top_items(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm slug (e.g. area-52). Uses first config default if omitted.",
     ),
-    top_n: Optional[int] = typer.Option(
+    top_n: int | None = typer.Option(
         None,
         "--top-n",
         help="Max recommendations per category. Defaults to config.model.top_n_per_category.",
     ),
-    forecast_run_id: Optional[int] = typer.Option(
+    forecast_run_id: int | None = typer.Option(
         None,
         "--forecast-run-id",
         help="Score forecasts from a specific run_id. Defaults to the most recent.",
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -905,7 +904,7 @@ def recommend_top_items(
         )
     except Exception as exc:
         typer.echo(f"[ERROR] Recommend failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo(
         f"  status={result.status} | recommendations={result.rows_processed}"
@@ -928,22 +927,22 @@ def backtest(
         "--end-date",
         help="End of backtest window (ISO date, e.g. 2024-12-01).",
     ),
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm to backtest. Uses config defaults if omitted.",
     ),
-    window_days: Optional[int] = typer.Option(
+    window_days: int | None = typer.Option(
         None,
         "--window-days",
         help="Walk-forward training window size in days. Uses config default if omitted.",
     ),
-    step_days: Optional[int] = typer.Option(
+    step_days: int | None = typer.Option(
         None,
         "--step-days",
         help="Days to advance between folds. Uses config default if omitted.",
     ),
-    horizons: Optional[str] = typer.Option(
+    horizons: str | None = typer.Option(
         None,
         "--horizons",
         help=(
@@ -951,7 +950,7 @@ def backtest(
             "Uses config default if omitted."
         ),
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
@@ -961,7 +960,7 @@ def backtest(
         "--dry-run",
         help="Show what would run (fold count, model names) without executing.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -1000,14 +999,14 @@ def backtest(
         end   = date.fromisoformat(end_date)
     except ValueError as exc:
         typer.echo(f"[ERROR] Invalid date format: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     if end <= start:
         typer.echo("[ERROR] --end-date must be after --start-date.", err=True)
         raise typer.Exit(code=1)
 
     # Parse optional horizon override.
-    parsed_horizons: Optional[list[int]] = None
+    parsed_horizons: list[int] | None = None
     if horizons:
         try:
             parsed_horizons = [int(h.strip()) for h in horizons.split(",")]
@@ -1015,7 +1014,7 @@ def backtest(
                 raise ValueError("All horizons must be >= 1.")
         except ValueError as exc:
             typer.echo(f"[ERROR] Invalid --horizons value: {exc}", err=True)
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
 
     target_db    = db_path or config.database.db_path
     target_realm = realm or config.realms.defaults[0]
@@ -1029,8 +1028,8 @@ def backtest(
     )
 
     if dry_run:
-        from wow_forecaster.backtest.splits import generate_walk_forward_splits
         from wow_forecaster.backtest.models import all_baseline_models
+        from wow_forecaster.backtest.splits import generate_walk_forward_splits
         models = all_baseline_models()
         typer.echo("[DRY RUN] Would execute:")
         for h in hors:
@@ -1049,7 +1048,7 @@ def backtest(
     ) as conn:
         apply_schema(conn)
 
-    typer.echo(f"  Running BacktestStage ...")
+    typer.echo("  Running BacktestStage ...")
     try:
         stage = BacktestStage(config=config, db_path=target_db)
         result_run = stage.run(
@@ -1062,7 +1061,7 @@ def backtest(
         )
     except Exception as exc:
         typer.echo(f"[ERROR] Backtest failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo(
         f"  status={result_run.status} | records={result_run.rows_processed}"
@@ -1076,27 +1075,27 @@ def backtest(
 
 @app.command("report-backtest")
 def report_backtest(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Filter results to this realm slug.",
     ),
-    backtest_run_id: Optional[int] = typer.Option(
+    backtest_run_id: int | None = typer.Option(
         None,
         "--run-id",
         help="Show results for a specific backtest_run_id.",
     ),
-    horizon: Optional[int] = typer.Option(
+    horizon: int | None = typer.Option(
         None,
         "--horizon",
         help="Filter to a specific horizon in days (e.g. 1 or 3).",
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -1114,7 +1113,7 @@ def report_backtest(
     Use --run-id to target a specific run; otherwise the most recent run
     matching --realm is shown.
     """
-    from wow_forecaster.backtest.metrics import BacktestMetrics, PredictionRecord
+    from wow_forecaster.backtest.metrics import PredictionRecord
     from wow_forecaster.backtest.slices import (
         slice_by_event_window,
         slice_by_model_and_horizon,
@@ -1218,7 +1217,10 @@ def report_backtest(
     model_metrics = slice_by_model_and_horizon(records)
     typer.echo("")
     typer.echo("Per-model metrics (MAE in gold | RMSE | MAPE | Dir.Acc):")
-    header = f"  {'Model':<22} {'H':>3}  {'N':>6}  {'MAE':>8}  {'RMSE':>8}  {'MAPE':>7}  {'DirAcc':>7}"
+    header = (
+        f"  {'Model':<22} {'H':>3}  {'N':>6}  {'MAE':>8}  "
+        f"{'RMSE':>8}  {'MAPE':>7}  {'DirAcc':>7}"
+    )
     typer.echo(header)
     typer.echo("  " + "-" * (len(header) - 2))
     for (model_name, h), m in sorted(model_metrics.items()):
@@ -1255,27 +1257,28 @@ def report_backtest(
 
 @app.command("build-events")
 def build_events_cmd(
-    events_file: Optional[str] = typer.Option(
+    events_file: str | None = typer.Option(
         None,
         "--events-file",
         help="Path to events JSON seed file. Defaults to config/events/tww_events.json.",
     ),
-    impacts_file: Optional[str] = typer.Option(
+    impacts_file: str | None = typer.Option(
         None,
         "--impacts-file",
-        help="Path to category impacts JSON seed file. Defaults to config/events/tww_event_impacts.json.",
+        help="Path to category impacts JSON seed file. "
+        "Defaults to config/events/tww_event_impacts.json.",
     ),
-    output_dir: Optional[str] = typer.Option(
+    output_dir: str | None = typer.Option(
         None,
         "--output-dir",
         help="Directory for Parquet output. Defaults to data/processed/events.",
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -1315,14 +1318,19 @@ def build_events_cmd(
     target_db = db_path or config.database.db_path
 
     resolved_events  = Path(events_file)  if events_file  else Path("config/events/tww_events.json")
-    resolved_impacts = Path(impacts_file) if impacts_file else Path("config/events/tww_event_impacts.json")
+    resolved_impacts = (
+        Path(impacts_file) if impacts_file else Path("config/events/tww_event_impacts.json")
+    )
     resolved_out     = Path(output_dir)   if output_dir   else Path("data/processed/events")
 
     if not resolved_events.exists():
         typer.echo(f"[ERROR] Events file not found: {resolved_events}", err=True)
         raise typer.Exit(code=1)
 
-    typer.echo(f"build-events | events={resolved_events} | impacts={resolved_impacts} | db={target_db}")
+    typer.echo(
+        f"build-events | events={resolved_events} | "
+        f"impacts={resolved_impacts} | db={target_db}"
+    )
 
     with get_connection(
         target_db,
@@ -1343,7 +1351,7 @@ def build_events_cmd(
 
 @app.command("list-events")
 def list_events_cmd(
-    expansion: Optional[str] = typer.Option(
+    expansion: str | None = typer.Option(
         None,
         "--expansion",
         "-e",
@@ -1354,12 +1362,12 @@ def list_events_cmd(
         "--upcoming",
         help="Show only events that start on or after today.",
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -1388,7 +1396,10 @@ def list_events_cmd(
         conn.row_factory = __import__("sqlite3").Row
         cur = conn.cursor()
 
-        sql  = "SELECT slug, expansion_slug, event_type, severity, start_date, end_date, display_name FROM wow_events"
+        sql  = (
+            "SELECT slug, expansion_slug, event_type, severity, start_date, end_date, "
+            "display_name FROM wow_events"
+        )
         args: list = []
         where: list[str] = []
 
@@ -1428,18 +1439,18 @@ def list_events_cmd(
 
 @app.command("build-datasets")
 def build_datasets_cmd(
-    realm: Optional[list[str]] = typer.Option(
+    realm: list[str] | None = typer.Option(
         None,
         "--realm",
         help="Realm slug to process (e.g. area-52). Repeatable; uses config defaults if omitted.",
     ),
-    start_date: Optional[str] = typer.Option(
+    start_date: str | None = typer.Option(
         None,
         "--start-date",
         help="ISO date for the start of the training window (e.g. 2024-09-01). "
              "Defaults to today minus config.features.training_lookback_days.",
     ),
-    end_date: Optional[str] = typer.Option(
+    end_date: str | None = typer.Option(
         None,
         "--end-date",
         help="ISO date for the end of the training window (e.g. 2025-01-31). "
@@ -1455,12 +1466,12 @@ def build_datasets_cmd(
         "--dry-run",
         help="Validate inputs and print what would be built, then exit without writing files.",
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -1507,7 +1518,7 @@ def build_datasets_cmd(
         )
     except ValueError as exc:
         typer.echo(f"[ERROR] Invalid date format: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     if end <= start:
         typer.echo("[ERROR] --end-date must be after --start-date.", err=True)
@@ -1521,10 +1532,19 @@ def build_datasets_cmd(
     if dry_run:
         typer.echo("[DRY RUN] Would build:")
         for r in target_realms:
-            typer.echo(f"  training:  data/processed/features/training/train_{r}_{start}_{end}.parquet")
+            typer.echo(
+                f"  training:  data/processed/features/training/"
+                f"train_{r}_{start}_{end}.parquet"
+            )
             if not no_inference:
-                typer.echo(f"  inference: data/processed/features/inference/inference_{r}_{date.today()}.parquet")
-            typer.echo(f"  manifest:  data/processed/features/manifests/manifest_{r}_{date.today()}.json")
+                typer.echo(
+                    f"  inference: data/processed/features/inference/"
+                    f"inference_{r}_{date.today()}.parquet"
+                )
+            typer.echo(
+                f"  manifest:  data/processed/features/manifests/"
+                f"manifest_{r}_{date.today()}.json"
+            )
         return
 
     # Ensure schema exists.
@@ -1561,7 +1581,7 @@ def build_datasets_cmd(
             )
     except Exception as exc:
         typer.echo(f"[ERROR] Dataset build failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo(f"[OK] Built {total} training rows across {len(target_realms)} realm(s).")
 
@@ -1578,7 +1598,7 @@ def validate_datasets_cmd(
         "--strict",
         help="Exit with code 1 if any quality warnings are present (not just hard errors).",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -1612,7 +1632,7 @@ def validate_datasets_cmd(
             manifest_data = json.load(f)
     except (json.JSONDecodeError, OSError) as exc:
         typer.echo(f"[ERROR] Failed to read manifest: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     training_info = manifest_data.get("files", {}).get("training", {})
     training_path = Path(training_info.get("path", ""))
@@ -1627,7 +1647,7 @@ def validate_datasets_cmd(
         rows = table.to_pylist()
     except Exception as exc:
         typer.echo(f"[ERROR] Failed to read Parquet: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo(f"Running quality report on {len(rows)} rows...")
     items_excluded = manifest_data.get("quality", {}).get("items_excluded_no_archetype", 0)
@@ -1637,7 +1657,10 @@ def validate_datasets_cmd(
     typer.echo("")
     typer.echo("=== Data Quality Report ===")
     typer.echo(f"  Realm:            {manifest_data.get('realm_slug', '?')}")
-    typer.echo(f"  Date range:       {manifest_data.get('date_range', {}).get('start')} -> {manifest_data.get('date_range', {}).get('end')}")
+    typer.echo(
+        f"  Date range:       {manifest_data.get('date_range', {}).get('start')} -> "
+        f"{manifest_data.get('date_range', {}).get('end')}"
+    )
     typer.echo(f"  Total rows:       {report.total_rows}")
     typer.echo(f"  Total archetypes: {report.total_archetypes}")
     typer.echo(f"  Total realms:     {report.total_realms}")
@@ -1678,7 +1701,7 @@ def validate_datasets_cmd(
 
 @app.command("evaluate-live-forecast")
 def evaluate_live_forecast(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm slug (e.g. area-52). Uses first config default if omitted.",
@@ -1688,7 +1711,7 @@ def evaluate_live_forecast(
         "--window-days",
         help="How many recent days of forecast target dates to evaluate.",
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
@@ -1698,7 +1721,7 @@ def evaluate_live_forecast(
         "--output-json/--no-output-json",
         help="Write model_health_{realm}_{date}.json (default: on).",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -1763,7 +1786,10 @@ def evaluate_live_forecast(
     typer.echo("=== Live Forecast Health ===")
     typer.echo(f"  Realm: {target_realm}")
     typer.echo("")
-    header = f"  {'Horizon':>8}  {'Status':>10}  {'N':>5}  {'LiveMAE':>9}  {'BaseMAE':>9}  {'Ratio':>7}  {'DirAcc':>7}"
+    header = (
+        f"  {'Horizon':>8}  {'Status':>10}  {'N':>5}  {'LiveMAE':>9}  "
+        f"{'BaseMAE':>9}  {'Ratio':>7}  {'DirAcc':>7}"
+    )
     typer.echo(header)
     typer.echo("  " + "-" * (len(header) - 2))
     for s in summaries:
@@ -1789,12 +1815,12 @@ def evaluate_live_forecast(
 
 @app.command("check-drift")
 def check_drift(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm slug (e.g. area-52). Uses first config default if omitted.",
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
@@ -1804,7 +1830,7 @@ def check_drift(
         "--output-json/--no-output-json",
         help="Write drift_status_{realm}_{date}.json (default: on).",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -1950,17 +1976,17 @@ def check_drift(
 
 @app.command("report-top-items")
 def report_top_items_cmd(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm slug (e.g. area-52). Uses first config default if omitted.",
     ),
-    horizon: Optional[str] = typer.Option(
+    horizon: str | None = typer.Option(
         None,
         "--horizon",
         help="Filter to a single horizon (e.g. 1d, 7d, 28d). Shows all if omitted.",
     ),
-    export: Optional[str] = typer.Option(
+    export: str | None = typer.Option(
         None,
         "--export",
         help=(
@@ -1983,7 +2009,7 @@ def report_top_items_cmd(
         "--top-items",
         help="Max specific items to show under each archetype recommendation.",
     ),
-    expansion: Optional[str] = typer.Option(
+    expansion: str | None = typer.Option(
         None,
         "--expansion",
         help=(
@@ -1991,12 +2017,12 @@ def report_top_items_cmd(
             "(e.g. 'midnight', 'tww'). Defaults to config transfer_target."
         ),
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Path to SQLite DB (for per-item discount overlay). Uses config default.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -2135,12 +2161,12 @@ def report_top_items_cmd(
 
 @app.command("report-forecasts")
 def report_forecasts_cmd(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm slug. Uses first config default if omitted.",
     ),
-    horizon: Optional[str] = typer.Option(
+    horizon: str | None = typer.Option(
         None,
         "--horizon",
         help="Filter to a single horizon (e.g. 1d, 7d, 28d).",
@@ -2150,7 +2176,7 @@ def report_forecasts_cmd(
         "--top-n",
         help="How many rows to print (sorted by score descending).",
     ),
-    export: Optional[str] = typer.Option(
+    export: str | None = typer.Option(
         None,
         "--export",
         help="Write full forecast CSV (with ci_width_gold column) to this path.",
@@ -2160,7 +2186,7 @@ def report_forecasts_cmd(
         "--freshness-hours",
         help="Reports older than this many hours are flagged [STALE].",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -2192,7 +2218,7 @@ def report_forecasts_cmd(
         flatten_forecast_records_for_export,
     )
     from wow_forecaster.reporting.formatters import format_forecast_summary
-    from wow_forecaster.reporting.reader import check_freshness, load_forecast_records
+    from wow_forecaster.reporting.reader import load_forecast_records
 
     config = _load_config_or_exit(config_path)
     _configure_logging(config)
@@ -2219,7 +2245,7 @@ def report_forecasts_cmd(
     # Freshness: use file mtime as proxy (CSV has no embedded timestamp).
     from wow_forecaster.reporting.reader import find_latest_file
     csv_path = find_latest_file(out_dir, f"forecast_{target_realm}_*.csv")
-    age_hours: Optional[float] = None
+    age_hours: float | None = None
     is_fresh  = True
     if csv_path is not None:
         import os as _os
@@ -2252,7 +2278,7 @@ def report_forecasts_cmd(
 
 @app.command("report-volatility")
 def report_volatility_cmd(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm slug. Uses first config default if omitted.",
@@ -2262,7 +2288,7 @@ def report_volatility_cmd(
         "--top-n",
         help="How many items to show (default 20).",
     ),
-    export: Optional[str] = typer.Option(
+    export: str | None = typer.Option(
         None,
         "--export",
         help="Write watchlist CSV to this path.",
@@ -2272,7 +2298,7 @@ def report_volatility_cmd(
         "--freshness-hours",
         help="Reports older than this many hours are flagged [STALE].",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -2294,9 +2320,9 @@ def report_volatility_cmd(
     Reads forecast_{realm}_{date}.csv from data/outputs/forecasts/.
     Use --export PATH to write the sorted watchlist to a CSV file.
     """
-    from pathlib import Path as _Path
     import os as _os
     import time as _time
+    from pathlib import Path as _Path
 
     from wow_forecaster.reporting.export import export_to_csv
     from wow_forecaster.reporting.formatters import format_volatility_watchlist
@@ -2325,7 +2351,7 @@ def report_volatility_cmd(
                 r["archetype_sub_tag"] = arch_names.get(int(arch_id), str(arch_id))
 
     csv_path = find_latest_file(out_dir, f"forecast_{target_realm}_*.csv")
-    age_hours_: Optional[float] = None
+    age_hours_: float | None = None
     is_fresh_  = True
     if csv_path is not None:
         age_hours_ = (_time.time() - _os.path.getmtime(csv_path)) / 3600.0
@@ -2360,12 +2386,12 @@ def report_volatility_cmd(
 
 @app.command("report-drift")
 def report_drift_cmd(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm slug. Uses first config default if omitted.",
     ),
-    export: Optional[str] = typer.Option(
+    export: str | None = typer.Option(
         None,
         "--export",
         help="Write a combined drift+health JSON export to this path.",
@@ -2375,7 +2401,7 @@ def report_drift_cmd(
         "--freshness-hours",
         help="Reports older than this many hours are flagged [STALE].",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -2456,12 +2482,12 @@ def report_drift_cmd(
 
 @app.command("report-status")
 def report_status_cmd(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm slug. Uses first config default if omitted.",
     ),
-    export: Optional[str] = typer.Option(
+    export: str | None = typer.Option(
         None,
         "--export",
         help="Write provenance JSON export to this path.",
@@ -2471,7 +2497,7 @@ def report_status_cmd(
         "--freshness-hours",
         help="Reports older than this many hours are flagged [STALE].",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -2541,7 +2567,7 @@ def report_status_cmd(
 
 @app.command("check-data-health")
 def check_data_health_cmd(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm slug. Uses first config default if omitted.",
@@ -2556,7 +2582,7 @@ def check_data_health_cmd(
         "--stale-hours",
         help="Hours without a successful ingest before marking stale (default 4).",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -2630,7 +2656,7 @@ def list_sources_cmd(
         "-v",
         help="Print full detail for each source (rate limits, backoff, retention, policy notes).",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -2672,12 +2698,15 @@ def list_sources_cmd(
         policies = list_sources(sources_path)
     except FileNotFoundError as exc:
         typer.echo(f"[ERROR] {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     n_enabled  = sum(1 for p in policies if p.enabled)
     n_disabled = len(policies) - n_enabled
 
-    typer.echo(f"\n  Source Registry  ({len(policies)} sources, {n_enabled} enabled, {n_disabled} disabled)")
+    typer.echo(
+        f"\n  Source Registry  ({len(policies)} sources, "
+        f"{n_enabled} enabled, {n_disabled} disabled)"
+    )
     typer.echo(f"  Config: {sources_path}")
     typer.echo("")
 
@@ -2694,7 +2723,7 @@ def list_sources_cmd(
 
 @app.command("validate-source-policies")
 def validate_source_policies_cmd(
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -2782,7 +2811,9 @@ def validate_source_policies_cmd(
             )
             policies.append(policy)
         except (ValidationError, TypeError) as exc:
-            errors[sid] = [str(e) for e in (exc.errors() if isinstance(exc, ValidationError) else [exc])]
+            errors[sid] = [
+                str(e) for e in (exc.errors() if isinstance(exc, ValidationError) else [exc])
+            ]
 
     typer.echo(format_validation_report(policies, errors))
 
@@ -2795,22 +2826,22 @@ def validate_source_policies_cmd(
 
 @app.command("check-source-freshness")
 def check_source_freshness_cmd(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Filter freshness check to one realm slug.  Omit to check across all realms.",
     ),
-    export: Optional[str] = typer.Option(
+    export: str | None = typer.Option(
         None,
         "--export",
         help="Write a governance JSON report to this directory path.",
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -2842,7 +2873,6 @@ def check_source_freshness_cmd(
     \b
     Run 'run-hourly-refresh' to generate fresh ingestion snapshots.
     """
-    from pathlib import Path as _Path
 
     from wow_forecaster.db.connection import get_connection
     from wow_forecaster.governance.freshness import check_all_sources_freshness
@@ -2859,9 +2889,9 @@ def check_source_freshness_cmd(
         policies = list_sources(sources_path)
     except FileNotFoundError as exc:
         typer.echo(f"[ERROR] {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
-    typer.echo(f"\n  Source Freshness Check")
+    typer.echo("\n  Source Freshness Check")
     typer.echo(f"  Sources config : {sources_path}")
     typer.echo(f"  DB             : {target_db}")
     if realm:
@@ -2900,12 +2930,12 @@ def check_source_freshness_cmd(
 
 @app.command("start-scheduler")
 def start_scheduler_cmd(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm slug to run pipelines against.  Defaults to the first realm in config.",
     ),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None,
         "--db-path",
         help="Override DB path from config.",
@@ -2920,12 +2950,12 @@ def start_scheduler_cmd(
         "--skip-initial",
         help="Skip the immediate hourly refresh on start; wait for the next scheduled slot.",
     ),
-    log_dir: Optional[str] = typer.Option(
+    log_dir: str | None = typer.Option(
         None,
         "--log-dir",
         help="Directory for scheduler log files.  Defaults to 'logs/' in the working directory.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -2986,7 +3016,7 @@ def start_scheduler_cmd(
 
 @app.command("seed-recipes")
 def seed_recipes(
-    expansion: Optional[str] = typer.Option(
+    expansion: str | None = typer.Option(
         None,
         "--expansion",
         "-e",
@@ -3000,7 +3030,7 @@ def seed_recipes(
         "--all",
         help="Seed all expansions (full history). Overrides --expansion.",
     ),
-    professions: Optional[str] = typer.Option(
+    professions: str | None = typer.Option(
         None,
         "--professions",
         "-p",
@@ -3009,8 +3039,8 @@ def seed_recipes(
             "(e.g. 'alchemy,enchanting'). Defaults to all 7 primary crafting professions."
         ),
     ),
-    db_path: Optional[str] = typer.Option(None, "--db-path"),
-    config_path: Optional[str] = typer.Option(None, "--config"),
+    db_path: str | None = typer.Option(None, "--db-path"),
+    config_path: str | None = typer.Option(None, "--config"),
 ) -> None:
     """Seed recipe data from the Blizzard static Game Data API.
 
@@ -3100,14 +3130,14 @@ def seed_recipes(
 
 @app.command("build-margins")
 def build_margins(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None, "--realm", "-r", help="Realm/region slug (default: first in config.realms.defaults)."
     ),
     days: int = typer.Option(
         30, "--days", "-d", help="Number of historical days to (re)compute margins for."
     ),
-    db_path: Optional[str] = typer.Option(None, "--db-path"),
-    config_path: Optional[str] = typer.Option(None, "--config"),
+    db_path: str | None = typer.Option(None, "--db-path"),
+    config_path: str | None = typer.Option(None, "--config"),
 ) -> None:
     """Compute crafting margin snapshots from market price history.
 
@@ -3165,17 +3195,17 @@ def build_margins(
 
 @app.command("report-crafting")
 def report_crafting(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None, "--realm", "-r", help="Realm/region slug (default: first in config.realms.defaults)."
     ),
     top_n: int = typer.Option(
         10, "--top-n", "-n", help="Number of crafting opportunities to show."
     ),
-    export: Optional[str] = typer.Option(
+    export: str | None = typer.Option(
         None, "--export", help="Path to write CSV export of results."
     ),
-    db_path: Optional[str] = typer.Option(None, "--db-path"),
-    config_path: Optional[str] = typer.Option(None, "--config"),
+    db_path: str | None = typer.Option(None, "--db-path"),
+    config_path: str | None = typer.Option(None, "--config"),
 ) -> None:
     """Show top crafting opportunities with temporal window analysis.
 
@@ -3274,7 +3304,10 @@ def report_crafting(
             f"    Status: {opp.margin_status.upper()}  "
             f"(slope={slope_str}, {rank_str}, {config.crafting.margin_history_days}-day history)"
         )
-        typer.echo(f"    Volume: {opp.quantity_sum_7d:.0f} units/week  (vol_score={opp.volume_score:.2f})")
+        typer.echo(
+            f"    Volume: {opp.quantity_sum_7d:.0f} units/week  "
+            f"(vol_score={opp.volume_score:.2f})"
+        )
         typer.echo(f"    Ingredient coverage: {opp.ingredient_coverage_pct * 100:.0f}%")
         typer.echo("    Windows:")
 
@@ -3299,7 +3332,7 @@ def report_crafting(
         export_path = Path(export)
         export_path.parent.mkdir(parents=True, exist_ok=True)
 
-        from wow_forecaster.recommendations.crafting_advisor import CraftingWindow as _CW
+        from wow_forecaster.recommendations.crafting_advisor import CraftingWindow
 
         fieldnames = [
             "rank", "recipe_id", "recipe_name", "profession_slug", "output_item_id",
@@ -3307,7 +3340,7 @@ def report_crafting(
             "best_window", "best_window_margin_gold", "best_window_margin_pct",
             "current_output_price_gold", "current_craft_cost_gold", "current_margin_gold",
             "ingredient_coverage_pct", "quantity_sum_7d", "volume_score", "opportunity_score",
-        ] + [f"margin_{w.name.lower()}_gold" for w in _CW]
+        ] + [f"margin_{w.name.lower()}_gold" for w in CraftingWindow]
 
         with open(export_path, "w", newline="", encoding="utf-8") as f:
             writer = _csv.DictWriter(f, fieldnames=fieldnames)
@@ -3333,7 +3366,7 @@ def report_crafting(
                     "volume_score": opp.volume_score,
                     "opportunity_score": opp.opportunity_score,
                 }
-                for w in _CW:
+                for w in CraftingWindow:
                     row[f"margin_{w.name.lower()}_gold"] = opp.windows.get(w)
                 writer.writerow(row)
 
@@ -3344,15 +3377,16 @@ def report_crafting(
 
 @app.command("report-recipe-status")
 def report_recipe_status(
-    expansion: Optional[str] = typer.Option(
+    expansion: str | None = typer.Option(
         None,
         "--expansion",
         help="Filter to a single expansion slug (e.g. 'midnight'). Default: all.",
     ),
-    db_path: Optional[str] = typer.Option(None, "--db-path", help="Override DB path."),
-    config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path."),
+    db_path: str | None = typer.Option(None, "--db-path", help="Override DB path."),
+    config_path: Path | None = typer.Option(None, "--config", help="Config file path."),
 ) -> None:
-    """Show recipe seeding status: counts by expansion + profession, reagent coverage, margin snapshots.
+    """Show recipe seeding status: counts by expansion + profession, reagent coverage,
+    margin snapshots.
 
     Use this to verify that seed-recipes and build-margins ran successfully.
 
@@ -3422,7 +3456,10 @@ def report_recipe_status(
             return
 
         typer.echo("")
-        typer.echo(f"  {'Expansion':<18} {'Profession':<20} {'Recipes':>8} {'w/Reagents':>11} {'Coverage':>9}")
+        typer.echo(
+            f"  {'Expansion':<18} {'Profession':<20} {'Recipes':>8} "
+            f"{'w/Reagents':>11} {'Coverage':>9}"
+        )
         typer.echo("  " + "-" * 70)
 
         current_exp = None
@@ -3467,12 +3504,12 @@ def report_recipe_status(
 
 @app.command("report-feature-importance")
 def report_feature_importance(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm slug to inspect (e.g. 'us'). Uses first config default if omitted.",
     ),
-    horizon: Optional[list[str]] = typer.Option(
+    horizon: list[str] | None = typer.Option(
         None,
         "--horizon",
         help="Horizon(s) to inspect: 1d, 7d, 28d. Repeatable. Default: all.",
@@ -3487,17 +3524,17 @@ def report_feature_importance(
         "--importance-type",
         help="Importance method: 'gain' (total split gain, recommended) or 'split' (split count).",
     ),
-    export: Optional[Path] = typer.Option(
+    export: Path | None = typer.Option(
         None,
         "--export",
         help="Write full importance table to CSV at this path.",
     ),
-    artifact_dir_override: Optional[str] = typer.Option(
+    artifact_dir_override: str | None = typer.Option(
         None,
         "--artifact-dir",
         help="Override model artifact directory from config.",
     ),
-    config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path."),
+    config_path: Path | None = typer.Option(None, "--config", help="Config file path."),
 ) -> None:
     """Show LightGBM feature importance from the most recent trained model artifacts.
 
@@ -3521,7 +3558,9 @@ def report_feature_importance(
     config = _load_config_or_exit(config_path)
     target_realm    = realm or list(config.realms.defaults)[0]
     target_horizons = list(horizon) if horizon else ["1d", "7d", "28d"]
-    art_dir         = Path(artifact_dir_override) if artifact_dir_override else Path(config.model.artifact_dir)
+    art_dir         = (
+        Path(artifact_dir_override) if artifact_dir_override else Path(config.model.artifact_dir)
+    )
 
     if importance_type not in ("gain", "split"):
         typer.echo(
@@ -3576,7 +3615,7 @@ def report_feature_importance(
                 "splits":    int(s),
                 "split_pct": float(s) / total_split * 100.0,
             }
-            for col, g, s in zip(feat_cols, gain_vals, split_vals)
+            for col, g, s in zip(feat_cols, gain_vals, split_vals, strict=False)
         ]
 
         sort_key = "gain" if importance_type == "gain" else "splits"
@@ -3652,7 +3691,7 @@ def prune_snapshots(
         "--dry-run",
         help="Report what would be deleted without actually deleting anything.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -3724,7 +3763,7 @@ def checkpoint_db_cmd(
         "--mode",
         help="Checkpoint mode: PASSIVE, FULL, RESTART, or TRUNCATE.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -3772,7 +3811,10 @@ def checkpoint_db_cmd(
         typer.echo("  WAL size after:  0.0 MB")
 
     if busy:
-        typer.echo(f"  [WARN] Checkpoint incomplete (busy). log={log_pages} checkpointed={checkpointed}")
+        typer.echo(
+            f"  [WARN] Checkpoint incomplete (busy). "
+            f"log={log_pages} checkpointed={checkpointed}"
+        )
         typer.echo("  Another process may be using the database. Retry when idle.")
         raise typer.Exit(code=1)
     else:
@@ -3781,7 +3823,7 @@ def checkpoint_db_cmd(
 
 @app.command("export-tsm")
 def export_tsm_cmd(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None,
         "--realm",
         help="Realm slug. Uses first config default if omitted.",
@@ -3796,12 +3838,12 @@ def export_tsm_cmd(
         "--min-roi",
         help="Minimum ROI for inclusion (default 0.10 = 10%%).",
     ),
-    output: Optional[str] = typer.Option(
+    output: str | None = typer.Option(
         None,
         "--output",
         help="Write TSM import string to this file path.",
     ),
-    config_path: Optional[str] = typer.Option(
+    config_path: str | None = typer.Option(
         None,
         "--config",
         help="Path to TOML config file.",
@@ -3875,7 +3917,7 @@ def export_tsm_cmd(
 
 @app.command("generate-charts")
 def generate_charts(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None, "--realm",
         help="Realm slug (e.g. 'us'). Uses first config default if omitted.",
     ),
@@ -3892,7 +3934,7 @@ def generate_charts(
         help="Chart type to generate: all, forecast, backtest, features, "
              "recommendations, drift, transfer.",
     ),
-    config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path."),
+    config_path: Path | None = typer.Option(None, "--config", help="Config file path."),
 ) -> None:
     """Generate publication-quality portfolio charts from pipeline outputs.
 
@@ -3947,7 +3989,10 @@ def generate_charts(
             for aid in arch_ids:
                 aid_int = int(aid)
                 name_row = df_arch[df_arch["archetype_id"] == aid_int]
-                name = name_row.iloc[0]["display_name"] if not name_row.empty else f"Archetype {aid_int}"
+                name = (
+                    name_row.iloc[0]["display_name"] if not name_row.empty
+                    else f"Archetype {aid_int}"
+                )
                 df_hist = fetch_historical_prices(db_path, target_realm, aid_int)
                 df_fc_arch = df_fc[df_fc["archetype_id"] == aid_int]
                 fig = plot_forecast_timeline(df_hist, df_fc_arch, archetype_name=name)
@@ -3968,7 +4013,7 @@ def generate_charts(
         )
         from wow_forecaster.viz.data_queries import fetch_backtest_predictions
 
-        typer.echo(f"  Generating backtest charts...")
+        typer.echo("  Generating backtest charts...")
         df_bt = fetch_backtest_predictions(backtest_dir, target_realm)
 
         if not df_bt.empty:
@@ -3994,7 +4039,7 @@ def generate_charts(
         )
         from wow_forecaster.viz.data_queries import fetch_feature_importance
 
-        typer.echo(f"  Generating feature importance charts...")
+        typer.echo("  Generating feature importance charts...")
         df_fi = fetch_feature_importance(artifact_dir, target_realm)
 
         if not df_fi.empty:
@@ -4020,7 +4065,7 @@ def generate_charts(
         )
         from wow_forecaster.viz.data_queries import fetch_recommendation_scores
 
-        typer.echo(f"  Generating recommendation charts...")
+        typer.echo("  Generating recommendation charts...")
         df_recs = fetch_recommendation_scores(recs_dir, target_realm)
 
         if not df_recs.empty:
@@ -4042,7 +4087,7 @@ def generate_charts(
         from wow_forecaster.viz.charts.drift_chart import plot_drift_timeline
         from wow_forecaster.viz.data_queries import fetch_drift_history
 
-        typer.echo(f"  Generating drift charts...")
+        typer.echo("  Generating drift charts...")
         df_drift = fetch_drift_history(monitoring_dir, target_realm)
 
         if not df_drift.empty:
@@ -4062,7 +4107,7 @@ def generate_charts(
         )
         from wow_forecaster.viz.data_queries import fetch_forecast_data
 
-        typer.echo(f"  Generating transfer learning charts...")
+        typer.echo("  Generating transfer learning charts...")
 
         # Always generate the blend diagram (conceptual, no data needed)
         fig = plot_cold_start_blend_diagram()
@@ -4083,7 +4128,7 @@ def generate_charts(
 
 @app.command("export-bi-bundle")
 def export_bi_bundle(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None, "--realm",
         help="Realm slug (e.g. 'us'). Uses first config default if omitted.",
     ),
@@ -4103,7 +4148,7 @@ def export_bi_bundle(
         True, "--data-dictionary/--no-data-dictionary",
         help="Generate a data dictionary markdown file.",
     ),
-    config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path."),
+    config_path: Path | None = typer.Option(None, "--config", help="Config file path."),
 ) -> None:
     """Export star-schema dimension + fact tables for Power BI / Tableau.
 
@@ -4154,7 +4199,7 @@ def export_bi_bundle(
 
 @app.command("backfill-rollups")
 def backfill_rollups_cmd(
-    realm: Optional[str] = typer.Option(
+    realm: str | None = typer.Option(
         None, "--realm",
         help="Realm slug (e.g. 'us'). Uses first config default if omitted.",
     ),
@@ -4166,8 +4211,8 @@ def backfill_rollups_cmd(
         False, "--dry-run",
         help="Show date range and estimated work without writing.",
     ),
-    db_path: Optional[str] = typer.Option(None, "--db-path", help="Override DB path."),
-    config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path."),
+    db_path: str | None = typer.Option(None, "--db-path", help="Override DB path."),
+    config_path: Path | None = typer.Option(None, "--config", help="Config file path."),
 ) -> None:
     """Backfill daily rollup tables from existing normalized observations.
 

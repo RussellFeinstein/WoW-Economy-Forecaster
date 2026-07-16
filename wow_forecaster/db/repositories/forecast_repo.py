@@ -8,7 +8,6 @@ import json
 import logging
 import sqlite3
 from datetime import date, datetime
-from typing import Any, Optional
 
 from wow_forecaster.db.repositories.base import BaseRepository
 from wow_forecaster.models.forecast import ForecastOutput, RecommendationOutput
@@ -92,7 +91,7 @@ class ForecastOutputRepository(BaseRepository):
     def get_forecasts_for_archetype(
         self,
         archetype_id: int,
-        target_date: Optional[date] = None,
+        target_date: date | None = None,
     ) -> list[ForecastOutput]:
         """Fetch forecasts for an archetype, optionally filtered by target date.
 
@@ -189,7 +188,7 @@ class RunMetadataRepository(BaseRepository):
             ),
         )
 
-    def get_run_by_slug(self, run_slug: str) -> Optional[RunMetadata]:
+    def get_run_by_slug(self, run_slug: str) -> RunMetadata | None:
         """Fetch a run by its UUID slug.
 
         Args:
@@ -203,7 +202,9 @@ class RunMetadataRepository(BaseRepository):
         )
         return _row_to_run(row) if row else None
 
-    def get_recent_runs(self, pipeline_stage: Optional[str] = None, limit: int = 20) -> list[RunMetadata]:
+    def get_recent_runs(
+        self, pipeline_stage: str | None = None, limit: int = 20
+    ) -> list[RunMetadata]:
         """Fetch recent run records, optionally filtered by stage.
 
         Args:

@@ -7,7 +7,6 @@ Prices are deterministic so expected values can be computed by hand.
 
 from __future__ import annotations
 
-import math
 from datetime import date, timedelta
 
 import pytest
@@ -156,7 +155,7 @@ class TestTargets:
         """Two separate (archetype_id, realm) series must not influence each other."""
         rows_a = _make_rows([100.0] * 5)   # archetype 1
         rows_b = []
-        for i, r in enumerate(_make_rows([200.0] * 5)):
+        for _i, r in enumerate(_make_rows([200.0] * 5)):
             # Override archetype_id to 2 to create a second series.
             from dataclasses import replace
             rows_b.append(replace(r, archetype_id=2))

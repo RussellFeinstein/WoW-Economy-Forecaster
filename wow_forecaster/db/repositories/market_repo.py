@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 import sqlite3
 from datetime import datetime
-from typing import Optional
 
 from wow_forecaster.db.repositories.base import BaseRepository
 from wow_forecaster.models.market import NormalizedMarketObservation, RawMarketObservation
@@ -118,7 +117,8 @@ class MarketObservationRepository(BaseRepository):
             return 0
         placeholders = ",".join("?" for _ in obs_ids)
         cursor = self.execute(
-            f"UPDATE market_observations_raw SET is_processed = 1 WHERE obs_id IN ({placeholders});",
+            "UPDATE market_observations_raw SET is_processed = 1 "
+            f"WHERE obs_id IN ({placeholders});",
             tuple(obs_ids),
         )
         return cursor.rowcount
@@ -163,7 +163,7 @@ class MarketObservationRepository(BaseRepository):
     def get_normalized_for_item(
         self,
         item_id: int,
-        realm_slug: Optional[str] = None,
+        realm_slug: str | None = None,
         limit: int = 500,
     ) -> list[NormalizedMarketObservation]:
         """Fetch normalized observations for a specific item.

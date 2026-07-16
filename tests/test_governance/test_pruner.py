@@ -15,15 +15,11 @@ Covers:
 from __future__ import annotations
 
 import sqlite3
-import tempfile
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-
-import pytest
 
 from wow_forecaster.db.schema import apply_schema
 from wow_forecaster.governance.pruner import PruneResult, SnapshotPruner
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -42,7 +38,9 @@ def _make_pruner(
     )
 
 
-def _make_snapshot_file(raw_dir: Path, obs_date: date, filename: str = "realm_us_test.json") -> Path:
+def _make_snapshot_file(
+    raw_dir: Path, obs_date: date, filename: str = "realm_us_test.json"
+) -> Path:
     """Create a dummy snapshot file at raw/snapshots/blizzard_api/YYYY/MM/DD/filename."""
     day_dir = (
         raw_dir
@@ -224,7 +222,7 @@ def test_db_stale_raw_rows_deleted(tmp_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = ON;")
     _insert_item(conn, 1)
-    stale_ts = (datetime.now(tz=timezone.utc) - timedelta(days=40)).strftime(
+    stale_ts = (datetime.now(tz=UTC) - timedelta(days=40)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     _insert_raw_row(conn, 1, stale_ts)
@@ -245,7 +243,7 @@ def test_db_fresh_rows_not_deleted(tmp_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = ON;")
     _insert_item(conn, 1)
-    fresh_ts = (datetime.now(tz=timezone.utc) - timedelta(days=5)).strftime(
+    fresh_ts = (datetime.now(tz=UTC) - timedelta(days=5)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     _insert_raw_row(conn, 1, fresh_ts)
@@ -267,7 +265,7 @@ def test_db_normalised_rows_deleted_before_raw(tmp_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = ON;")
     _insert_item(conn, 1)
-    stale_ts = (datetime.now(tz=timezone.utc) - timedelta(days=40)).strftime(
+    stale_ts = (datetime.now(tz=UTC) - timedelta(days=40)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     obs_id = _insert_raw_row(conn, 1, stale_ts)
@@ -293,7 +291,7 @@ def test_db_dry_run_does_not_delete_rows(tmp_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = ON;")
     _insert_item(conn, 1)
-    stale_ts = (datetime.now(tz=timezone.utc) - timedelta(days=40)).strftime(
+    stale_ts = (datetime.now(tz=UTC) - timedelta(days=40)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     _insert_raw_row(conn, 1, stale_ts)

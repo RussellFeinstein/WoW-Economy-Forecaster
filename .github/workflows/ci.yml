@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # pull_request is the pre-merge gate for every branch under the PR-only
+  # flow (issue #46); push on main is the post-merge backstop. Branch-push
+  # triggers would double-run CI against the PR run.
   push:
-    branches: [main, "feature/**"]
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -10,6 +13,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      # Without fail-fast disabled, one matrix leg's failure cancels the
+      # other and masks its test results (issue #44 acceptance needs both).
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
 

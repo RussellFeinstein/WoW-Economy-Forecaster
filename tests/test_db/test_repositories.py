@@ -2,30 +2,25 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import pytest
 
 from wow_forecaster.db.repositories.archetype_repo import (
-    ArchetypeMappingRepository,
     ArchetypeRepository,
 )
 from wow_forecaster.db.repositories.event_repo import WoWEventRepository
 from wow_forecaster.db.repositories.forecast_repo import (
-    ForecastOutputRepository,
     RunMetadataRepository,
 )
 from wow_forecaster.db.repositories.item_repo import ItemCategoryRepository, ItemRepository
 from wow_forecaster.db.repositories.market_repo import MarketObservationRepository
-from wow_forecaster.models.archetype import ArchetypeMapping, EconomicArchetype
+from wow_forecaster.models.archetype import EconomicArchetype
 from wow_forecaster.models.event import WoWEvent
-from wow_forecaster.models.forecast import ForecastOutput
 from wow_forecaster.models.item import Item, ItemCategory
 from wow_forecaster.models.market import RawMarketObservation
-from wow_forecaster.models.meta import RunMetadata
 from wow_forecaster.taxonomy.archetype_taxonomy import ArchetypeCategory, ArchetypeTag
-from wow_forecaster.taxonomy.event_taxonomy import EventScope, EventSeverity, EventType
-
+from wow_forecaster.taxonomy.event_taxonomy import EventSeverity, EventType
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -148,7 +143,7 @@ class TestMarketObservationRepository:
             item_id=item_id,
             realm_slug="area-52",
             faction="neutral",
-            observed_at=datetime(2024, 9, 15, 12, 0, tzinfo=timezone.utc),
+            observed_at=datetime(2024, 9, 15, 12, 0, tzinfo=UTC),
             source="tsm_export",
             min_buyout_raw=5_000_000,
             quantity_listed=10,
@@ -218,7 +213,7 @@ class TestRunMetadataRepository:
         sample_run_metadata.run_id = run_id
         sample_run_metadata.status = "success"
         sample_run_metadata.rows_processed = 42
-        sample_run_metadata.finished_at = datetime(2024, 9, 15, 13, 0, tzinfo=timezone.utc)
+        sample_run_metadata.finished_at = datetime(2024, 9, 15, 13, 0, tzinfo=UTC)
 
         repo.update_run(sample_run_metadata)
 

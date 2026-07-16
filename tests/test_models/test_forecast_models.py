@@ -128,7 +128,7 @@ class TestForecastOutput:
             )
 
     def test_frozen_immutable(self, sample_forecast):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             sample_forecast.predicted_price_gold = 999.0
 
 
@@ -194,5 +194,5 @@ class TestRecommendationOutput:
             action="buy",
             reasoning="Test.",
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             rec.action = "sell"

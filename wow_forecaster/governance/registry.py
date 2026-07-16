@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
-from typing import Optional
 
 from wow_forecaster.governance.models import (
     BackoffConfig,
@@ -48,8 +47,8 @@ from wow_forecaster.governance.models import (
 
 # ── Module-level cache ────────────────────────────────────────────────────────
 
-_REGISTRY_CACHE: Optional[dict[str, SourcePolicy]] = None
-_CACHE_PATH: Optional[str] = None
+_REGISTRY_CACHE: dict[str, SourcePolicy] | None = None
+_CACHE_PATH: str | None = None
 
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
 
@@ -121,7 +120,7 @@ def _load_registry(sources_path: Path) -> dict[str, SourcePolicy]:
     return registry
 
 
-def get_registry(sources_path: Optional[str] = None) -> dict[str, SourcePolicy]:
+def get_registry(sources_path: str | None = None) -> dict[str, SourcePolicy]:
     """Return the full source registry (cached after first load).
 
     Args:
@@ -146,7 +145,7 @@ def get_registry(sources_path: Optional[str] = None) -> dict[str, SourcePolicy]:
 
 def get_source_policy(
     source_id: str,
-    sources_path: Optional[str] = None,
+    sources_path: str | None = None,
 ) -> SourcePolicy:
     """Look up a single source policy by ID.
 
@@ -170,7 +169,7 @@ def get_source_policy(
     return registry[source_id]
 
 
-def list_sources(sources_path: Optional[str] = None) -> list[SourcePolicy]:
+def list_sources(sources_path: str | None = None) -> list[SourcePolicy]:
     """Return all registered source policies sorted by source_id.
 
     Args:
@@ -183,7 +182,7 @@ def list_sources(sources_path: Optional[str] = None) -> list[SourcePolicy]:
     return sorted(registry.values(), key=lambda p: p.source_id)
 
 
-def get_enabled_sources(sources_path: Optional[str] = None) -> list[SourcePolicy]:
+def get_enabled_sources(sources_path: str | None = None) -> list[SourcePolicy]:
     """Return only the enabled source policies.
 
     Args:

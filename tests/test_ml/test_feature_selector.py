@@ -29,13 +29,11 @@ import pytest
 from wow_forecaster.ml.feature_selector import (
     CATEGORY_ENCODING,
     SEVERITY_ENCODING,
-    IMPACT_ENCODING,
     TRAINING_FEATURE_COLS,
     build_feature_matrix,
     encode_row,
     to_float,
 )
-
 
 # ── to_float ──────────────────────────────────────────────────────────────────
 

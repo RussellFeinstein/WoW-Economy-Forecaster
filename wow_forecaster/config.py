@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 import tomllib
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -320,7 +320,7 @@ def _find_project_root() -> Path:
     return _PROJECT_ROOT
 
 
-def load_config(config_path: Optional[Path] = None) -> AppConfig:
+def load_config(config_path: Path | None = None) -> AppConfig:
     """Load and merge application configuration.
 
     Args:

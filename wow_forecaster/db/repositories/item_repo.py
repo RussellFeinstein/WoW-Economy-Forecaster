@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from typing import Optional
 
 from wow_forecaster.db.repositories.base import BaseRepository
 from wow_forecaster.models.item import Item, ItemCategory
@@ -28,7 +27,8 @@ class ItemCategoryRepository(BaseRepository):
         """
         self.execute(
             """
-            INSERT INTO item_categories (slug, display_name, parent_slug, archetype_tag, expansion_slug)
+            INSERT INTO item_categories
+                (slug, display_name, parent_slug, archetype_tag, expansion_slug)
             VALUES (?, ?, ?, ?, ?);
             """,
             (
@@ -41,7 +41,7 @@ class ItemCategoryRepository(BaseRepository):
         )
         return self.last_insert_rowid()
 
-    def get_by_slug(self, slug: str) -> Optional[ItemCategory]:
+    def get_by_slug(self, slug: str) -> ItemCategory | None:
         """Fetch a category by its slug.
 
         Args:
@@ -53,7 +53,7 @@ class ItemCategoryRepository(BaseRepository):
         row = self.fetchone("SELECT * FROM item_categories WHERE slug = ?;", (slug,))
         return _row_to_category(row) if row else None
 
-    def get_by_id(self, category_id: int) -> Optional[ItemCategory]:
+    def get_by_id(self, category_id: int) -> ItemCategory | None:
         """Fetch a category by primary key.
 
         Args:
@@ -126,7 +126,7 @@ class ItemRepository(BaseRepository):
         )
         return item.item_id
 
-    def get_by_id(self, item_id: int) -> Optional[Item]:
+    def get_by_id(self, item_id: int) -> Item | None:
         """Fetch an item by its WoW canonical ID.
 
         Args:

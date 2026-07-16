@@ -24,10 +24,7 @@ BackoffConfig strategy must be one of: "exponential", "linear", "fixed".
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
-
 
 # ── Rate-limit sub-model ──────────────────────────────────────────────────────
 
@@ -97,7 +94,8 @@ class BackoffConfig(BaseModel):
     def valid_strategy(cls, v: str) -> str:
         if v not in VALID_BACKOFF_STRATEGIES:
             raise ValueError(
-                f"BackoffConfig.strategy must be one of {sorted(VALID_BACKOFF_STRATEGIES)}, got '{v}'."
+                "BackoffConfig.strategy must be one of "
+                f"{sorted(VALID_BACKOFF_STRATEGIES)}, got '{v}'."
             )
         return v
 
@@ -151,7 +149,7 @@ class FreshnessConfig(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def thresholds_non_decreasing(self) -> "FreshnessConfig":
+    def thresholds_non_decreasing(self) -> FreshnessConfig:
         if self.stale_threshold_hours < self.ttl_hours:
             raise ValueError(
                 f"stale_threshold_hours ({self.stale_threshold_hours}) must be >= "
@@ -302,6 +300,7 @@ class SourcePolicy(BaseModel):
     def valid_access_method(cls, v: str) -> str:
         if v not in VALID_ACCESS_METHODS:
             raise ValueError(
-                f"SourcePolicy.access_method must be one of {sorted(VALID_ACCESS_METHODS)}, got '{v}'."
+                "SourcePolicy.access_method must be one of "
+                f"{sorted(VALID_ACCESS_METHODS)}, got '{v}'."
             )
         return v

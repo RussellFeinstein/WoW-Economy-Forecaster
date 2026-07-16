@@ -149,7 +149,7 @@ def compute_metrics(
 
     actuals   = [r.actual_price    for r in evaluated]   # type: ignore[misc]
     predicted = [r.predicted_price for r in evaluated]   # type: ignore[misc]
-    errors    = [a - p for a, p in zip(actuals, predicted)]
+    errors    = [a - p for a, p in zip(actuals, predicted, strict=True)]
     abs_errors = [abs(e) for e in errors]
 
     mae  = sum(abs_errors) / len(abs_errors)
@@ -157,7 +157,7 @@ def compute_metrics(
 
     mape_terms = [
         abs(e) / max(a, MAPE_EPSILON)
-        for e, a in zip(abs_errors, actuals)
+        for e, a in zip(abs_errors, actuals, strict=True)
         if a >= MAPE_EPSILON
     ]
     mape = (sum(mape_terms) / len(mape_terms)) if mape_terms else None

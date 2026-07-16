@@ -40,12 +40,10 @@ disabled — useful when you want a hard failure rather than a soft skip.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Optional
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from wow_forecaster.governance.models import SourcePolicy
-
 
 # ── Custom exceptions ─────────────────────────────────────────────────────────
 
@@ -103,7 +101,7 @@ class PreflightCheckResult:
     checks:         dict[str, bool]
     warnings:       list[str]
     errors:         list[str]
-    blocked_reason: Optional[str]
+    blocked_reason: str | None
 
 
 # ── Public functions ──────────────────────────────────────────────────────────
@@ -112,7 +110,7 @@ class PreflightCheckResult:
 def run_preflight_checks(
     source_id: str,
     policy: SourcePolicy,
-    last_call_at: Optional[datetime] = None,
+    last_call_at: datetime | None = None,
 ) -> PreflightCheckResult:
     """Run all preflight checks for a source before making a call.
 
@@ -147,9 +145,9 @@ def run_preflight_checks(
     # ── Check 3: cooldown ─────────────────────────────────────────────────
     cooldown_ok = True
     if last_call_at is not None and policy.rate_limit.cooldown_seconds > 0:
-        now     = datetime.now(tz=timezone.utc)
+        now     = datetime.now(tz=UTC)
         if last_call_at.tzinfo is None:
-            last_call_at = last_call_at.replace(tzinfo=timezone.utc)
+            last_call_at = last_call_at.replace(tzinfo=UTC)
         elapsed = (now - last_call_at).total_seconds()
         if elapsed < policy.rate_limit.cooldown_seconds:
             remaining   = policy.rate_limit.cooldown_seconds - elapsed

@@ -12,12 +12,11 @@ No external dependencies — pure stdlib + project models.
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from pathlib import Path
-from typing import Optional
 
 from wow_forecaster.governance.freshness import FreshnessResult, FreshnessStatus
 from wow_forecaster.governance.models import SourcePolicy
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -80,34 +79,34 @@ def format_source_detail(policy: SourcePolicy) -> str:
         f"    Requires auth: {_bool_icon(policy.requires_auth)}",
         f"    Enabled      : {_bool_icon(policy.enabled)}",
         "",
-        f"    Rate limits",
+        "    Rate limits",
         f"      req/min     : {policy.rate_limit.requests_per_minute or 'unlimited'}",
         f"      req/hour    : {policy.rate_limit.requests_per_hour or 'unlimited'}",
         f"      burst       : {policy.rate_limit.burst_limit or 'unlimited'}",
         f"      cooldown    : {policy.rate_limit.cooldown_seconds}s",
         "",
-        f"    Backoff",
+        "    Backoff",
         f"      strategy    : {policy.backoff.strategy}",
         f"      base_seconds: {policy.backoff.base_seconds}s",
         f"      max_seconds : {policy.backoff.max_seconds}s",
         f"      jitter      : {_bool_icon(policy.backoff.jitter)}",
         f"      max_retries : {policy.backoff.max_retries}",
         "",
-        f"    Freshness",
+        "    Freshness",
         f"      TTL         : {policy.freshness.ttl_hours}h",
         f"      Stale after : {policy.freshness.stale_threshold_hours}h",
         f"      Critical at : {policy.freshness.critical_threshold_hours}h",
         "",
-        f"    Provenance",
+        "    Provenance",
         f"      Req snapshot: {_bool_icon(policy.provenance.requires_snapshot)}",
         f"      Format      : {policy.provenance.snapshot_format}",
         f"      Hash req    : {_bool_icon(policy.provenance.content_hash_required)}",
         "",
-        f"    Retention",
+        "    Retention",
         f"      Keep days   : {policy.retention.raw_snapshot_days or 'indefinite'}",
         f"      Notes       : {policy.retention.notes or '—'}",
         "",
-        f"    Policy notes  (informational only — NOT legal advice)",
+        "    Policy notes  (informational only — NOT legal advice)",
         f"      Access type : {policy.policy_notes.access_type}",
         f"      Reg account : {_bool_icon(policy.policy_notes.requires_registered_account)}",
         f"      Research use: {_bool_icon(policy.policy_notes.personal_research_only)}",
@@ -164,7 +163,7 @@ def format_validation_report(
 
 def format_freshness_table(
     results: list[FreshnessResult],
-    realm_slug: Optional[str] = None,
+    realm_slug: str | None = None,
 ) -> str:
     """Format a per-source freshness summary for `check-source-freshness`.
 
@@ -201,7 +200,7 @@ def format_freshness_table(
 
 def write_governance_report(
     policies: list[SourcePolicy],
-    freshness_results: Optional[list[FreshnessResult]],
+    freshness_results: list[FreshnessResult] | None,
     output_dir: str,
 ) -> Path:
     """Write a combined governance JSON report.
@@ -218,12 +217,12 @@ def write_governance_report(
     Returns:
         Path to the written JSON file.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     report: dict = {
-        "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+        "generated_at": datetime.now(tz=UTC).isoformat(),
         "sources": [p.model_dump() for p in policies],
     }
     if freshness_results is not None:
@@ -244,7 +243,7 @@ def write_governance_report(
             for r in freshness_results
         ]
 
-    ts  = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+    ts  = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
     out = out_dir / f"governance_report_{ts}.json"
     with open(out, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, default=str)

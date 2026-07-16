@@ -13,8 +13,6 @@ through the ``ItemCategory`` and ``EconomicArchetype`` systems.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, ConfigDict, field_validator
 
 VALID_QUALITIES = frozenset({
@@ -44,16 +42,16 @@ class ItemCategory(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    category_id: Optional[int] = None
+    category_id: int | None = None
     slug: str
     display_name: str
-    parent_slug: Optional[str] = None
+    parent_slug: str | None = None
     archetype_tag: str
-    expansion_slug: Optional[str] = None
+    expansion_slug: str | None = None
 
     @field_validator("expansion_slug")
     @classmethod
-    def validate_expansion(cls, v: Optional[str]) -> Optional[str]:
+    def validate_expansion(cls, v: str | None) -> str | None:
         if v is not None and v not in VALID_EXPANSIONS:
             raise ValueError(
                 f"Unknown expansion '{v}'. Must be one of {sorted(VALID_EXPANSIONS)}."
@@ -97,13 +95,13 @@ class Item(BaseModel):
     item_id: int
     name: str
     category_id: int
-    archetype_id: Optional[int] = None
+    archetype_id: int | None = None
     expansion_slug: str
     quality: str
     is_crafted: bool = False
     is_boe: bool = False
-    ilvl: Optional[int] = None
-    notes: Optional[str] = None
+    ilvl: int | None = None
+    notes: str | None = None
 
     @field_validator("quality")
     @classmethod
@@ -125,7 +123,7 @@ class Item(BaseModel):
 
     @field_validator("ilvl")
     @classmethod
-    def validate_ilvl(cls, v: Optional[int]) -> Optional[int]:
+    def validate_ilvl(cls, v: int | None) -> int | None:
         if v is not None and v <= 0:
             raise ValueError(f"ilvl must be a positive integer, got {v}.")
         return v

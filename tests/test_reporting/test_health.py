@@ -30,7 +30,7 @@ format_health_report():
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -39,7 +39,6 @@ from wow_forecaster.reporting.health import (
     collect_health_report,
     format_health_report,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -103,7 +102,7 @@ def conn() -> sqlite3.Connection:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _insert_obs(conn, realm: str, days_ago: float, count: int = 1) -> None:
-    ts = (datetime.now(tz=timezone.utc) - timedelta(days=days_ago)).strftime(
+    ts = (datetime.now(tz=UTC) - timedelta(days=days_ago)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     for _ in range(count):
@@ -116,7 +115,7 @@ def _insert_obs(conn, realm: str, days_ago: float, count: int = 1) -> None:
 
 
 def _insert_ingest_snap(conn, realm: str, hours_ago: float, success: int = 1) -> None:
-    ts = (datetime.now(tz=timezone.utc) - timedelta(hours=hours_ago)).strftime(
+    ts = (datetime.now(tz=UTC) - timedelta(hours=hours_ago)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     conn.execute(
@@ -132,7 +131,7 @@ def _insert_run(
     status: str = "success",
     hours_ago: float = 1.0,
 ) -> None:
-    ts = (datetime.now(tz=timezone.utc) - timedelta(hours=hours_ago)).strftime(
+    ts = (datetime.now(tz=UTC) - timedelta(hours=hours_ago)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     conn.execute(

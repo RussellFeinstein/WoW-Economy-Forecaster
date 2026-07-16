@@ -12,7 +12,8 @@ Covers:
   - PreflightCheckResult.passed is True only when ALL checks pass
 """
 
-from datetime import datetime, timedelta, timezone
+from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -26,12 +27,10 @@ from wow_forecaster.governance.models import (
     SourcePolicy,
 )
 from wow_forecaster.governance.preflight import (
-    PreflightCheckResult,
     SourceDisabledError,
     assert_source_enabled,
     run_preflight_checks,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -89,7 +88,7 @@ def _make_manual_policy(source_id: str = "manual_csv") -> SourcePolicy:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 # ── run_preflight_checks ──────────────────────────────────────────────────────
@@ -171,7 +170,7 @@ class TestRunPreflightChecks:
     def test_result_is_frozen(self):
         policy = _make_policy(enabled=True)
         result = run_preflight_checks("test_source", policy)
-        with pytest.raises(Exception):
+        with pytest.raises(FrozenInstanceError):
             result.passed = False  # type: ignore[misc]
 
     def test_cooldown_warning_mentions_remaining_time(self):
@@ -186,7 +185,7 @@ class TestRunPreflightChecks:
         policy = _make_policy(enabled=True, cooldown_seconds=60.0)
         # Strip tzinfo from an aware datetime to produce a naive one.
         # Avoids the deprecated datetime.utcnow() (removed in future Python).
-        last_call = datetime.now(tz=timezone.utc).replace(tzinfo=None) - timedelta(seconds=5)
+        last_call = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(seconds=5)
         # Should not raise; cooldown check should still work
         result = run_preflight_checks("test_source", policy, last_call_at=last_call)
         assert result.checks["cooldown"] is False  # still in cooldown

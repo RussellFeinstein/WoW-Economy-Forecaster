@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 
 from wow_forecaster.features.archetype_features import (
-    ArchetypeMetadata,
     compute_archetype_features,
     count_items_per_archetype,
     count_items_without_archetype,
@@ -66,7 +65,8 @@ class TestComputeArchetypeFeatures:
         item_counts = count_items_per_archetype(feature_db, "area-52")
 
         rows = _make_rows(3, archetype_id=1)
-        result = compute_archetype_features(rows, 1, "area-52", meta, cold_counts, item_counts, 30, "midnight")
+        result = compute_archetype_features(rows, 1, "area-52", meta, cold_counts, item_counts,
+                                             30, "midnight")
 
         for r in result:
             assert r["archetype_category"] == "consumable"
@@ -78,7 +78,8 @@ class TestComputeArchetypeFeatures:
         item_counts = count_items_per_archetype(feature_db, "area-52")
 
         rows = _make_rows(5, archetype_id=1)
-        result = compute_archetype_features(rows, 1, "area-52", meta, cold_counts, item_counts, 30, "midnight")
+        result = compute_archetype_features(rows, 1, "area-52", meta, cold_counts, item_counts,
+                                             30, "midnight")
 
         static_cols = ["archetype_category", "archetype_sub_tag", "is_transferable",
                        "has_transfer_mapping", "transfer_confidence", "is_cold_start",
@@ -97,7 +98,8 @@ class TestComputeArchetypeFeatures:
         item_counts = count_items_per_archetype(feature_db, "area-52")
 
         rows = _make_rows(3, archetype_id=1)
-        result = compute_archetype_features(rows, 1, "area-52", meta, cold_counts, item_counts, 30, "midnight")
+        result = compute_archetype_features(rows, 1, "area-52", meta, cold_counts, item_counts,
+                                             30, "midnight")
 
         # Archetype 1 maps to midnight (as target), but the items are tww items.
         # cold_start_counts for midnight will be 0 for this archetype (no midnight items in DB).
@@ -114,7 +116,7 @@ class TestComputeArchetypeFeatures:
 
         rows = _make_rows(3, archetype_id=1)
         result = compute_archetype_features(rows, 1, "area-52", meta, cold_counts, item_counts,
-                                             threshold := 30, "midnight")
+                                             30, "midnight")
 
         # 0 midnight obs < 30 threshold → cold start
         assert result[0]["is_cold_start"] is True
@@ -127,7 +129,8 @@ class TestComputeArchetypeFeatures:
         # Manually set obs_count above threshold.
         cold_counts = {1: 100, 2: 100}
         rows = _make_rows(3, archetype_id=1)
-        result = compute_archetype_features(rows, 1, "area-52", meta, cold_counts, item_counts, 30, "midnight")
+        result = compute_archetype_features(rows, 1, "area-52", meta, cold_counts, item_counts,
+                                             30, "midnight")
 
         assert result[0]["is_cold_start"] is False
 
@@ -137,7 +140,8 @@ class TestComputeArchetypeFeatures:
         item_counts = count_items_per_archetype(feature_db, "area-52")
 
         rows = _make_rows(2, archetype_id=9999)   # does not exist
-        result = compute_archetype_features(rows, 9999, "area-52", meta, {}, item_counts, 30, "midnight")
+        result = compute_archetype_features(rows, 9999, "area-52", meta, {}, item_counts,
+                                             30, "midnight")
 
         assert result[0]["archetype_category"] == "unknown"
         assert result[0]["has_transfer_mapping"] is False
@@ -149,7 +153,8 @@ class TestComputeArchetypeFeatures:
         cold_counts = count_obs_per_archetype_realm(feature_db, "area-52", "midnight")
 
         rows = _make_rows(2, archetype_id=1)
-        result = compute_archetype_features(rows, 1, "area-52", meta, cold_counts, item_counts, 30, "midnight")
+        result = compute_archetype_features(rows, 1, "area-52", meta, cold_counts, item_counts,
+                                             30, "midnight")
 
         # 1 item per archetype in fixture
         assert result[0]["item_count_in_archetype"] == 1
@@ -161,7 +166,9 @@ class TestCountHelpers:
         count = count_items_without_archetype(feature_db)
         assert count == 0
 
-    def test_count_items_without_archetype_non_zero_after_insert(self, feature_db: sqlite3.Connection):
+    def test_count_items_without_archetype_non_zero_after_insert(
+        self, feature_db: sqlite3.Connection
+    ):
         """After inserting an item without archetype_id, count increases."""
         feature_db.execute(
             """

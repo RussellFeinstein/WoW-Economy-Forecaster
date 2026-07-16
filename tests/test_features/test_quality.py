@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from wow_forecaster.features.quality import DataQualityReport, build_quality_report
+from wow_forecaster.features.quality import build_quality_report
 
 
 def _make_clean_rows(n: int = 10) -> list[dict[str, Any]]:
@@ -154,7 +154,8 @@ class TestLeakageHeuristic:
     def test_negative_days_to_next_triggers_warning(self):
         """event_days_to_next < 0 should produce a leakage warning."""
         rows = _make_clean_rows(3)
-        rows[1]["event_days_to_next"] = -2.0   # would mean event already started but labelled "next"
+        rows[1]["event_days_to_next"] = -2.0   # would mean event already started
+        # but labelled "next"
         report = build_quality_report(rows)
         assert len(report.leakage_warnings) >= 1
         assert report.is_clean is False

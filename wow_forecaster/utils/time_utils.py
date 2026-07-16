@@ -4,7 +4,7 @@ Time and date utilities for the WoW Economy Forecaster.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def utcnow() -> datetime:
@@ -12,4 +12,4 @@ def utcnow() -> datetime:
 
     Prefer this over ``datetime.utcnow()`` (which returns naive datetimes).
     """
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)

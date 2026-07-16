@@ -30,7 +30,7 @@ fetch_item_rois():
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -40,7 +40,6 @@ from wow_forecaster.recommendations.item_overlay import (
     fetch_item_discounts,
     fetch_item_rois,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -83,7 +82,7 @@ def conn() -> sqlite3.Connection:
 
 def _now_iso(delta_days: int = 0) -> str:
     """Return an ISO datetime string relative to now."""
-    dt = datetime.now(tz=timezone.utc) + timedelta(days=delta_days)
+    dt = datetime.now(tz=UTC) + timedelta(days=delta_days)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -256,7 +255,7 @@ class TestFetchItemDiscounts:
                                     archetype_mean_gold=100.0, top_n=3)
         assert len(rows) == 3
 
-    def test_returns_ItemDiscountRow_instances(self, conn):
+    def test_returns_item_discount_row_instances(self, conn):
         _insert_item(conn, 1, "Herb A", archetype_id=1)
         _insert_obs(conn, 1, "us", 80.0, _now_iso())
         conn.commit()
@@ -512,7 +511,7 @@ class TestFetchItemRois:
 
     def test_buy_action_highest_roi_first(self, roi_conn):
         """Buy action: items sorted by roi_pct descending."""
-        for item_id, cur, fc in [(1, 50.0, 60.0), (2, 50.0, 80.0), (3, 50.0, 55.0)]:
+        for item_id, cur, _fc in [(1, 50.0, 60.0), (2, 50.0, 80.0), (3, 50.0, 55.0)]:
             _insert_item_roi(roi_conn, item_id, f"Item {item_id}", archetype_id=10)
             _insert_obs_roi(roi_conn, item_id, cur, _now_iso())
         run_id = _insert_run(roi_conn)
@@ -528,7 +527,7 @@ class TestFetchItemRois:
 
     def test_sell_action_lowest_roi_first(self, roi_conn):
         """Sell action: items sorted by roi_pct ascending (most bearish first)."""
-        for item_id, cur, fc in [(1, 50.0, 40.0), (2, 50.0, 30.0), (3, 50.0, 45.0)]:
+        for item_id, cur, _fc in [(1, 50.0, 40.0), (2, 50.0, 30.0), (3, 50.0, 45.0)]:
             _insert_item_roi(roi_conn, item_id, f"Item {item_id}", archetype_id=10)
             _insert_obs_roi(roi_conn, item_id, cur, _now_iso())
         run_id = _insert_run(roi_conn)

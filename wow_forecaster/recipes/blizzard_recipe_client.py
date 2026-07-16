@@ -193,7 +193,7 @@ def _resolve_recipe_by_name(
     expansion_slug: str,
     skill_level_required: int,
     client,
-) -> "NormalisedRecipe | None":
+) -> NormalisedRecipe | None:
     """Resolve a recipe where ``crafted_item`` is absent via item name search.
 
     Used for TWW/Midnight recipes where the Blizzard static API no longer

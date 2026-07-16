@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from datetime import timezone
 from uuid import uuid4
 
 from wow_forecaster.config import AppConfig
@@ -105,7 +104,9 @@ class PipelineStage(ABC):
 
         except NotImplementedError:
             run.status = "failed"
-            run.error_message = f"{self.__class__.__name__}._execute() is not yet implemented (stub)."
+            run.error_message = (
+                f"{self.__class__.__name__}._execute() is not yet implemented (stub)."
+            )
             run.finished_at = utcnow()
             logger.warning(
                 "Stage [%s] is a stub | run_slug=%s", self.stage_name, run.run_slug

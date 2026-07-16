@@ -14,7 +14,7 @@ The three leakage prevention layers tested here:
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
@@ -81,7 +81,7 @@ class TestLeakageGuard:
         future_event = _make_event(
             "future-event",
             start=date(2025, 1, 20),
-            announced_at=datetime(2025, 1, 16, 12, 0, 0, tzinfo=timezone.utc),  # after obs_date
+            announced_at=datetime(2025, 1, 16, 12, 0, 0, tzinfo=UTC),  # after obs_date
         )
         rows = [_make_row(obs_date)]
         result = compute_event_features(rows, [future_event], {}, archetype_id=1)
@@ -95,7 +95,7 @@ class TestLeakageGuard:
         known_event = _make_event(
             "known-event",
             start=date(2025, 1, 20),
-            announced_at=datetime(2025, 1, 10, 12, 0, 0, tzinfo=timezone.utc),  # before obs_date
+            announced_at=datetime(2025, 1, 10, 12, 0, 0, tzinfo=UTC),  # before obs_date
         )
         rows = [_make_row(obs_date)]
         result = compute_event_features(rows, [known_event], {}, archetype_id=1)
@@ -129,7 +129,7 @@ class TestLeakageGuard:
         same_day_event = _make_event(
             "same-day-event",
             start=date(2025, 1, 20),
-            announced_at=datetime(2025, 1, 15, 17, 0, 0, tzinfo=timezone.utc),
+            announced_at=datetime(2025, 1, 15, 17, 0, 0, tzinfo=UTC),
         )
         rows = [_make_row(obs_date)]
         result = compute_event_features(rows, [same_day_event], {}, archetype_id=1)
@@ -148,12 +148,12 @@ class TestLeakageGuard:
             "past-event",
             start=date(2025, 1, 5),
             end=date(2025, 1, 12),
-            announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            announced_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
         future_event = _make_event(
             "future-event",
             start=date(2025, 1, 20),
-            announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            announced_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
         rows = [_make_row(obs_date)]
         result = compute_event_features(rows, [past_event, future_event], {}, archetype_id=1)
@@ -169,7 +169,7 @@ class TestLeakageGuard:
         They are excluded from the inference Parquet to prevent them from
         being used as model inputs.
         """
-        from wow_forecaster.features.registry import target_feature_names, inference_feature_names
+        from wow_forecaster.features.registry import inference_feature_names, target_feature_names
 
         targets = set(target_feature_names())
         inference_cols = set(inference_feature_names())
@@ -186,16 +186,8 @@ class TestNewEventFeatures:
     def test_event_impact_magnitude_from_category_impacts(self):
         """event_impact_magnitude is populated from category impacts for the active event."""
         obs_date = date(2025, 1, 15)
-        active_event = _make_event(
-            "rtwf",
-            start=date(2025, 1, 10),
-            end=date(2025, 1, 24),
-            announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
-            severity=EventSeverity.MAJOR,
-        )
-        # event_id must be set on the model; patch via object to simulate DB lookup
-        # Since _make_event sets event_id=None, we need a real event_id for impacts dict.
-        # Use event_id=99 by constructing manually.
+        # The event needs a real event_id for the impacts dict, which
+        # _make_event cannot set; construct it manually.
         from wow_forecaster.models.event import WoWEvent
         from wow_forecaster.taxonomy.event_taxonomy import EventScope, EventType
         evt = WoWEvent(
@@ -208,7 +200,7 @@ class TestNewEventFeatures:
             expansion_slug="tww",
             start_date=date(2025, 1, 10),
             end_date=date(2025, 1, 24),
-            announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            announced_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
         category_impacts = {
             99: [{"archetype_category": "consumable", "impact_direction": "spike",
@@ -227,7 +219,7 @@ class TestNewEventFeatures:
         obs_date = date(2025, 1, 15)
         evt = _make_event(
             "active", start=date(2025, 1, 10), end=date(2025, 1, 24),
-            announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            announced_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
         rows = [_make_row(obs_date)]
         result = compute_event_features(rows, [evt], {}, archetype_id=1)
@@ -247,7 +239,7 @@ class TestNewEventFeatures:
             expansion_slug="tww",
             start_date=date(2025, 1, 10),
             end_date=date(2025, 1, 24),
-            announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            announced_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
         category_impacts = {
             77: [{"archetype_category": "gear", "impact_direction": "spike",
@@ -267,7 +259,7 @@ class TestNewEventFeatures:
         major_event = _make_event(
             "major-future",
             start=date(2025, 1, 22),
-            announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            announced_at=datetime(2025, 1, 1, tzinfo=UTC),
             severity=EventSeverity.MAJOR,
         )
         rows = [_make_row(obs_date)]
@@ -280,7 +272,7 @@ class TestNewEventFeatures:
         critical_event = _make_event(
             "critical-future",
             start=date(2025, 1, 20),
-            announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            announced_at=datetime(2025, 1, 1, tzinfo=UTC),
             severity=EventSeverity.CRITICAL,
         )
         rows = [_make_row(obs_date)]
@@ -293,7 +285,7 @@ class TestNewEventFeatures:
         minor_event = _make_event(
             "minor-future",
             start=date(2025, 1, 20),
-            announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            announced_at=datetime(2025, 1, 1, tzinfo=UTC),
             severity=EventSeverity.MINOR,
         )
         rows = [_make_row(obs_date)]
@@ -306,7 +298,7 @@ class TestNewEventFeatures:
         future_unannounced = _make_event(
             "unannounced-major",
             start=date(2025, 1, 20),
-            announced_at=datetime(2025, 1, 16, tzinfo=timezone.utc),  # Announced AFTER obs_date
+            announced_at=datetime(2025, 1, 16, tzinfo=UTC),  # Announced AFTER obs_date
             severity=EventSeverity.MAJOR,
         )
         rows = [_make_row(obs_date)]
@@ -319,7 +311,7 @@ class TestNewEventFeatures:
         major_event = _make_event(
             "major-soon",
             start=date(2025, 1, 20),  # 5 days away
-            announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            announced_at=datetime(2025, 1, 1, tzinfo=UTC),
             severity=EventSeverity.MAJOR,
         )
         rows = [_make_row(obs_date)]
@@ -332,7 +324,7 @@ class TestNewEventFeatures:
         major_event = _make_event(
             "major-far",
             start=date(2025, 1, 30),  # 15 days away
-            announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            announced_at=datetime(2025, 1, 1, tzinfo=UTC),
             severity=EventSeverity.MAJOR,
         )
         rows = [_make_row(obs_date)]
@@ -346,7 +338,7 @@ class TestNewEventFeatures:
             "major-today",
             start=date(2025, 1, 15),  # Today
             end=date(2025, 1, 22),
-            announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            announced_at=datetime(2025, 1, 1, tzinfo=UTC),
             severity=EventSeverity.MAJOR,
         )
         rows = [_make_row(obs_date)]
@@ -383,20 +375,20 @@ class TestEventHelpers:
 
     def test_is_active_within_window(self):
         e = _make_event("e", start=date(2025, 1, 10), end=date(2025, 1, 20),
-                         announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc))
+                         announced_at=datetime(2025, 1, 1, tzinfo=UTC))
         assert _is_active(e, date(2025, 1, 15)) is True
 
     def test_is_active_before_start(self):
         e = _make_event("e", start=date(2025, 1, 10), end=date(2025, 1, 20),
-                         announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc))
+                         announced_at=datetime(2025, 1, 1, tzinfo=UTC))
         assert _is_active(e, date(2025, 1, 9)) is False
 
     def test_is_future_event(self):
         e = _make_event("e", start=date(2025, 1, 20),
-                         announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc))
+                         announced_at=datetime(2025, 1, 1, tzinfo=UTC))
         assert _is_future(e, date(2025, 1, 15)) is True
 
     def test_is_past_event(self):
         e = _make_event("e", start=date(2025, 1, 5), end=date(2025, 1, 10),
-                         announced_at=datetime(2025, 1, 1, tzinfo=timezone.utc))
+                         announced_at=datetime(2025, 1, 1, tzinfo=UTC))
         assert _is_past(e, date(2025, 1, 15)) is True

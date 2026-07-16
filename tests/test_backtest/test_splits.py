@@ -21,7 +21,6 @@ import pytest
 
 from wow_forecaster.backtest.splits import BacktestFold, generate_walk_forward_splits
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _make_folds(

@@ -11,11 +11,7 @@ Covers:
 
 from __future__ import annotations
 
-import sqlite3
-from datetime import datetime, timezone
-from pathlib import Path
-
-import pytest
+from datetime import UTC, datetime
 
 from wow_forecaster.db.repositories.ingestion_repo import (
     IngestionSnapshot,
@@ -24,10 +20,9 @@ from wow_forecaster.db.repositories.ingestion_repo import (
 from wow_forecaster.db.schema import ALL_TABLE_NAMES
 from wow_forecaster.ingestion.snapshot import build_snapshot_path
 
-
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
-_DT = datetime(2026, 2, 24, 15, 0, 0, tzinfo=timezone.utc)
+_DT = datetime(2026, 2, 24, 15, 0, 0, tzinfo=UTC)
 
 
 def _make_snapshot(
@@ -147,8 +142,8 @@ class TestGetBySource:
 
     def test_ordered_newest_first(self, in_memory_db):
         repo = IngestionSnapshotRepository(in_memory_db)
-        dt1 = datetime(2026, 2, 24, 10, 0, 0, tzinfo=timezone.utc)
-        dt2 = datetime(2026, 2, 24, 12, 0, 0, tzinfo=timezone.utc)
+        dt1 = datetime(2026, 2, 24, 10, 0, 0, tzinfo=UTC)
+        dt2 = datetime(2026, 2, 24, 12, 0, 0, tzinfo=UTC)
         repo.insert(_make_snapshot(fetched_at=dt1))
         repo.insert(_make_snapshot(fetched_at=dt2))
         results = repo.get_by_source("undermine")
@@ -160,8 +155,8 @@ class TestGetBySource:
 class TestGetLatestBySource:
     def test_returns_most_recent(self, in_memory_db):
         repo = IngestionSnapshotRepository(in_memory_db)
-        dt_old = datetime(2026, 2, 24, 10, 0, 0, tzinfo=timezone.utc)
-        dt_new = datetime(2026, 2, 24, 15, 0, 0, tzinfo=timezone.utc)
+        dt_old = datetime(2026, 2, 24, 10, 0, 0, tzinfo=UTC)
+        dt_new = datetime(2026, 2, 24, 15, 0, 0, tzinfo=UTC)
         repo.insert(_make_snapshot(record_count=5, fetched_at=dt_old))
         repo.insert(_make_snapshot(record_count=10, fetched_at=dt_new))
         latest = repo.get_latest_by_source("undermine")
@@ -178,8 +173,8 @@ class TestGetLatestBySource:
 class TestGetLatestSuccessfulBySource:
     def test_skips_failed_snapshots(self, in_memory_db):
         repo = IngestionSnapshotRepository(in_memory_db)
-        dt_success = datetime(2026, 2, 24, 10, 0, 0, tzinfo=timezone.utc)
-        dt_fail = datetime(2026, 2, 24, 15, 0, 0, tzinfo=timezone.utc)
+        dt_success = datetime(2026, 2, 24, 10, 0, 0, tzinfo=UTC)
+        dt_fail = datetime(2026, 2, 24, 15, 0, 0, tzinfo=UTC)
         repo.insert(_make_snapshot(success=True, record_count=5, fetched_at=dt_success))
         repo.insert(_make_snapshot(success=False, record_count=0, fetched_at=dt_fail,
                                    error_message="err", snapshot_path=""))
@@ -242,7 +237,7 @@ class TestSnapshotPathConvention:
     """Verify the build_snapshot_path convention matches what ingestion uses."""
 
     def test_undermine_path_structure(self):
-        dt = datetime(2026, 2, 24, 15, 30, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 2, 24, 15, 30, 0, tzinfo=UTC)
         path = build_snapshot_path("data/raw", "undermine", "area-52_neutral", dt)
         assert path.parent.name == "24"           # day
         assert path.parent.parent.name == "02"    # month
@@ -251,18 +246,18 @@ class TestSnapshotPathConvention:
         assert path.suffix == ".json"
 
     def test_blizzard_api_path_structure(self):
-        dt = datetime(2026, 2, 24, 15, 30, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 2, 24, 15, 30, 0, tzinfo=UTC)
         path = build_snapshot_path("data/raw", "blizzard_api", "realm_area-52", dt)
         assert "blizzard_api" in str(path)
         assert path.suffix == ".json"
 
     def test_blizzard_news_path_structure(self):
-        dt = datetime(2026, 2, 24, 15, 30, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 2, 24, 15, 30, 0, tzinfo=UTC)
         path = build_snapshot_path("data/raw", "blizzard_news", "news", dt)
         assert "blizzard_news" in str(path)
 
     def test_all_three_sources_have_unique_paths(self):
-        dt = datetime(2026, 2, 24, 15, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 2, 24, 15, 0, 0, tzinfo=UTC)
         p1 = build_snapshot_path("data/raw", "undermine", "area-52_neutral", dt)
         p2 = build_snapshot_path("data/raw", "blizzard_api", "realm_area-52", dt)
         p3 = build_snapshot_path("data/raw", "blizzard_news", "news", dt)

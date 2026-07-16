@@ -24,13 +24,15 @@ _normalize_batch():
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
 
 import pytest
 
 from wow_forecaster.db.schema import apply_schema
-from wow_forecaster.pipeline.normalize import _MIN_ROLLING_OBS, _fetch_archetype_map, _fetch_rolling_stats, _normalize_batch
-
+from wow_forecaster.pipeline.normalize import (
+    _fetch_archetype_map,
+    _fetch_rolling_stats,
+    _normalize_batch,
+)
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -276,11 +278,13 @@ class TestFetchArchetypeMap:
         )
         norm_db.execute(
             "INSERT INTO economic_archetypes "
-            "(archetype_id, slug, display_name, category_tag, sub_tag, is_transferable, transfer_confidence) "
+            "(archetype_id, slug, display_name, category_tag, sub_tag, "
+            "is_transferable, transfer_confidence) "
             "VALUES (7, 'test.arch', 'Test Arch', 'test', 'test.tag', 1, 0.9);"
         )
         norm_db.execute(
-            "INSERT INTO items (item_id, name, category_id, archetype_id, expansion_slug, quality, is_crafted, is_boe) "
+            "INSERT INTO items (item_id, name, category_id, archetype_id, "
+            "expansion_slug, quality, is_crafted, is_boe) "
             "VALUES (1001, 'Test Item', 1, 7, 'tww', 'common', 0, 0);"
         )
         norm_db.commit()
@@ -293,7 +297,8 @@ class TestFetchArchetypeMap:
             "VALUES ('test.cat', 'Test', 'test.tag');"
         )
         norm_db.execute(
-            "INSERT INTO items (item_id, name, category_id, archetype_id, expansion_slug, quality, is_crafted, is_boe) "
+            "INSERT INTO items (item_id, name, category_id, archetype_id, "
+            "expansion_slug, quality, is_crafted, is_boe) "
             "VALUES (2002, 'No Arch Item', 1, NULL, 'tww', 'common', 0, 0);"
         )
         norm_db.commit()

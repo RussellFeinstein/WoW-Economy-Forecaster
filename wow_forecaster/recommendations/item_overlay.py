@@ -134,7 +134,9 @@ def fetch_item_discounts(
     for row in rows:
         item_price  = float(row["item_price_gold"] or 0.0)
         discount    = (archetype_mean_gold - item_price) / archetype_mean_gold
-        z_score     = round((archetype_mean_gold - item_price) / price_std, 3) if price_std > 0 else 0.0
+        z_score     = (
+            round((archetype_mean_gold - item_price) / price_std, 3) if price_std > 0 else 0.0
+        )
         results.append(
             ItemDiscountRow(
                 item_id         = row["item_id"],

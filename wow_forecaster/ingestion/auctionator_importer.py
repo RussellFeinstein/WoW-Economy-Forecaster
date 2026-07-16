@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -175,7 +175,7 @@ def build_raw_observations(
             skipped += 1
             continue
 
-        observed_at = datetime.fromtimestamp(unix_ts, tz=timezone.utc).replace(
+        observed_at = datetime.fromtimestamp(unix_ts, tz=UTC).replace(
             tzinfo=None
         )
 

@@ -24,7 +24,6 @@ items should be treated with extra caution regardless of the predicted ROI.
 
 from __future__ import annotations
 
-
 # ── Freshness banner ─────────────────────────────────────────────────────────
 
 

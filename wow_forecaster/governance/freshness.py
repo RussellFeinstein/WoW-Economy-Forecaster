@@ -32,12 +32,10 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Optional
 
 from wow_forecaster.governance.models import SourcePolicy
-
 
 # ── Status enum ───────────────────────────────────────────────────────────────
 
@@ -75,8 +73,8 @@ class FreshnessResult:
     """
 
     source_id:                str
-    last_snapshot_at:         Optional[str]
-    age_hours:                Optional[float]
+    last_snapshot_at:         str | None
+    age_hours:                float | None
     ttl_hours:                float
     stale_threshold_hours:    float
     critical_threshold_hours: float
@@ -91,7 +89,7 @@ class FreshnessResult:
 
 
 def _classify_status(
-    age_hours: Optional[float],
+    age_hours: float | None,
     ttl_hours: float,
     stale_threshold_hours: float,
     critical_threshold_hours: float,
@@ -119,14 +117,14 @@ def _classify_status(
 
 
 def _utcnow() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def _query_last_snapshot_at(
     conn: sqlite3.Connection,
     source_id: str,
-    realm_slug: Optional[str],
-) -> Optional[str]:
+    realm_slug: str | None,
+) -> str | None:
     """Query ingestion_snapshots for the most recent successful snapshot.
 
     Args:
@@ -161,7 +159,7 @@ def _query_last_snapshot_at(
     return None
 
 
-def _compute_age_hours(last_snapshot_at: Optional[str]) -> Optional[float]:
+def _compute_age_hours(last_snapshot_at: str | None) -> float | None:
     """Compute hours elapsed since last_snapshot_at (UTC).
 
     Args:
@@ -175,7 +173,7 @@ def _compute_age_hours(last_snapshot_at: Optional[str]) -> Optional[float]:
     try:
         ts = datetime.fromisoformat(last_snapshot_at.replace("Z", "+00:00"))
         if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
+            ts = ts.replace(tzinfo=UTC)
         delta = _utcnow() - ts
         return delta.total_seconds() / 3600.0
     except (ValueError, TypeError):
@@ -189,7 +187,7 @@ def check_source_freshness(
     conn: sqlite3.Connection,
     source_id: str,
     policy: SourcePolicy,
-    realm_slug: Optional[str] = None,
+    realm_slug: str | None = None,
 ) -> FreshnessResult:
     """Check freshness of one source against its policy thresholds.
 
@@ -225,7 +223,9 @@ def check_source_freshness(
 
     last_at  = _query_last_snapshot_at(conn, source_id, realm_slug)
     age_h    = _compute_age_hours(last_at)
-    status   = _classify_status(age_h, fc.ttl_hours, fc.stale_threshold_hours, fc.critical_threshold_hours)
+    status   = _classify_status(
+        age_h, fc.ttl_hours, fc.stale_threshold_hours, fc.critical_threshold_hours
+    )
 
     return FreshnessResult(
         source_id=source_id,
@@ -245,7 +245,7 @@ def check_source_freshness(
 def check_all_sources_freshness(
     conn: sqlite3.Connection,
     policies: list[SourcePolicy],
-    realm_slug: Optional[str] = None,
+    realm_slug: str | None = None,
 ) -> list[FreshnessResult]:
     """Check freshness for a list of source policies.
 

@@ -22,7 +22,6 @@ import base64
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
 import httpx
 
@@ -156,8 +155,8 @@ def _seed_categories_and_archetypes(
         Tuple of (category_slug_to_id, archetype_tag_to_id) dicts.
     """
     from wow_forecaster.taxonomy.archetype_taxonomy import (
-        ArchetypeCategory,
         CATEGORY_TAG_MAP,
+        ArchetypeCategory,
     )
 
     cur = conn.cursor()
@@ -246,7 +245,7 @@ async def _fetch_one_item(
     item_id: int,
     token: str,
     region: str,
-) -> tuple[int, Optional[dict]]:
+) -> tuple[int, dict | None]:
     """Fetch a single item from the Blizzard Item API."""
     url = f"https://{region}.api.blizzard.com/data/wow/item/{item_id}"
     params = {"namespace": f"static-{region}", "locale": "en_US"}
@@ -299,7 +298,7 @@ async def _fetch_all_items_async(
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
-def find_latest_commodity_snapshot(raw_dir: Path) -> Optional[Path]:
+def find_latest_commodity_snapshot(raw_dir: Path) -> Path | None:
     """Return the most recently modified commodity snapshot on disk."""
     candidates = sorted(
         (raw_dir / "snapshots" / "blizzard_api").rglob("commodities_us_*.json"),

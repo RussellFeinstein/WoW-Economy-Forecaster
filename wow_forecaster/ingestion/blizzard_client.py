@@ -34,8 +34,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import ClassVar, Optional
+from datetime import UTC, datetime
+from typing import ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class BlizzardAuctionResponse:
     realm_id: int = 0
     realm_slug: str = ""
     endpoint: str = ""
-    fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    fetched_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     records: list[BlizzardAuctionRecord] = field(default_factory=list)
     is_fixture: bool = True
 
@@ -136,8 +136,8 @@ class BlizzardClient:
 
     def __init__(
         self,
-        client_id: Optional[str] = None,
-        client_secret: Optional[str] = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
         region: str = "us",
     ) -> None:
         """Initialise the Blizzard Game Data API client.
@@ -150,8 +150,8 @@ class BlizzardClient:
         self.client_id = client_id
         self.client_secret = client_secret
         self.region = region
-        self._access_token: Optional[str] = None
-        self._item_name_cache: dict[str, Optional[int]] = {}
+        self._access_token: str | None = None
+        self._item_name_cache: dict[str, int | None] = {}
 
     # ── Real API methods ───────────────────────────────────────────────────────
 
@@ -292,8 +292,8 @@ class BlizzardClient:
             region=self.region,
             realm_id=0,
             realm_slug=self.region,
-            endpoint=f"data/wow/auctions/commodities",
-            fetched_at=datetime.now(timezone.utc),
+            endpoint="data/wow/auctions/commodities",
+            fetched_at=datetime.now(UTC),
             records=records,
             is_fixture=False,
         )
@@ -324,7 +324,7 @@ class BlizzardClient:
             realm_id=realm_id,
             realm_slug=realm_slug,
             endpoint=f"data/wow/connected-realm/{realm_id}/auctions",
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
             records=records,
             is_fixture=False,
         )
@@ -431,7 +431,7 @@ class BlizzardClient:
         resp.raise_for_status()
         return resp.json()
 
-    def search_item_by_name(self, name: str) -> Optional[int]:
+    def search_item_by_name(self, name: str) -> int | None:
         """Search for an item ID by exact English name via the static search API.
 
         Endpoint::
@@ -563,7 +563,7 @@ class BlizzardClient:
             realm_id=realm_id,
             realm_slug=realm_slug,
             endpoint=f"fixture/connected-realm/{realm_slug}/auctions",
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
             records=records,
             is_fixture=True,
         )

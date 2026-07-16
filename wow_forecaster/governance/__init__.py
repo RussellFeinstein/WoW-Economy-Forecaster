@@ -36,6 +36,12 @@ Independent legal and compliance review is the responsibility of the
 researcher using this system.
 """
 
+from wow_forecaster.governance.freshness import (
+    FreshnessResult,
+    FreshnessStatus,
+    check_all_sources_freshness,
+    check_source_freshness,
+)
 from wow_forecaster.governance.models import (
     BackoffConfig,
     FreshnessConfig,
@@ -45,22 +51,16 @@ from wow_forecaster.governance.models import (
     RetentionConfig,
     SourcePolicy,
 )
-from wow_forecaster.governance.registry import (
-    get_enabled_sources,
-    get_source_policy,
-    get_registry,
-    list_sources,
-)
-from wow_forecaster.governance.freshness import (
-    FreshnessResult,
-    FreshnessStatus,
-    check_all_sources_freshness,
-    check_source_freshness,
-)
 from wow_forecaster.governance.preflight import (
     PreflightCheckResult,
     SourceDisabledError,
     run_preflight_checks,
+)
+from wow_forecaster.governance.registry import (
+    get_enabled_sources,
+    get_registry,
+    get_source_policy,
+    list_sources,
 )
 
 __all__ = [

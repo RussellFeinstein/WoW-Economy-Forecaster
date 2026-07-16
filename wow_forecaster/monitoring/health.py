@@ -23,7 +23,6 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +58,11 @@ class ModelHealthSummary:
     checked_at:       str
     horizon_days:     int
     n_evaluated:      int
-    live_mae:         Optional[float]
-    baseline_mae:     Optional[float]
-    mae_ratio:        Optional[float]
-    live_dir_acc:     Optional[float]
-    baseline_dir_acc: Optional[float]
+    live_mae:         float | None
+    baseline_mae:     float | None
+    mae_ratio:        float | None
+    live_dir_acc:     float | None
+    baseline_dir_acc: float | None
     health_status:    str
 
 
@@ -124,8 +123,7 @@ def compute_health_summary(
     live_dir_acc  = None
 
     if n_evaluated > 0:
-        errors   = []
-        dir_hits = []
+        errors = []
         for row in live_rows:
             pred   = row["predicted_price_gold"]
             actual = row["actual_price"]
@@ -204,7 +202,7 @@ def compute_health_summary(
     )
 
 
-def _classify_health(mae_ratio: Optional[float]) -> str:
+def _classify_health(mae_ratio: float | None) -> str:
     """Map mae_ratio to a health status string.
 
     Args:

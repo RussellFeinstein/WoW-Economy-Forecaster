@@ -36,7 +36,8 @@ class EventType(StrEnum):
     """BlizzCon or press reveal of upcoming expansion; speculative buying begins."""
 
     EXPANSION_FEATURE_UNLOCK = "expansion_feature_unlock"
-    """Early access to a specific expansion feature (e.g. housing, new zone) before full launch; niche mat demand."""
+    """Early access to a specific expansion feature (e.g. housing, new zone) before full
+    launch; niche mat demand."""
 
     # ── Patch lifecycle ───────────────────────────────────────────────────────
     MAJOR_PATCH = "major_patch"

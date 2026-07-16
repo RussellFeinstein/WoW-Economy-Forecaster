@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wow-economy-forecaster"
-version = "2.4.4"
+version = "2.4.5"
 description = "Local-first WoW auction house economy forecasting and research system"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,7 +25,10 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
-    "ruff>=0.4",
+    # Exact pin: linter rule sets advance with releases, so a floating bound
+    # makes CI stricter with zero code changes (issue #44). Dependabot opens
+    # a monthly PR when a new ruff releases; bump happens there, gated by CI.
+    "ruff==0.15.2",
 ]
 # Cloud snapshot fetcher upload dependency (see docs/cloud-capture.md).
 # The GitHub Actions workflow installs the package with --no-deps plus httpx
@@ -72,4 +75,13 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B"]
-ignore = ["ANN"]
+# UP042: converting (str, Enum) classes to StrEnum changes str(member) output;
+# CraftingWindow, DriftLevel, and FreshnessStatus values persist to DB and CSV,
+# so the rewrite would silently change stored data. Deliberate keep.
+ignore = ["ANN", "UP042"]
+
+[tool.ruff.lint.per-file-ignores]
+# typer.Option calls in argument defaults are the Typer API, not a bug.
+"wow_forecaster/cli.py" = ["B008"]
+# X, X_train, X_val follow the sklearn naming convention for feature matrices.
+"wow_forecaster/ml/lgbm_model.py" = ["N803", "N806"]

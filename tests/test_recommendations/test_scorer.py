@@ -52,7 +52,6 @@ from wow_forecaster.recommendations.scorer import (
     determine_risk_level,
 )
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _score(
