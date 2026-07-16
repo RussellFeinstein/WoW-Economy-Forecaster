@@ -212,4 +212,4 @@ Next-phase work (M0 restore/harden ops -> M0.5 unattended capture -> M1 model va
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-1272 tests passing of 1280 (8 pre-existing failures in test_item_forecasts.py; the date-sensitive test_pruner.py flake passed on the 2026-07-12 run; root causes tracked as issues #7 and #8 in milestone M0)
+1279 tests passing of 1280 on the 2026-07-16 local run (test_item_forecasts.py failures fixed via issue #7). Remaining failure is the date-anchored health test from issue #49, which also covers 2 scheduler tests that fail only on the Linux CI runner. The test_pruner.py boundary flake (issue #8) passed this run but remains time-of-day sensitive.

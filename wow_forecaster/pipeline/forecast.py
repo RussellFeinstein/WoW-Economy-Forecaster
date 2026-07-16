@@ -233,6 +233,7 @@ def _generate_item_forecasts(
     archetype_forecasts: list[ForecastOutput],
     realm_slug: str,
     min_history_days: int = 14,
+    run_date: date | None = None,
 ) -> list[ForecastOutput]:
     """Generate item-level forecasts for recipe-linked items and items with history.
 
@@ -256,10 +257,14 @@ def _generate_item_forecasts(
         realm_slug:         Realm to fetch current prices for.
         min_history_days:   Min distinct observation days required for non-recipe
                             items to be included (default 14).
+        run_date:           Anchor date for current-price windows and target
+                            dates (default: today).
 
     Returns:
         List of item-level ForecastOutput objects (not yet persisted by caller).
     """
+    if run_date is None:
+        run_date = date.today()
     if not archetype_forecasts:
         return []
 
@@ -291,7 +296,6 @@ def _generate_item_forecasts(
         return []
 
     # Fetch 7-day rolling mean prices per item and per archetype
-    run_date = date.today()
     item_ids_with_arch = list(item_archetype_map.keys())
     archetype_ids = list(set(item_archetype_map.values()))
 
@@ -327,7 +331,7 @@ def _generate_item_forecasts(
             ci_lower = min(ci_lower, predicted)
             ci_upper = max(ci_upper, predicted)
 
-            target_date = date.today() + timedelta(days=_HORIZON_DAYS[horizon_label])
+            target_date = run_date + timedelta(days=_HORIZON_DAYS[horizon_label])
 
             item_forecasts.append(
                 ForecastOutput(
@@ -489,6 +493,7 @@ def _fetch_cold_start_blend_data(
     realm_slug: str,
     source_expansion: str,
     target_expansion: str,
+    run_date: date | None = None,
 ) -> dict[int, tuple[float, float]]:
     """Fetch blend data for cold-start prediction anchoring.
 
@@ -502,6 +507,7 @@ def _fetch_cold_start_blend_data(
         realm_slug:        Realm to fetch source archetype prices for.
         source_expansion:  Expansion slug of the source (e.g. ``"tww"``).
         target_expansion:  Expansion slug of the target (e.g. ``"midnight"``).
+        run_date:          Anchor date for the rolling price window (default: today).
 
     Returns:
         Dict mapping target_archetype_id → (source_rolling_price, confidence).
@@ -528,7 +534,9 @@ def _fetch_cold_start_blend_data(
     source_ids = list(source_to_target.keys())
 
     # Fetch 7-day rolling prices for source archetypes
-    source_prices = _fetch_archetype_prices(conn, source_ids, realm_slug, date.today())
+    if run_date is None:
+        run_date = date.today()
+    source_prices = _fetch_archetype_prices(conn, source_ids, realm_slug, run_date)
 
     # Build result: target_archetype_id → (source_price, confidence)
     result: dict[int, tuple[float, float]] = {}
