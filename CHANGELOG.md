@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.4.8] - 2026-07-16
 
 ### Fixed
 - check-data-health coverage windows are now anchored to the UTC calendar date instead of the local date, matching the UTC timestamps on observations, and collect_health_report() accepts an injectable as_of date. This fixes the health test that reported a phantom day-zero gap whenever the local date and UTC date disagreed, on the Linux CI runner and near midnight locally (issue #49)
