@@ -19,6 +19,10 @@ from wow_forecaster.pipeline.forecast import (
     _generate_item_forecasts,
 )
 
+# Fixture prices are inserted on fixed 2026-03 dates, so the 7-day price
+# window must be anchored near them rather than to the wall clock.
+RUN_DATE = date(2026, 3, 9)
+
 
 def _make_db() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
@@ -208,7 +212,8 @@ class TestGenerateItemForecasts:
         ]
 
         results = _generate_item_forecasts(
-            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us",
+            run_date=RUN_DATE,
         )
         assert len(results) == 1
         fc = results[0]
@@ -236,7 +241,8 @@ class TestGenerateItemForecasts:
         ]
 
         results = _generate_item_forecasts(
-            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us",
+            run_date=RUN_DATE,
         )
         # ratio = 60/50 = 1.2
         # item 101 (20g): forecast = 20 × 1.2 = 24g
@@ -258,7 +264,8 @@ class TestGenerateItemForecasts:
         ]
 
         results = _generate_item_forecasts(
-            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us",
+            run_date=RUN_DATE,
         )
         assert results == []
 
@@ -274,7 +281,8 @@ class TestGenerateItemForecasts:
         ]
 
         results = _generate_item_forecasts(
-            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us",
+            run_date=RUN_DATE,
         )
         assert results == []
 
@@ -304,7 +312,8 @@ class TestGenerateItemForecasts:
         ]
 
         results = _generate_item_forecasts(
-            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us",
+            run_date=RUN_DATE,
         )
         horizons = {fc.forecast_horizon for fc in results}
         assert horizons == {"1d", "7d", "28d"}
@@ -323,7 +332,8 @@ class TestGenerateItemForecasts:
         ]
 
         results = _generate_item_forecasts(
-            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us",
+            run_date=RUN_DATE,
         )
         for fc in results:
             assert fc.confidence_lower <= fc.confidence_upper, (
@@ -424,7 +434,7 @@ class TestFetchColdStartBlendData:
         _insert_mapping(conn, source_archetype_id=1, target_archetype_id=2, confidence=0.8)
         conn.commit()
 
-        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight")
+        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight", run_date=RUN_DATE)
         assert 2 in result
         source_price, confidence = result[2]
         assert abs(source_price - 50.0) < 1.0
@@ -439,14 +449,14 @@ class TestFetchColdStartBlendData:
         _insert_mapping(conn, source_archetype_id=1, target_archetype_id=2, confidence=0.8)
         conn.commit()
 
-        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight")
+        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight", run_date=RUN_DATE)
         assert result == {}
 
     def test_empty_when_no_mappings(self):
         """Returns empty dict when archetype_mappings has no rows."""
         conn = _make_db()
         conn.commit()
-        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight")
+        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight", run_date=RUN_DATE)
         assert result == {}
 
     def test_filters_by_expansion_pair(self):
@@ -463,7 +473,7 @@ class TestFetchColdStartBlendData:
         conn.commit()
 
         # Query for tww→midnight should return nothing
-        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight")
+        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight", run_date=RUN_DATE)
         assert result == {}
 
     def test_omits_zero_confidence_mappings(self):
@@ -476,7 +486,7 @@ class TestFetchColdStartBlendData:
         _insert_mapping(conn, 1, 2, confidence=0.0)
         conn.commit()
 
-        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight")
+        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight", run_date=RUN_DATE)
         assert result == {}
 
     def test_multiple_mappings_returned(self):
@@ -494,7 +504,7 @@ class TestFetchColdStartBlendData:
         _insert_mapping(conn, 3, 4, confidence=0.7)
         conn.commit()
 
-        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight")
+        result = _fetch_cold_start_blend_data(conn, "us", "tww", "midnight", run_date=RUN_DATE)
         assert set(result.keys()) == {2, 4}
         assert abs(result[2][0] - 50.0) < 1.0
         assert abs(result[4][0] - 30.0) < 1.0
@@ -642,7 +652,8 @@ class TestGenerateItemForecastsExtended:
         ]
 
         results = _generate_item_forecasts(
-            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us",
+            run_date=RUN_DATE,
         )
         item_ids = {fc.item_id for fc in results}
         assert 999 in item_ids
@@ -662,7 +673,8 @@ class TestGenerateItemForecastsExtended:
         ]
 
         results = _generate_item_forecasts(
-            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us",
+            run_date=RUN_DATE,
         )
         item_ids = {fc.item_id for fc in results}
         assert 100 in item_ids
@@ -684,7 +696,8 @@ class TestGenerateItemForecastsExtended:
         ]
 
         results = _generate_item_forecasts(
-            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us"
+            conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us",
+            run_date=RUN_DATE,
         )
         # item 100 should appear exactly once for horizon "7d"
         count_7d = sum(1 for fc in results if fc.item_id == 100 and fc.forecast_horizon == "7d")
