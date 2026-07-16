@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.4.5] - 2026-07-15
 
 ### Added
 - Dependabot config scoped to ruff: new linter releases arrive as monthly PRs gated by CI instead of drifting into the build (issue #44)
