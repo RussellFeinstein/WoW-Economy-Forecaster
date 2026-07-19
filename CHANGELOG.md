@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.5.0] - 2026-07-19
 
 ### Added
 - Data freshness gate on the daily forecast (issue #12). ForecastStage refuses to run when the newest normalized observation is older than the new `[forecast] max_data_age_hours` config key (default 26 hours; 0 disables): it raises StaleDataError and records the run as failed, so manual run-daily-forecast invocations exit 1 on stale data. run_daily.bat now runs `check-data-health --stale-hours 26` before anything else and exits non-zero with HEALTH ALERT ACTIVE logged when the check fails, so Task Scheduler records the failure. This closes the failure mode behind the 96-day outage, where the daily task generated forecasts from frozen features without anyone noticing
