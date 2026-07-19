@@ -64,6 +64,10 @@ horizons = ["1d", "7d", "28d"]
 confidence_pct = 0.80
 # Default model slug used until real models are trained
 default_model_slug = "stub_linear_v0"
+# Freshness gate: ForecastStage refuses to run when the newest normalized
+# observation is older than this (hours). 26 = one daily cycle plus jitter.
+# Set to 0 to disable the gate.
+max_data_age_hours = 26.0
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 

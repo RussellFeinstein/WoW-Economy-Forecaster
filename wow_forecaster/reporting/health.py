@@ -33,7 +33,9 @@ class RealmHealthStats:
         coverage_pct:     ``days_with_data / days_checked * 100``.
         gap_dates:        UTC calendar dates within the lookback window that have
                           zero observations.  Sorted ascending.
-        last_ingest_at:   Timestamp of the most recent successful ingest snapshot.
+        last_ingest_at:   Timestamp when ingestion last landed rows for this
+                          realm (MAX(ingested_at) over market_observations_raw;
+                          only successful ingests insert raw rows).
         last_ingest_age_hours: Hours since last_ingest_at (None if no ingests found).
     """
 
@@ -152,20 +154,22 @@ def _collect_realm_stats(
     if lookback_days > 0:
         stats.coverage_pct = stats.days_with_data / lookback_days * 100.0
 
-    # ── Last successful ingest snapshot ───────────────────────────────────────
+    # ── Last successful ingest ────────────────────────────────────────────────
+    # market_observations_raw.ingested_at records when each row landed; only
+    # successful ingest runs insert rows, so MAX() is the last good ingest.
+    # (ingestion_snapshots has neither a realm_slug nor an ingested_at column;
+    # querying it here crashed check-data-health on real DBs until issue #12.)
     snap = conn.execute(
         """
-        SELECT ingested_at
-        FROM ingestion_snapshots
-        WHERE realm_slug = ? AND success = 1
-        ORDER BY ingested_at DESC
-        LIMIT 1
+        SELECT MAX(ingested_at) AS last_ingest
+        FROM market_observations_raw
+        WHERE realm_slug = ?
         """,
         (realm_slug,),
     ).fetchone()
-    if snap:
-        stats.last_ingest_at        = snap["ingested_at"]
-        stats.last_ingest_age_hours = _age_hours(snap["ingested_at"])
+    if snap and snap["last_ingest"] is not None:
+        stats.last_ingest_at        = snap["last_ingest"]
+        stats.last_ingest_age_hours = _age_hours(snap["last_ingest"])
 
     return stats
 

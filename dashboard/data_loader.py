@@ -19,15 +19,22 @@ import csv
 import json
 import os
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 try:
     import streamlit as st
     _CACHE = st.cache_data
 except ImportError:
-    # Allow importing outside Streamlit context (e.g. tests).
-    def _CACHE(fn):  # type: ignore[misc]
-        return fn
+    # Allow importing outside Streamlit context (e.g. tests).  Mirrors the
+    # st.cache_data API: usable bare (@_CACHE) or with kwargs (@_CACHE(ttl=N)).
+    def _CACHE(*args, **kwargs):  # type: ignore[misc]
+        if args and callable(args[0]):
+            return args[0]
+
+        def _wrap(fn):
+            return fn
+        return _wrap
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
@@ -185,6 +192,41 @@ def load_events(db_path: str, days_ahead: int = 30) -> list[dict]:
     except Exception:
         pass
     return rows
+
+
+@_CACHE(ttl=300)
+def load_ingest_age_hours(db_path: str, now: datetime | None = None) -> float | None:
+    """Hours since the newest non-outlier normalized observation, all realms.
+
+    Backs the global staleness banner (issue #12).  Global rather than
+    per-realm because ingestion is a single global pipeline.  Returns None
+    when the DB, table, or rows are missing; callers treat None as stale.
+
+    Args:
+        db_path: Path to the SQLite database.
+        now:     Reference time (default: current UTC).  Injectable for
+                 deterministic tests.
+    """
+    try:
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT MAX(observed_at) FROM market_observations_normalized "
+            "WHERE is_outlier = 0"
+        ).fetchone()
+        conn.close()
+    except Exception:
+        return None
+    if not row or row[0] is None:
+        return None
+    try:
+        newest = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if newest.tzinfo is None:
+        newest = newest.replace(tzinfo=UTC)
+    if now is None:
+        now = datetime.now(tz=UTC)
+    return (now - newest).total_seconds() / 3600.0
 
 
 def file_age_hours(realm: str, pattern: str, output_dir: str) -> float | None:
