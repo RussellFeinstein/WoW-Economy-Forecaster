@@ -280,6 +280,8 @@ wow-forecaster validate-datasets   --manifest PATH [--strict]
 
 ```bash
 # Full daily pipeline: train -> forecast -> recommend
+# Freshness gate: refuses to run when the newest observation is older than
+# 26 hours ([forecast] max_data_age_hours in config; 0 disables the gate)
 wow-forecaster run-daily-forecast  [--realm SLUG] [--skip-train] [--skip-recommend]
 
 # Train only
@@ -394,6 +396,12 @@ wow-forecaster start-scheduler     [--config PATH]
 # Tasks run silently (no visible cmd.exe window) via run_silent.vbs
 scripts/setup_tasks.bat
 ```
+
+The daily task gates itself on data freshness: run_daily.bat runs
+`check-data-health --stale-hours 26` first and exits non-zero without
+forecasting when ingestion is stale, so Task Scheduler records the failure
+instead of silently forecasting from frozen data. The Streamlit dashboard
+shows a red ingestion alert banner on every tab in the same condition.
 
 ### Cloud Snapshot Capture (GitHub Actions)
 

@@ -5,6 +5,16 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Data freshness gate on the daily forecast (issue #12). ForecastStage refuses to run when the newest normalized observation is older than the new `[forecast] max_data_age_hours` config key (default 26 hours; 0 disables): it raises StaleDataError and records the run as failed, so manual run-daily-forecast invocations exit 1 on stale data. run_daily.bat now runs `check-data-health --stale-hours 26` before anything else and exits non-zero with HEALTH ALERT ACTIVE logged when the check fails, so Task Scheduler records the failure. This closes the failure mode behind the 96-day outage, where the daily task generated forecasts from frozen features without anyone noticing
+- Red ingestion alert banner above every dashboard tab when the newest DB observation is older than 26 hours or the database is empty
+
+### Fixed
+- check-data-health no longer crashes with OperationalError against a real database. Its last-ingest query referenced ingestion_snapshots columns (realm_slug, ingested_at) that the production table has never had; the bug survived since v2.1.0 because the health tests hand-rolled a fixture table with the invented shape. The query now reads MAX(ingested_at) from market_observations_raw (only successful ingests insert raw rows), and the health tests build their fixture with apply_schema() so the fixture cannot drift from the real schema again. Without this fix the new freshness gate would have blocked the daily task even after ingestion is restored, because the gate's health check crashed (exit 1) on fresh data too (issue #12)
+- dashboard/data_loader.py no longer crashes on import when Streamlit is not installed: the no-streamlit cache fallback did not accept the @_CACHE(ttl=N) form the loaders use
+
 ## [2.4.9] - 2026-07-16
 
 ### Fixed

@@ -34,6 +34,14 @@ Coverage (union of two sets):
 Items in both sets are de-duplicated.  Items without a current price
 observation or without an archetype mapping are skipped.
 
+Freshness gate
+--------------
+Before any inference, _execute() checks the age of the newest normalized
+observation per realm.  If it exceeds config.forecast.max_data_age_hours
+(default 26h; <= 0 disables), StaleDataError is raised and the run is
+recorded as failed — forecasts are never silently generated from frozen
+features (issue #12).
+
 Look-ahead bias guard
 ---------------------
 The inference Parquet was built by the dataset_builder with event features
@@ -54,7 +62,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from wow_forecaster.models.forecast import ForecastOutput
@@ -65,6 +73,52 @@ logger = logging.getLogger(__name__)
 
 # Horizon label → days offset for target_date computation
 _HORIZON_DAYS: dict[str, int] = {"1d": 1, "7d": 7, "28d": 28}
+
+
+# ── Freshness gate ─────────────────────────────────────────────────────────────
+
+
+class StaleDataError(RuntimeError):
+    """Raised when the newest observation is too old to forecast from.
+
+    Guards against silently generating forecasts from frozen features when
+    ingestion has stopped (issue #12 — the 2026-04-15 outage produced 90 days
+    of forecasts from stale data before anyone noticed).
+    """
+
+
+def _fetch_max_observation_age_hours(
+    conn: sqlite3.Connection,
+    realm_slug: str,
+    now: datetime | None = None,
+) -> float | None:
+    """Hours since the newest non-outlier normalized observation for a realm.
+
+    Args:
+        conn:       Open DB connection.
+        realm_slug: Realm to check.
+        now:        Reference time (default: current UTC). Injectable for
+                    deterministic tests.
+
+    Returns:
+        Age in hours, or None when the realm has no observations at all.
+    """
+    if now is None:
+        now = datetime.now(tz=UTC)
+    row = conn.execute(
+        """
+        SELECT MAX(observed_at)
+        FROM market_observations_normalized
+        WHERE realm_slug = ? AND is_outlier = 0
+        """,
+        (realm_slug,),
+    ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    newest = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
+    if newest.tzinfo is None:
+        newest = newest.replace(tzinfo=UTC)
+    return (now - newest).total_seconds() / 3600.0
 
 
 class ForecastStage(PipelineStage):
@@ -81,6 +135,7 @@ class ForecastStage(PipelineStage):
         run: RunMetadata,
         realm_slug: str | None = None,
         horizons: list[int] | None = None,
+        now: datetime | None = None,
         **kwargs,
     ) -> int:
         """Generate and persist forecasts for configured realms.
@@ -90,12 +145,17 @@ class ForecastStage(PipelineStage):
             realm_slug: Single realm to target. If None, uses config defaults.
             horizons:   Horizon list override (int days). If None, uses
                         config.features.target_horizons_days.
+            now:        Reference time for the freshness gate (default: current
+                        UTC). Injectable for deterministic tests.
 
         Returns:
             Total ForecastOutput rows written to DB.
 
         Raises:
             ValueError: If run.run_id is not set after pre-persist.
+            StaleDataError: If config.forecast.max_data_age_hours > 0 and any
+                target realm's newest observation is older than that threshold
+                (or the realm has no observations at all).
         """
         from wow_forecaster.db.connection import get_connection
         from wow_forecaster.db.repositories.forecast_repo import ForecastOutputRepository
@@ -115,6 +175,29 @@ class ForecastStage(PipelineStage):
         processed_dir = Path(self.config.data.processed_dir)
         artifact_dir  = Path(self.config.model.artifact_dir)
         total_outputs = 0
+
+        # Freshness gate: refuse to forecast from stale data (issue #12).
+        max_age_hours = self.config.forecast.max_data_age_hours
+        if max_age_hours > 0:
+            with get_connection(
+                self.db_path,
+                wal_mode=self.config.database.wal_mode,
+                busy_timeout_ms=self.config.database.busy_timeout_ms,
+            ) as conn:
+                for realm in realms:
+                    age = _fetch_max_observation_age_hours(conn, realm, now=now)
+                    if age is None:
+                        raise StaleDataError(
+                            f"realm={realm}: no normalized observations exist; "
+                            f"refusing to forecast. Run 'run-hourly-refresh' first."
+                        )
+                    if age > max_age_hours:
+                        raise StaleDataError(
+                            f"realm={realm}: newest observation is {age:.1f}h old "
+                            f"(limit {max_age_hours:.1f}h); refusing to forecast "
+                            f"from stale data. Run 'run-hourly-refresh' and see "
+                            f"'check-data-health'."
+                        )
 
         for realm in realms:
             # Load model artifacts for each horizon

@@ -9,7 +9,7 @@ collect_health_report():
   - Per-realm: gaps correctly identified when days are missing.
   - Per-realm: no gaps when all days in window have data.
   - Per-realm: coverage_pct computed correctly.
-  - Per-realm: last_ingest_at populated from ingestion_snapshots.
+  - Per-realm: last_ingest_at populated from market_observations_raw.
   - Per-realm: last_ingest_age_hours reflects age of last ingest.
   - Realm isolation: stats only include rows for the queried realm.
   - is_stale=True when last ingest is older than stale_threshold_hours.
@@ -29,11 +29,13 @@ format_health_report():
 
 from __future__ import annotations
 
+import itertools
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from wow_forecaster.db.schema import apply_schema
 from wow_forecaster.reporting.health import (
     HealthReport,
     collect_health_report,
@@ -44,62 +46,25 @@ from wow_forecaster.reporting.health import (
 
 @pytest.fixture
 def conn() -> sqlite3.Connection:
-    """In-memory DB with minimal health-check schema."""
+    """In-memory DB with the real production schema.
+
+    apply_schema() rather than hand-rolled DDL: a hand-rolled fixture once
+    invented an ingestion_snapshots shape (realm_slug + ingested_at columns)
+    that production never had, which let a crashing query pass its tests
+    (issue #12).  Foreign keys are off so helpers can insert minimal rows.
+    """
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = OFF;")
-    db.executescript("""
-        CREATE TABLE market_observations_normalized (
-            norm_id      INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_id      INTEGER NOT NULL DEFAULT 1,
-            archetype_id INTEGER,
-            realm_slug   TEXT    NOT NULL,
-            faction      TEXT    NOT NULL DEFAULT 'neutral',
-            observed_at  TEXT    NOT NULL,
-            price_gold   REAL    NOT NULL DEFAULT 10.0,
-            is_outlier   INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE TABLE ingestion_snapshots (
-            snapshot_id  INTEGER PRIMARY KEY AUTOINCREMENT,
-            realm_slug   TEXT    NOT NULL,
-            source_id    TEXT    NOT NULL DEFAULT 'blizzard_api',
-            success      INTEGER NOT NULL DEFAULT 1,
-            record_count INTEGER NOT NULL DEFAULT 100,
-            ingested_at  TEXT    NOT NULL
-        );
-        CREATE TABLE run_metadata (
-            run_id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            realm_slug     TEXT    NOT NULL DEFAULT 'us',
-            run_date       TEXT    NOT NULL DEFAULT '2026-03-10',
-            status         TEXT    NOT NULL DEFAULT 'success',
-            pipeline_stage TEXT    NOT NULL DEFAULT 'orchestrator',
-            started_at     TEXT    NOT NULL,
-            rows_processed INTEGER NOT NULL DEFAULT 0,
-            error_message  TEXT,
-            config_snapshot TEXT   NOT NULL DEFAULT '{}'
-        );
-        CREATE TABLE forecast_outputs (
-            forecast_id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_id              INTEGER,
-            archetype_id         INTEGER,
-            realm_slug           TEXT    NOT NULL DEFAULT 'us',
-            forecast_horizon     TEXT    NOT NULL DEFAULT '1d',
-            target_date          TEXT    NOT NULL DEFAULT '2026-03-11',
-            predicted_price_gold REAL    NOT NULL DEFAULT 100.0,
-            confidence_lower     REAL    NOT NULL DEFAULT 90.0,
-            confidence_upper     REAL    NOT NULL DEFAULT 110.0,
-            confidence_pct       REAL    NOT NULL DEFAULT 0.80,
-            model_slug           TEXT    NOT NULL DEFAULT 'lgbm',
-            ci_quality           TEXT    NOT NULL DEFAULT 'good',
-            run_id               INTEGER NOT NULL DEFAULT 1,
-            created_at           TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-        );
-    """)
+    apply_schema(db)
     db.commit()
     return db
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+_SLUG_COUNTER = itertools.count()
+
 
 def _insert_obs(
     conn, realm: str, days_ago: float, count: int = 1,
@@ -113,19 +78,28 @@ def _insert_obs(
     for _ in range(count):
         conn.execute(
             "INSERT INTO market_observations_normalized "
-            "(realm_slug, observed_at) VALUES (?, ?)",
+            "(obs_id, item_id, realm_slug, observed_at, price_gold) "
+            "VALUES (1, 1, ?, ?, 10.0)",
             (realm, ts),
         )
     conn.commit()
 
 
-def _insert_ingest_snap(conn, realm: str, hours_ago: float, success: int = 1) -> None:
+def _insert_ingested_row(conn, realm: str, hours_ago: float) -> None:
+    """Insert one raw observation whose ingested_at is hours_ago old.
+
+    Only successful ingest runs write market_observations_raw rows, so
+    inserting a row IS the record of a successful ingest.  A failed ingest
+    leaves no row, which the tests model by simply not calling this helper.
+    """
     ts = (datetime.now(tz=UTC) - timedelta(hours=hours_ago)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     conn.execute(
-        "INSERT INTO ingestion_snapshots (realm_slug, success, ingested_at) VALUES (?, ?, ?)",
-        (realm, success, ts),
+        "INSERT INTO market_observations_raw "
+        "(item_id, realm_slug, observed_at, source, ingested_at) "
+        "VALUES (1, ?, ?, 'test', ?)",
+        (realm, ts, ts),
     )
     conn.commit()
 
@@ -140,15 +114,21 @@ def _insert_run(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     conn.execute(
-        "INSERT INTO run_metadata (pipeline_stage, status, started_at) VALUES (?, ?, ?)",
-        (stage, status, ts),
+        "INSERT INTO run_metadata "
+        "(run_slug, pipeline_stage, status, started_at, config_snapshot) "
+        "VALUES (?, ?, ?, ?, '{}')",
+        (f"health-test-{next(_SLUG_COUNTER)}", stage, status, ts),
     )
     conn.commit()
 
 
 def _insert_item_forecast(conn, item_id: int) -> None:
     conn.execute(
-        "INSERT INTO forecast_outputs (item_id, archetype_id) VALUES (?, NULL)",
+        "INSERT INTO forecast_outputs "
+        "(run_id, item_id, archetype_id, realm_slug, forecast_horizon, "
+        " target_date, predicted_price_gold, confidence_lower, "
+        " confidence_upper, model_slug) "
+        "VALUES (1, ?, NULL, 'us', '1d', '2026-03-11', 100.0, 90.0, 110.0, 'lgbm')",
         (item_id,),
     )
     conn.commit()
@@ -205,17 +185,23 @@ class TestCollectHealthReport:
         assert len(report.realms) == 1
         assert report.realms[0].realm_slug == "us"
 
-    def test_last_ingest_at_from_snapshots(self, conn):
-        _insert_ingest_snap(conn, "us", hours_ago=1.5)
+    def test_last_ingest_at_from_raw_observations(self, conn):
+        _insert_ingested_row(conn, "us", hours_ago=1.5)
         report = collect_health_report(conn, ["us"])
         assert report.realms[0].last_ingest_at is not None
         assert report.realms[0].last_ingest_age_hours is not None
         assert report.realms[0].last_ingest_age_hours < 3.0
 
-    def test_only_successful_ingests_count(self, conn):
-        _insert_ingest_snap(conn, "us", hours_ago=0.5, success=0)  # failed
+    def test_newest_ingested_row_wins(self, conn):
+        _insert_ingested_row(conn, "us", hours_ago=50.0)
+        _insert_ingested_row(conn, "us", hours_ago=2.0)
         report = collect_health_report(conn, ["us"])
-        # Failed snapshot should not be reported as last ingest
+        assert report.realms[0].last_ingest_age_hours < 3.0
+
+    def test_ingest_realm_isolation(self, conn):
+        _insert_ingested_row(conn, "eu", hours_ago=0.5)
+        report = collect_health_report(conn, ["us"])
+        # Another realm's ingest is not this realm's last ingest
         assert report.realms[0].last_ingest_at is None
 
     def test_is_stale_when_no_ingests(self, conn):
@@ -223,12 +209,12 @@ class TestCollectHealthReport:
         assert report.is_stale is True
 
     def test_is_stale_when_ingest_too_old(self, conn):
-        _insert_ingest_snap(conn, "us", hours_ago=6.0)
+        _insert_ingested_row(conn, "us", hours_ago=6.0)
         report = collect_health_report(conn, ["us"], stale_threshold_hours=4.0)
         assert report.is_stale is True
 
     def test_not_stale_when_fresh_ingest(self, conn):
-        _insert_ingest_snap(conn, "us", hours_ago=1.0)
+        _insert_ingested_row(conn, "us", hours_ago=1.0)
         report = collect_health_report(conn, ["us"], stale_threshold_hours=4.0)
         assert report.is_stale is False
 

@@ -12,18 +12,23 @@ Why optional?
 - All data shown here is also available via the ``wow-forecaster report-*``
   CLI commands.
 
-App structure (5 tabs)
+App structure (8 tabs)
 ----------------------
-  1. Top Picks     — Ranked recommendations per category with score breakdown.
-  2. Forecasts     — Full forecast table with CI width; archetype detail view
-                     shows a historical price line + forecast point with CI band.
-  3. Volatility    — High-uncertainty items ranked by CI width.
-  4. Model Health  — Drift level, MAE ratio per horizon, retrain status.
-  5. Source Status — Per-source data freshness and ingestion success rate.
+  1. Top Picks        — Ranked recommendations per category with score breakdown.
+  2. Forecasts        — Full forecast table with CI width; archetype detail view
+                        shows a historical price line + forecast point with CI band.
+  3. Volatility       — High-uncertainty items ranked by CI width.
+  4. Model Health     — Drift level, MAE ratio per horizon, retrain status.
+  5. Source Status    — Per-source data freshness and ingestion success rate.
+  6. Backtest         — Walk-forward fold results per model and horizon.
+  7. Feature Insights — Model feature importance charts.
+  8. Crafting         — Crafting margin opportunities and windows.
 
 Provenance surfacing
 --------------------
-Every tab shows a colour-coded freshness badge:
+A red banner above the tab bar flags stale ingestion globally: it appears on
+every tab when the newest DB observation is older than 26 hours (issue #12).
+In addition, every tab shows a colour-coded freshness badge:
   - FRESH  (green)  — report file is less than ``freshness_hours`` old.
   - STALE  (orange) — report file is older; data may not reflect current market.
   - NO DATA (red)   — no output file found; run the relevant pipeline command.
@@ -66,6 +71,7 @@ from dashboard.data_loader import (
     load_forecasts,
     load_health,
     load_historical_prices,
+    load_ingest_age_hours,
     load_provenance,
     load_recommendations,
 )
@@ -132,6 +138,28 @@ def _no_data_msg(command: str) -> None:
     st.info(
         f"No data available for realm **{realm}**. "
         f"Run `wow-forecaster {command}` to generate output files."
+    )
+
+
+# ── Global ingest staleness banner (issue #12) ────────────────────────────────
+# Rendered above the tab bar so it is visible on every tab.  The threshold
+# mirrors [forecast] max_data_age_hours in config/default.toml.
+
+_INGEST_STALE_HOURS = 26.0
+
+_ingest_age = load_ingest_age_hours(_DB_PATH)
+if _ingest_age is None:
+    st.error(
+        "INGESTION ALERT: no observations found in the database. "
+        "Everything below is unusable until `wow-forecaster run-hourly-refresh` "
+        "succeeds."
+    )
+elif _ingest_age > _INGEST_STALE_HOURS:
+    st.error(
+        f"INGESTION ALERT: newest observation is {_ingest_age:.0f}h old "
+        f"(threshold {_INGEST_STALE_HOURS:.0f}h). Forecasts and recommendations "
+        f"below are built from stale data. Run `wow-forecaster run-hourly-refresh`, "
+        f"then check `wow-forecaster check-data-health`."
     )
 
 

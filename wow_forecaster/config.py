@@ -87,6 +87,9 @@ class ForecastConfig(BaseModel):
     horizons: list[str] = ["1d", "7d", "28d"]
     confidence_pct: float = 0.80
     default_model_slug: str = "stub_linear_v0"
+    # Freshness gate: ForecastStage refuses to run when the newest normalized
+    # observation is older than this many hours. <= 0 disables the gate.
+    max_data_age_hours: float = 26.0
 
     @field_validator("confidence_pct")
     @classmethod
