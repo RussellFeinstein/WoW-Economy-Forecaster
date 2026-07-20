@@ -1,24 +1,31 @@
 """Windows-only integration tests for scripts/setup_tasks.bat.
 
-Tests cover the Task Scheduler registration script (issue #6):
+Tests cover the Task Scheduler registration script (issues #6 and #40):
   - Fresh registration: three /Create calls with the pinned /ST anchors
     (hourly :16, daily 07:00, health-check every 6h at :45), all silent via
-    wscript.exe + run_silent.vbs.
+    wscript.exe + run_silent.vbs, each followed by a wake-to-run set.
   - State preservation: a task that was Disabled before re-registration is
     re-disabled immediately after its /Create (/Create /F recreates tasks
     ENABLED; WoWForecaster-Hourly must stay disabled until the issue #1
     runbook).  A PowerShell state-query failure also takes the disabled
     path: disable-on-uncertainty is the safe bias for tasks whose
     accidental enablement can destroy data.
+  - Wake-to-run (issue #40): each registration flips WakeToRun via a
+    PowerShell fetch-modify-write; for a was-disabled task the script
+    re-asserts /DISABLE after the wake-set (belt and braces around the
+    cmdlet round-trip).  A wake-set failure is fatal, and it happens after
+    the re-disable, so the failure exit leaves the task DISABLED.
+  - Power plan check: a warn-only RTCWAKE query after registration; any AC
+    index other than Enable (0x1) prints remediation, exit stays 0.
   - Guard order: missing wrapper scripts abort before any /Create.
   - Failure paths: a failed /Create stops the script; a failed re-disable
     exits 1 with a disable-manually error (the hazard-critical path).
 
-No test ever touches the real Task Scheduler: every schtasks call goes
-through the WOWFC_SCHTASKS seam to a logging stub, and PowerShell is stubbed
-via a PATH override (precedent: test_run_healthcheck.py).  The stubs invoke
-findstr by absolute %SystemRoot% path because PATH points only at the stub
-directory.
+No test ever touches the real Task Scheduler or power plan: every schtasks
+call goes through the WOWFC_SCHTASKS seam to a logging stub, powercfg goes
+through the WOWFC_POWERCFG seam, and PowerShell is stubbed via a PATH
+override (precedent: test_run_healthcheck.py).  The stubs invoke findstr by
+absolute %SystemRoot% path because PATH points only at the stub directory.
 
 These tests are skipped on non-Windows platforms (CI runs ubuntu-latest).
 """
@@ -77,18 +84,42 @@ def bat_tree(tmp_path: Path) -> Path:
         encoding="ascii",
     )
 
-    # powershell stub (found via PATH override): reports Disabled (exit 2)
-    # only when its args contain STUB_PS_DISABLED_MATCH, else Enabled/absent.
+    # powershell stub (found via PATH override).  Two personalities keyed on
+    # the args: wake-set calls (contain WakeToRun) are logged to STUB_LOG as
+    # "PS-WAKE ..." lines and fail when STUB_PS_WAKE_FAIL is set; state
+    # queries report Disabled (exit 2) only when the args contain
+    # STUB_PS_DISABLED_MATCH, else Enabled/absent.
     psstub = tmp_path / "psstub"
     psstub.mkdir()
     (psstub / "powershell.bat").write_text(
         "\r\n".join(
             [
                 "@echo off",
+                'echo %* | %SystemRoot%\\System32\\findstr.exe /C:"WakeToRun" >nul',
+                "if not errorlevel 1 goto :wake",
                 "if not defined STUB_PS_DISABLED_MATCH exit /b 0",
                 "echo %* | %SystemRoot%\\System32\\findstr.exe "
                 '/C:"%STUB_PS_DISABLED_MATCH%" >nul',
                 "if not errorlevel 1 exit /b 2",
+                "exit /b 0",
+                ":wake",
+                'echo PS-WAKE %* >> "%STUB_LOG%"',
+                "if defined STUB_PS_WAKE_FAIL exit /b 1",
+                "exit /b 0",
+            ]
+        )
+        + "\r\n",
+        encoding="ascii",
+    )
+
+    # powercfg stub: emits the one line the RTCWAKE check greps for, with
+    # the index driven by STUB_RTCWAKE_INDEX so the real machine's power
+    # plan never leaks into assertions.
+    (tmp_path / "powercfg_stub.bat").write_text(
+        "\r\n".join(
+            [
+                "@echo off",
+                "echo     Current AC Power Setting Index: %STUB_RTCWAKE_INDEX%",
                 "exit /b 0",
             ]
         )
@@ -105,17 +136,24 @@ def _run_bat(
     ps_disabled_match: str | None = None,
     fail_on: str | None = None,
     ps_unreachable: bool = False,
+    wake_fail: bool = False,
+    rtcwake_index: str = "0x00000001",
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env["WOWFC_SCHTASKS"] = str(tree / "schtasks_stub.bat")
+    env["WOWFC_POWERCFG"] = str(tree / "powercfg_stub.bat")
     env["STUB_LOG"] = str(tree / "schtasks_calls.log")
+    env["STUB_RTCWAKE_INDEX"] = rtcwake_index
     env["PATH"] = str(tree / ("emptypath" if ps_unreachable else "psstub"))
     env.pop("STUB_PS_DISABLED_MATCH", None)
     env.pop("STUB_FAIL_ON", None)
+    env.pop("STUB_PS_WAKE_FAIL", None)
     if ps_disabled_match is not None:
         env["STUB_PS_DISABLED_MATCH"] = ps_disabled_match
     if fail_on is not None:
         env["STUB_FAIL_ON"] = fail_on
+    if wake_fail:
+        env["STUB_PS_WAKE_FAIL"] = "1"
     return subprocess.run(
         [CMD_EXE, "/c", str(tree / "scripts" / "setup_tasks.bat")],
         capture_output=True,
@@ -133,16 +171,23 @@ def _calls(tree: Path) -> list[str]:
     return [ln for ln in log.read_text(encoding="ascii").splitlines() if ln.strip()]
 
 
+def _wakes(calls: list[str]) -> list[str]:
+    return [c for c in calls if c.startswith("PS-WAKE")]
+
+
 # ── Fresh registration ────────────────────────────────────────────────────────
 
 
 def test_fresh_registration_creates_three_silent_tasks(bat_tree: Path) -> None:
-    """No existing tasks: three /Create calls, pinned anchors, no disables."""
+    """No existing tasks: create + wake-set per task, pinned anchors, no
+    disables."""
     result = _run_bat(bat_tree)
     calls = _calls(bat_tree)
     creates = [c for c in calls if "/Create" in c]
+    wakes = _wakes(calls)
     assert len(creates) == 3
-    assert len(calls) == 3  # nothing but the creates
+    assert len(wakes) == 3
+    assert len(calls) == 6  # each create immediately followed by its wake-set
     hourly, daily, health = creates
     assert "/SC HOURLY /ST 07:16" in hourly
     assert '"WoWForecaster-Hourly"' in hourly
@@ -153,6 +198,15 @@ def test_fresh_registration_creates_three_silent_tasks(bat_tree: Path) -> None:
     for c in creates:
         assert "wscript.exe" in c
         assert "run_silent.vbs" in c
+    for wake, name in zip(
+        wakes,
+        ("WoWForecaster-Hourly", "WoWForecaster-Daily", "WoWForecaster-HealthCheck"),
+        strict=True,
+    ):
+        assert name in wake
+        assert "WakeToRun" in wake
+    # Interleaving: create, wake, create, wake, create, wake
+    assert [i for i, c in enumerate(calls) if c.startswith("PS-WAKE")] == [1, 3, 5]
     assert "/DISABLE" not in "\n".join(calls)
     assert result.returncode == 0
 
@@ -161,31 +215,46 @@ def test_fresh_registration_creates_three_silent_tasks(bat_tree: Path) -> None:
 
 
 def test_disabled_task_stays_disabled_after_reregistration(bat_tree: Path) -> None:
-    """The hazard case: a Disabled hourly task is re-disabled after /Create."""
+    """The hazard case: a Disabled hourly task is re-disabled after /Create,
+    then re-disabled AGAIN after the wake-set (belt and braces around the
+    Set-ScheduledTask round-trip)."""
     result = _run_bat(bat_tree, ps_disabled_match="WoWForecaster-Hourly")
     calls = _calls(bat_tree)
     disables = [c for c in calls if "/DISABLE" in c]
-    assert len(disables) == 1
-    assert '"WoWForecaster-Hourly"' in disables[0]
-    assert "/Change" in disables[0]
-    # The disable follows the hourly create, before the daily create
-    assert calls.index(disables[0]) == 1
+    assert len(disables) == 2
+    for d in disables:
+        assert '"WoWForecaster-Hourly"' in d
+        assert "/Change" in d
+    # Order: create H, disable H, wake H, disable H again, then the rest
+    assert "/Create" in calls[0]
+    assert "/DISABLE" in calls[1]
+    assert calls[2].startswith("PS-WAKE")
+    assert "WoWForecaster-Hourly" in calls[2]
+    assert "/DISABLE" in calls[3]
+    assert len(calls) == 8  # 3 creates + 3 wakes + 2 hourly disables
     assert "preserved DISABLED state" in result.stdout
     assert result.returncode == 0
 
 
 def test_ps_failure_biases_toward_disable(bat_tree: Path) -> None:
-    """With PowerShell unreachable, every task is created then re-disabled.
+    """With PowerShell unreachable, the hourly task is created and disabled,
+    then the script dies at its wake-set.
 
-    Disable-on-uncertainty: errorlevel 9009 from the missing powershell
-    lands in the >= 2 branch.  Wrong-but-safe on a fresh machine; correct
-    on this machine, where an enabled hourly task destroys data.
+    Disable-on-uncertainty: errorlevel 1 from the missing powershell takes
+    the disabled branch, so the /Create is followed by a /DISABLE.  The
+    wake-set (issue #40) also needs PowerShell and its failure is fatal,
+    but it runs after the re-disable, so the failure exit leaves the task
+    DISABLED.  Wrong-but-safe on a fresh machine; correct on this machine,
+    where an enabled hourly task destroys data.
     """
     result = _run_bat(bat_tree, ps_unreachable=True)
     calls = _calls(bat_tree)
-    assert len([c for c in calls if "/Create" in c]) == 3
-    assert len([c for c in calls if "/DISABLE" in c]) == 3
-    assert result.returncode == 0
+    assert len([c for c in calls if "/Create" in c]) == 1
+    assert len([c for c in calls if "/DISABLE" in c]) == 1
+    assert _wakes(calls) == []  # the wake logger IS powershell; it never ran
+    assert "[ERROR]" in result.stdout
+    assert "wake-to-run" in result.stdout
+    assert result.returncode == 1
 
 
 # ── Guards and failure paths ──────────────────────────────────────────────────
@@ -228,5 +297,39 @@ def test_disable_failure_exits_loudly(bat_tree: Path) -> None:
     calls = _calls(bat_tree)
     assert len([c for c in calls if "/Create" in c]) == 1  # daily never reached
     assert len([c for c in calls if "/Change" in c]) == 1
+    assert _wakes(calls) == []  # exit happened before the wake-set
     assert "Disable it manually NOW" in result.stdout
     assert result.returncode == 1
+
+
+# ── Wake-to-run and power plan (issue #40) ────────────────────────────────────
+
+
+def test_wake_set_failure_stops_the_script(bat_tree: Path) -> None:
+    """A failed wake-set is fatal: a registration that cannot wake the
+    machine defeats the point of #40."""
+    result = _run_bat(bat_tree, wake_fail=True)
+    calls = _calls(bat_tree)
+    assert len([c for c in calls if "/Create" in c]) == 1  # daily never reached
+    assert len(_wakes(calls)) == 1  # the hourly attempt was made, then failed
+    assert "WoWForecaster-Hourly" in _wakes(calls)[0]
+    assert "[ERROR]" in result.stdout
+    assert "wake-to-run" in result.stdout
+    assert result.returncode == 1
+
+
+@pytest.mark.parametrize("index", ["0x00000000", "0x00000002"])
+def test_wake_timers_not_enabled_warns(bat_tree: Path, index: str) -> None:
+    """Disable (0x0) and Important Wake Timers Only (0x2) both block Task
+    Scheduler wake timers: warn with remediation, but registration stands
+    (exit 0 -- fixing the power plan needs an elevated shell)."""
+    result = _run_bat(bat_tree, rtcwake_index=index)
+    assert "[WARNING]" in result.stdout
+    assert "SETACVALUEINDEX" in result.stdout
+    assert result.returncode == 0
+
+
+def test_wake_timers_enabled_no_warning(bat_tree: Path) -> None:
+    result = _run_bat(bat_tree)  # stub defaults to Enable (0x1)
+    assert "[WARNING]" not in result.stdout
+    assert result.returncode == 0
