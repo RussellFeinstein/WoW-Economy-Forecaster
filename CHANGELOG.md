@@ -5,6 +5,12 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- All three scheduled tasks now wake the machine from sleep (issue #40). schtasks /Create cannot set WakeToRun, so setup_tasks.bat flips it on each task after registration through a PowerShell fetch-modify-write that preserves every other setting, including a Disabled state; for a task that was disabled, the script re-asserts the disable afterward rather than trusting the round-trip. A failed wake-set stops the script with exit 1. With this, the machine may sleep between runs without losing capture hours: Task Scheduler wakes it for each trigger and Windows returns it to sleep on the idle timeout. Wake covers sleep (and hibernate on supporting hardware); a powered-off machine does not wake, which is what the cloud capture path (M0.5) is for
+- setup_tasks.bat now verifies the active power plan allows wake timers and prints the elevated powercfg commands to fix it when it does not (warn-only: task registration itself needs no elevation, and both Disable and Important Wake Timers Only block Task Scheduler wakes)
+
 ## [2.7.1] - 2026-07-19
 
 ### Added

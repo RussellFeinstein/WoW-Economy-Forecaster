@@ -411,6 +411,16 @@ collision and Blizzard's top-of-hour snapshot refresh, and the health check's
 same time. Re-running setup_tasks.bat is safe: it pins those anchors and
 preserves the Disabled state of any task an operator has turned off.
 
+All three tasks are registered with wake-to-run, so the machine may sleep
+between runs: Task Scheduler wakes it for each trigger and Windows returns it
+to sleep on the idle timeout after the run exits. This requires the active
+power plan's "Allow wake timers" setting to be Enable (the Windows desktop
+default); setup_tasks.bat checks it and prints the elevated powercfg fix if
+the plan blocks wake timers. Know the boundary: wake timers cover sleep, and
+hibernate on hardware that supports waking from it, but a powered-off machine
+does not wake. Capture that survives power-off is what the cloud snapshot
+workflow below provides.
+
 The daily task gates itself on data freshness: run_daily.bat runs
 `check-data-health --stale-hours 26` first and exits non-zero without
 forecasting when ingestion is stale, so Task Scheduler records the failure
