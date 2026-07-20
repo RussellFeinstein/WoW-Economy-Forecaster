@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.6.0] - 2026-07-19
 
 ### Added
 - Scheduled health check with visible failure alerting (issue #4). New scripts/run_healthcheck.bat runs `check-data-health --stale-hours 4` and appends output to logs/health.log. On failure it writes data/outputs/monitoring/health_alert.json (timestamp, exit code, last 20 log lines) and raises a persistent red console window titled "WOW FORECASTER: DATA STALE", at most once per 24 hours (tracked by the mtime of health_window_raised.json). A healthy run deletes both files, so the next distinct failure alerts immediately instead of inheriting a half-spent window. The exit code always mirrors check-data-health, keeping Task Scheduler's Last Run Result truthful even when an alert surface fails, and an unverifiable suppression flag raises anyway (skip-on-uncertainty is what made the 96-day outage silent). Task Scheduler registration lands with issue #6. This check is independent of run_daily.bat's 26-hour freshness gate: different log, threshold, and purpose. Verified during acceptance: `start` still raises a visible window when the parent console runs hidden under run_silent.vbs (windowStyle 0), and the vbs propagates the exit code, so #6 can register the task silently without losing the alert
