@@ -398,9 +398,18 @@ wow-forecaster export-tsm              [--realm SLUG] [--horizon 1d|7d|28d] \
 wow-forecaster start-scheduler     [--config PATH]
 
 # Register Windows Task Scheduler tasks for unattended operation
-# Tasks run silently (no visible cmd.exe window) via run_silent.vbs
+# Tasks run silently (no visible cmd.exe window) via run_silent.vbs:
+#   WoWForecaster-Hourly       run_hourly.bat, hourly at :16
+#   WoWForecaster-Daily        run_daily.bat, daily at 07:00
+#   WoWForecaster-HealthCheck  run_healthcheck.bat, every 6h at :45
 scripts/setup_tasks.bat
 ```
+
+The anchor minutes are deliberate: the hourly :16 avoids the daily-task
+collision and Blizzard's top-of-hour snapshot refresh, and the health check's
+:45 keeps it clear of the ingest so the two never read the database at the
+same time. Re-running setup_tasks.bat is safe: it pins those anchors and
+preserves the Disabled state of any task an operator has turned off.
 
 The daily task gates itself on data freshness: run_daily.bat runs
 `check-data-health --stale-hours 26` first and exits non-zero without
@@ -414,8 +423,8 @@ infrastructure: `scripts/run_healthcheck.bat` runs
 failure writes `data/outputs/monitoring/health_alert.json` and raises a
 persistent red console window (at most one per 24 hours). A healthy run clears
 the alert. Its exit code mirrors check-data-health, so Task Scheduler's Last
-Run Result doubles as a durable alert surface. Task Scheduler registration for
-this script ships with issue #6; until then, run it manually.
+Run Result doubles as a durable alert surface. setup_tasks.bat registers it as
+the WoWForecaster-HealthCheck task.
 
 ### Cloud Snapshot Capture (GitHub Actions)
 
