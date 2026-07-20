@@ -121,6 +121,9 @@ notebooks/                    # Jupyter analysis notebooks (portfolio narratives
 └── 03_backtest_and_evaluation.ipynb
 
 scripts/
+├── run_daily.bat             # Daily pipeline wrapper (freshness gate + build + forecast)
+├── run_healthcheck.bat       # Scheduled health check + failure alerting
+├── run_hourly.bat            # Hourly refresh wrapper (stale-lock takeover guard)
 └── setup_tasks.bat           # One-shot Windows Task Scheduler registration
 
 tests/
@@ -139,7 +142,7 @@ tests/
 ├── test_recommendations/ # Scorer, ranker, item overlay, crafting (133 tests)
 ├── test_reporting/       # Reader, formatters, export (86 tests)
 ├── test_scheduler/       # Scheduler daemon (26 tests)
-├── test_scripts/         # run_hourly.bat lock guard, Windows-only (5 tests)
+├── test_scripts/         # Bat wrappers: hourly lock guard, daily gate, health alerting, Windows-only (17 tests)
 └── test_taxonomy/        # Taxonomy integrity (30 tests)
 ```
 
@@ -403,6 +406,15 @@ forecasting when ingestion is stale, so Task Scheduler records the failure
 instead of silently forecasting from frozen data. The Streamlit dashboard
 shows a red ingestion alert banner on every tab in the same condition.
 
+A standalone health check makes failures impossible to miss without email
+infrastructure: `scripts/run_healthcheck.bat` runs
+`check-data-health --stale-hours 4`, appends output to logs/health.log, and on
+failure writes `data/outputs/monitoring/health_alert.json` and raises a
+persistent red console window (at most one per 24 hours). A healthy run clears
+the alert. Its exit code mirrors check-data-health, so Task Scheduler's Last
+Run Result doubles as a durable alert surface. Task Scheduler registration for
+this script ships with issue #6; until then, run it manually.
+
 ### Cloud Snapshot Capture (GitHub Actions)
 
 Hourly capture that does not depend on the desktop being on. A scheduled workflow
@@ -527,7 +539,7 @@ pytest tests/test_db/               # Schema + repositories + migrations (37 tes
 pytest tests/test_events/           # Seed loader, event imports (24 tests)
 pytest tests/test_taxonomy/         # Taxonomy integrity (30 tests)
 pytest tests/test_recipes/          # Recipe repo, seeder, margin calculator (21 tests)
-pytest tests/test_scripts/          # run_hourly.bat lock guard, Windows-only (5 tests)
+pytest tests/test_scripts/          # Bat wrappers: hourly lock guard, daily gate, health alerting, Windows-only (17 tests)
 ```
 
 ---
