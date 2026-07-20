@@ -2588,7 +2588,7 @@ def check_data_health_cmd(
         help="Path to TOML config file.",
     ),
 ) -> None:
-    """Check data collection health: gaps, freshness, and coverage.
+    """Check data collection health: gaps, freshness, locks, and retention.
 
     \b
     Queries the DB directly (not output JSON files) for an authoritative
@@ -2598,11 +2598,16 @@ def check_data_health_cmd(
         any calendar dates in the lookback window that have no data.
       - [STALE] flag when the last successful ingest is older than
         --stale-hours.
+      - [STALE LOCK] flag when data/db/.hourly.lock is older than the
+        run_hourly.bat takeover threshold (the hourly pipeline is wedged).
+      - [RETENTION VIOLATION] flag when the oldest raw observation is older
+        than retention.raw_snapshot_days plus 2 days of grace (the pruner
+        has stopped enforcing the 30-day API ToS window).
 
     \b
     Exit codes:
-      0 -- all realms have recent data (within --stale-hours)
-      1 -- one or more realms are stale or have never been ingested
+      0 -- all checks pass
+      1 -- stale data, a stale hourly lock, or a retention violation
 
     \b
     Examples:
@@ -2632,14 +2637,27 @@ def check_data_health_cmd(
             realm_slugs    = [target_realm],
             lookback_days  = lookback_days,
             stale_threshold_hours = stale_hours,
+            lock_path      = db_path.parent / ".hourly.lock",
+            retention_days = config.retention.raw_snapshot_days,
         )
     finally:
         conn.close()
 
     typer.echo(format_health_report(report))
 
-    if report.is_stale:
-        typer.echo("[STALE] check-data-health: one or more realms need fresh data.")
+    if report.has_failures:
+        if report.is_stale:
+            typer.echo("[STALE] check-data-health: one or more realms need fresh data.")
+        if report.lock_is_stale:
+            typer.echo(
+                "[STALE LOCK] check-data-health: hourly lock older than the "
+                "takeover threshold -- ingestion may be wedged."
+            )
+        if report.retention_violation:
+            typer.echo(
+                "[RETENTION] check-data-health: raw rows older than the "
+                "retention limit -- pruner may be dead (ToS 30-day window)."
+            )
         raise typer.Exit(code=1)
 
     typer.echo("[OK] check-data-health complete.")

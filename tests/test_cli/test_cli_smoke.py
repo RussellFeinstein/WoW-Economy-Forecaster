@@ -59,6 +59,7 @@ class TestCLIHelp:
             "report-volatility",
             "report-drift",
             "report-status",
+            "check-data-health",
             "list-sources",
             "validate-source-policies",
             "check-source-freshness",

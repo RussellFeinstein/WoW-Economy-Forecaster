@@ -17,6 +17,13 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+
+# Days of slack past retention_days before the sentinel calls the pruner dead.
+# The pruner runs as orchestrator step 7 after each successful ingest, so a
+# healthy system never carries rows more than a few hours past the window;
+# 2 days absorbs scheduling slack without hiding a real lapse.
+RETENTION_GRACE_DAYS = 2
 
 # ── Data classes ──────────────────────────────────────────────────────────────
 
@@ -67,6 +74,18 @@ class HealthReport:
         is_stale:         True when last successful ingest is older than
                           ``stale_threshold_hours`` for any realm.
         stale_threshold_hours: Threshold used to compute ``is_stale``.
+        lock_age_hours:   Age of the hourly lock file (None when no lock file
+                          exists or no lock path was given).
+        lock_is_stale:    True when the lock is older than ``lock_stale_minutes``
+                          — the hourly pipeline is wedged or crashed mid-run.
+        lock_stale_minutes: Threshold used to compute ``lock_is_stale``.
+        oldest_raw_age_days: Age of the oldest market_observations_raw row by
+                          observed_at (None when the table is empty).
+        retention_violation: True when the oldest raw row is older than
+                          ``retention_limit_days`` — the pruner has stopped
+                          deleting rows the 30-day API ToS §2.r window requires.
+        retention_limit_days: retention_days + grace; the age that flips
+                          ``retention_violation``.
     """
 
     generated_at:           str
@@ -79,6 +98,17 @@ class HealthReport:
     item_forecast_count:    int                    = 0
     is_stale:               bool                   = False
     stale_threshold_hours:  float                  = 4.0
+    lock_age_hours:         float | None        = None
+    lock_is_stale:          bool                   = False
+    lock_stale_minutes:     float                  = 180.0
+    oldest_raw_age_days:    float | None        = None
+    retention_violation:    bool                   = False
+    retention_limit_days:   int                    = 30 + RETENTION_GRACE_DAYS
+
+    @property
+    def has_failures(self) -> bool:
+        """True when any check failed — the single source for the exit code."""
+        return self.is_stale or self.lock_is_stale or self.retention_violation
 
 
 # ── Query helpers ─────────────────────────────────────────────────────────────
@@ -180,6 +210,9 @@ def collect_health_report(
     lookback_days:         int   = 14,
     stale_threshold_hours: float = 4.0,
     as_of:                 date | None = None,
+    lock_path:             Path | str | None = None,
+    lock_stale_minutes:    float = 180.0,
+    retention_days:        int   = 30,
 ) -> HealthReport:
     """Build a full data collection health report.
 
@@ -191,6 +224,18 @@ def collect_health_report(
         as_of:                 Anchor date for the coverage window (default: the
                                current UTC date, matching the UTC timestamps on
                                observations). Injectable for deterministic tests.
+        lock_path:             Path to the hourly lock file (``data/db/.hourly.lock``).
+                               None skips the lock check.  The file is only ever
+                               stat'ed, never modified.
+        lock_stale_minutes:    Lock age beyond which the hourly pipeline is
+                               considered wedged.  Must match STALE_MINUTES in
+                               run_hourly.bat (180): the same threshold that
+                               triggers the stale-lock takeover there marks the
+                               lock stale here.
+        retention_days:        Raw-data retention window in days (pass
+                               ``config.retention.raw_snapshot_days``).  The
+                               sentinel flags rows older than this plus
+                               :data:`RETENTION_GRACE_DAYS`.
 
     Returns:
         :class:`HealthReport` with all findings populated.
@@ -201,6 +246,8 @@ def collect_health_report(
     report  = HealthReport(
         generated_at          = now_iso,
         stale_threshold_hours = stale_threshold_hours,
+        lock_stale_minutes    = lock_stale_minutes,
+        retention_limit_days  = retention_days + RETENTION_GRACE_DAYS,
     )
 
     # ── Per-realm stats ───────────────────────────────────────────────────────
@@ -257,6 +304,37 @@ def collect_health_report(
         for s in report.realms
     )
 
+    # ── Hourly lock check (read-only stat; issue #5) ──────────────────────────
+    # A lock older than the takeover threshold means the hourly pipeline is
+    # wedged or crashed mid-run — the condition behind the 96-day outage.
+    if lock_path is not None:
+        try:
+            mtime = Path(lock_path).stat().st_mtime
+            age_hours = (
+                datetime.now(tz=UTC) - datetime.fromtimestamp(mtime, tz=UTC)
+            ).total_seconds() / 3600.0
+            report.lock_age_hours = age_hours
+            report.lock_is_stale  = age_hours * 60.0 > lock_stale_minutes
+        except OSError:
+            # No lock (or it vanished mid-check) is the healthy between-runs
+            # state, not an error.
+            pass
+
+    # ── Retention sentinel (issue #5) ─────────────────────────────────────────
+    # observed_at, not ingested_at: the pruner deletes on observed_at, so this
+    # asks "is there a row the pruner should have deleted?".  Catches a dead
+    # pruner before it becomes an API ToS §2.r lapse.
+    row = conn.execute(
+        "SELECT MIN(observed_at) AS oldest FROM market_observations_raw",
+    ).fetchone()
+    if row and row["oldest"] is not None:
+        oldest_hours = _age_hours(row["oldest"])
+        if oldest_hours is not None:
+            report.oldest_raw_age_days = oldest_hours / 24.0
+            report.retention_violation = (
+                report.oldest_raw_age_days > report.retention_limit_days
+            )
+
     return report
 
 
@@ -276,7 +354,14 @@ def format_health_report(report: HealthReport) -> str:
     lines.append("  Data Collection Health")
     lines.append(f"  Generated : {report.generated_at}")
 
-    status_label = "[STALE]" if report.is_stale else "[HEALTHY]"
+    # [STALE] keeps its original meaning (data too old); [UNHEALTHY] covers a
+    # failing lock or retention check when the data itself is still fresh.
+    if report.is_stale:
+        status_label = "[STALE]"
+    elif report.has_failures:
+        status_label = "[UNHEALTHY]"
+    else:
+        status_label = "[HEALTHY]"
     lines.append(f"  Status    : {status_label}")
     lines.append("")
 
@@ -297,6 +382,23 @@ def format_health_report(report: HealthReport) -> str:
     fc_age = _age_str(report.last_forecast_age_hours)
     lines.append(f"  Last forecast run: {fc_ts}  ({fc_age})")
     lines.append(f"  Item-level items : {report.item_forecast_count:,}")
+
+    if report.lock_age_hours is None:
+        lines.append("  Hourly lock      : none")
+    else:
+        lock_mark = " [STALE LOCK]" if report.lock_is_stale else ""
+        lines.append(
+            f"  Hourly lock      : {report.lock_age_hours:.1f}h old{lock_mark}"
+        )
+
+    if report.oldest_raw_age_days is None:
+        lines.append("  Oldest raw row   : none")
+    else:
+        ret_mark = " [RETENTION VIOLATION]" if report.retention_violation else ""
+        lines.append(
+            f"  Oldest raw row   : {report.oldest_raw_age_days:.1f}d old "
+            f"(limit {report.retention_limit_days}d){ret_mark}"
+        )
     lines.append("")
 
     # ── Per-realm detail ──────────────────────────────────────────────────────

@@ -25,13 +25,26 @@ format_health_report():
   - Output contains [STALE] when stale.
   - Output shows gap dates when gaps exist.
   - Output shows "none detected" when no gaps.
+
+Lock and retention checks (issue #5):
+  - Lock: skipped without a path, healthy when absent or fresh, stale past
+    the takeover threshold.  Thresholds are tested with wide margins, never
+    at the boundary (the pruner boundary test flaked in CI, issue #8).
+  - Retention: oldest observed_at row vs retention_days + 2 days of grace;
+    keyed on observed_at (the pruner's deletion criterion), not ingested_at.
+  - has_failures: any failing check flips it.
+  - Formatter surfaces [STALE LOCK], [RETENTION VIOLATION], and the
+    [UNHEALTHY] status for non-staleness failures.
 """
 
 from __future__ import annotations
 
 import itertools
+import os
 import sqlite3
+import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -118,6 +131,41 @@ def _insert_run(
         "(run_slug, pipeline_stage, status, started_at, config_snapshot) "
         "VALUES (?, ?, ?, ?, '{}')",
         (f"health-test-{next(_SLUG_COUNTER)}", stage, status, ts),
+    )
+    conn.commit()
+
+
+def _make_lock(tmp_path: Path, age_minutes: float = 0.0) -> Path:
+    """Create a lock file and back-date its mtime (the bat-test aging pattern)."""
+    lock = tmp_path / ".hourly.lock"
+    lock.write_text("test lock", encoding="ascii")
+    if age_minutes:
+        past = time.time() - age_minutes * 60.0
+        os.utime(lock, (past, past))
+    return lock
+
+
+def _insert_raw_days_ago(
+    conn,
+    observed_days_ago: float,
+    ingested_days_ago: float | None = None,
+    realm: str = "us",
+) -> None:
+    """Insert one raw row with independent observed_at / ingested_at ages.
+
+    The retention sentinel must key on observed_at (the pruner's deletion
+    criterion); a separate ingested_at lets tests prove that.
+    """
+    if ingested_days_ago is None:
+        ingested_days_ago = observed_days_ago
+    now = datetime.now(tz=UTC)
+    observed = (now - timedelta(days=observed_days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ingested = (now - timedelta(days=ingested_days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn.execute(
+        "INSERT INTO market_observations_raw "
+        "(item_id, realm_slug, observed_at, source, ingested_at) "
+        "VALUES (1, ?, ?, 'test', ?)",
+        (realm, observed, ingested),
     )
     conn.commit()
 
@@ -251,6 +299,117 @@ class TestCollectHealthReport:
         assert report.item_forecast_count == 2
 
 
+# ── Tests: hourly lock check (issue #5) ───────────────────────────────────────
+
+class TestLockCheck:
+    def test_no_lock_path_skips_check(self, conn):
+        report = collect_health_report(conn, ["us"])
+        assert report.lock_age_hours is None
+        assert report.lock_is_stale is False
+
+    def test_missing_lock_file_is_healthy(self, conn, tmp_path):
+        report = collect_health_report(
+            conn, ["us"], lock_path=tmp_path / ".hourly.lock"
+        )
+        assert report.lock_age_hours is None
+        assert report.lock_is_stale is False
+
+    def test_fresh_lock_not_stale(self, conn, tmp_path):
+        lock = _make_lock(tmp_path, age_minutes=60.0)
+        report = collect_health_report(conn, ["us"], lock_path=lock)
+        assert report.lock_age_hours == pytest.approx(1.0, abs=0.1)
+        assert report.lock_is_stale is False
+
+    def test_stale_lock_detected(self, conn, tmp_path):
+        lock = _make_lock(tmp_path, age_minutes=300.0)
+        report = collect_health_report(conn, ["us"], lock_path=lock)
+        assert report.lock_age_hours == pytest.approx(5.0, abs=0.1)
+        assert report.lock_is_stale is True
+
+    def test_lock_threshold_param_respected(self, conn, tmp_path):
+        # 60 minutes is stale against a 30-minute threshold
+        lock = _make_lock(tmp_path, age_minutes=60.0)
+        report = collect_health_report(
+            conn, ["us"], lock_path=lock, lock_stale_minutes=30.0
+        )
+        assert report.lock_is_stale is True
+        assert report.lock_stale_minutes == 30.0
+
+    def test_lock_check_never_modifies_lock(self, conn, tmp_path):
+        lock = _make_lock(tmp_path, age_minutes=300.0)
+        mtime_before = lock.stat().st_mtime
+        collect_health_report(conn, ["us"], lock_path=lock)
+        assert lock.exists()
+        assert lock.stat().st_mtime == mtime_before
+
+
+# ── Tests: retention sentinel (issue #5) ──────────────────────────────────────
+
+class TestRetentionSentinel:
+    def test_empty_table_no_violation(self, conn):
+        report = collect_health_report(conn, ["us"])
+        assert report.oldest_raw_age_days is None
+        assert report.retention_violation is False
+
+    def test_young_rows_no_violation(self, conn):
+        _insert_raw_days_ago(conn, observed_days_ago=10.0)
+        report = collect_health_report(conn, ["us"], retention_days=30)
+        assert report.oldest_raw_age_days == pytest.approx(10.0, abs=0.1)
+        assert report.retention_violation is False
+
+    def test_old_rows_violate(self, conn):
+        _insert_raw_days_ago(conn, observed_days_ago=40.0)
+        report = collect_health_report(conn, ["us"], retention_days=30)
+        assert report.oldest_raw_age_days == pytest.approx(40.0, abs=0.1)
+        assert report.retention_violation is True
+
+    def test_grace_window_honored(self, conn):
+        # 31 days is past retention_days=30 but inside the +2-day grace
+        _insert_raw_days_ago(conn, observed_days_ago=31.0)
+        report = collect_health_report(conn, ["us"], retention_days=30)
+        assert report.retention_violation is False
+        assert report.retention_limit_days == 32
+
+    def test_oldest_row_wins(self, conn):
+        _insert_raw_days_ago(conn, observed_days_ago=1.0)
+        _insert_raw_days_ago(conn, observed_days_ago=40.0)
+        report = collect_health_report(conn, ["us"], retention_days=30)
+        assert report.oldest_raw_age_days == pytest.approx(40.0, abs=0.1)
+        assert report.retention_violation is True
+
+    def test_keyed_on_observed_at_not_ingested_at(self, conn):
+        # Freshly ingested backfill of old data still violates: the pruner
+        # deletes on observed_at, so the sentinel must look at observed_at.
+        _insert_raw_days_ago(conn, observed_days_ago=40.0, ingested_days_ago=0.05)
+        report = collect_health_report(conn, ["us"], retention_days=30)
+        assert report.retention_violation is True
+
+    def test_retention_days_param_respected(self, conn):
+        _insert_raw_days_ago(conn, observed_days_ago=10.0)
+        report = collect_health_report(conn, ["us"], retention_days=7)
+        assert report.retention_limit_days == 9
+        assert report.retention_violation is True
+
+
+# ── Tests: has_failures ───────────────────────────────────────────────────────
+
+class TestHasFailures:
+    def test_false_when_all_checks_pass(self):
+        report = HealthReport(generated_at="2026-03-10T10:00:00Z")
+        assert report.has_failures is False
+
+    def test_each_flag_flips_it(self):
+        assert HealthReport(
+            generated_at="x", is_stale=True
+        ).has_failures is True
+        assert HealthReport(
+            generated_at="x", lock_is_stale=True
+        ).has_failures is True
+        assert HealthReport(
+            generated_at="x", retention_violation=True
+        ).has_failures is True
+
+
 # ── Tests: format_health_report ───────────────────────────────────────────────
 
 class TestFormatHealthReport:
@@ -307,3 +466,41 @@ class TestFormatHealthReport:
         report = self._base_report()
         output = format_health_report(report)
         assert "none detected" in output
+
+    def test_lock_and_retention_none_lines_when_clean(self):
+        output = format_health_report(self._base_report())
+        assert "Hourly lock      : none" in output
+        assert "Oldest raw row   : none" in output
+        assert "STALE LOCK" not in output
+        assert "RETENTION VIOLATION" not in output
+
+    def test_stale_lock_tag_shown(self):
+        report = self._base_report()
+        report.lock_age_hours = 5.2
+        report.lock_is_stale  = True
+        output = format_health_report(report)
+        assert "5.2h old [STALE LOCK]" in output
+
+    def test_fresh_lock_shown_without_tag(self):
+        report = self._base_report()
+        report.lock_age_hours = 0.5
+        output = format_health_report(report)
+        assert "0.5h old" in output
+        assert "STALE LOCK" not in output
+
+    def test_retention_violation_tag_with_limit(self):
+        report = self._base_report()
+        report.oldest_raw_age_days = 130.5
+        report.retention_violation = True
+        report.retention_limit_days = 32
+        output = format_health_report(report)
+        assert "130.5d old (limit 32d) [RETENTION VIOLATION]" in output
+
+    def test_unhealthy_status_for_lock_failure_with_fresh_data(self):
+        # is_stale=False but the lock check fails: status must not say HEALTHY
+        report = self._base_report(is_stale=False)
+        report.lock_age_hours = 6.0
+        report.lock_is_stale  = True
+        output = format_health_report(report)
+        assert "[UNHEALTHY]" in output
+        assert "[HEALTHY]" not in output
