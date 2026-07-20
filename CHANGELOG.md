@@ -5,6 +5,16 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.1] - 2026-07-19
+
+### Added
+- WoWForecaster-HealthCheck scheduled task: setup_tasks.bat now registers run_healthcheck.bat to fire every 6 hours at :45 (00:45/06:45/12:45/18:45), placed 29 minutes clear of the :16 hourly ingest so a health check never reads the database concurrently with ingestion, and finishing before the 07:00 daily task starts (issue #6)
+
+### Changed
+- All three scheduled tasks now run hidden via wscript.exe and run_silent.vbs, which waits for the batch and propagates its exit code, so Task Scheduler's Last Run Result stays truthful with no console flash (this registration change dates to v2.2.2 but was never committed)
+- The hourly task registration pins /ST to a :16 anchor, so re-running setup_tasks.bat can no longer silently move the capture phase (the :16 minute avoids the daily-task collision, samples away from Blizzard's top-of-hour snapshot refresh, and stays aligned with the cloud capture cron)
+- Re-running setup_tasks.bat preserves a task's Disabled state: schtasks /Create /F recreates tasks enabled, so the script queries each task's state first and re-disables it right after registration, failing loudly if the re-disable does not stick. An operator's decision to disable a task (WoWForecaster-Hourly stays disabled until the issue #1 runbook) survives setup re-runs
+
 ## [2.7.0] - 2026-07-19
 
 ### Added
