@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.7.1] - 2026-07-19
 
 ### Added
 - WoWForecaster-HealthCheck scheduled task: setup_tasks.bat now registers run_healthcheck.bat to fire every 6 hours at :45 (00:45/06:45/12:45/18:45), placed 29 minutes clear of the :16 hourly ingest so a health check never reads the database concurrently with ingestion, and finishing before the 07:00 daily task starts (issue #6)
