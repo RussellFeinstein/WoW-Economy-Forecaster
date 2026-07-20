@@ -335,7 +335,9 @@ wow-forecaster report-feature-importance [--realm SLUG] [--horizon 1d|7d|28d] \
                                          [--top-n N] [--importance-type gain|split] \
                                          [--export PATH]
 
-# DB-backed data collection health: coverage, gaps, freshness (exits 1 if stale)
+# DB-backed data collection health: coverage, gaps, freshness, plus a stale
+# hourly-lock check and a retention sentinel (oldest raw row vs the 30-day
+# ToS window). Exits 1 when any check fails.
 wow-forecaster check-data-health       [--realm SLUG] [--lookback-days 14] \
                                        [--stale-hours 4]
 ```

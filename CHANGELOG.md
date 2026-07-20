@@ -5,6 +5,14 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- check-data-health now detects the two failures behind the 96-day outage (issue #5). A stale-lock check stats data/db/.hourly.lock read-only and flags [STALE LOCK] when the lock is older than 180 minutes, the same threshold that triggers run_hourly.bat's takeover: a lock that old means the hourly pipeline is wedged or crashed mid-run. A retention sentinel reads the oldest market_observations_raw row by observed_at (the pruner's deletion criterion) and flags [RETENTION VIOLATION] when it is older than `[retention] raw_snapshot_days` plus 2 days of grace: rows that old mean the pruner has stopped enforcing the 30-day Blizzard API ToS window. Both surface in the health report (Hourly lock and Oldest raw row lines) with a new [UNHEALTHY] status label when a check fails while the data itself is still fresh
+
+### Changed
+- check-data-health now exits 1 on a stale hourly lock or a retention violation, not just on stale data. run_daily.bat's freshness gate and run_healthcheck.bat's alerting consume the exit code, so both inherit the new failure modes without any script change: a wedged lock or dead pruner now blocks the daily forecast and raises the health alert window
+
 ## [2.6.0] - 2026-07-19
 
 ### Added
