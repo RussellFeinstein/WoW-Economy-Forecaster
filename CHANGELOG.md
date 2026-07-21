@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.7.6] - 2026-07-21
 
 ### Changed
 - The M0 close-out list in docs/ROADMAP.md now carries #65 (rewrite the rollup UPSERT date predicates to half-open ranges), filed at the #61 close-out because the two-date upsert doubled per-run recomputes whose DATE() predicate cannot use an index; it is sequenced to land before the normalized table grows back to its 30-day steady state
