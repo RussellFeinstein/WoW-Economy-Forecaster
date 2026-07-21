@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- check-data-health no longer reads the entire raw observations table on every run (issue #59). Migration 0009 adds two indexes on market_observations_raw serving the retention sentinel and the last-ingest check, and the coverage queries were rewritten so the existing normalized-table index serves them (raw-column range comparison instead of a DATE() predicate, and one min/max aggregate per query so SQLite answers each with a single index probe). The pruner's retention deletes inherit the observed_at index for free
+
 ## [2.7.3] - 2026-07-21
 
 ### Changed

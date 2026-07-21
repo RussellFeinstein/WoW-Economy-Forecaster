@@ -143,20 +143,39 @@ def _collect_realm_stats(
     stats = RealmHealthStats(realm_slug=realm_slug)
 
     # ── Observation date range ────────────────────────────────────────────────
-    row = conn.execute(
+    # Two single-aggregate queries, DATE() outside the aggregate: SQLite's
+    # one-probe min/max optimization needs a bare column and exactly one
+    # MIN/MAX per query, and idx_obs_norm_realm_outlier_time then serves each
+    # via a single seek instead of a scan (issue #59). observed_at is
+    # zero-padded ISO-8601 text, so the lexicographic MIN/MAX is the
+    # chronological one and DATE(MIN(x)) == MIN(DATE(x)).
+    first_row = conn.execute(
         """
-        SELECT MIN(DATE(observed_at)) AS first,
-               MAX(DATE(observed_at)) AS last
+        SELECT DATE(MIN(observed_at)) AS d
         FROM market_observations_normalized
         WHERE realm_slug = ? AND is_outlier = 0
         """,
         (realm_slug,),
     ).fetchone()
-    if row:
-        stats.first_obs_date = row["first"]
-        stats.last_obs_date  = row["last"]
+    last_row = conn.execute(
+        """
+        SELECT DATE(MAX(observed_at)) AS d
+        FROM market_observations_normalized
+        WHERE realm_slug = ? AND is_outlier = 0
+        """,
+        (realm_slug,),
+    ).fetchone()
+    if first_row:
+        stats.first_obs_date = first_row["d"]
+    if last_row:
+        stats.last_obs_date = last_row["d"]
 
     # ── Days with data in lookback window ─────────────────────────────────────
+    # The predicate compares the raw column, not DATE(observed_at): a bare
+    # "YYYY-MM-DD" cutoff sorts before every timestamp on that date and after
+    # every timestamp on earlier dates (the zero-padded 10-char date prefix
+    # dominates the comparison), so the row set is identical and
+    # idx_obs_norm_realm_outlier_time can serve the range (issue #59).
     cutoff = (as_of - timedelta(days=lookback_days)).isoformat()
     rows_with_data = conn.execute(
         """
@@ -164,7 +183,7 @@ def _collect_realm_stats(
         FROM market_observations_normalized
         WHERE realm_slug  = ?
           AND is_outlier  = 0
-          AND DATE(observed_at) >= ?
+          AND observed_at >= ?
         ORDER BY obs_date
         """,
         (realm_slug, cutoff),

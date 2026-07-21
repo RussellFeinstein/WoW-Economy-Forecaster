@@ -281,6 +281,25 @@ def migration_0008_add_rollup_tables(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def migration_0009_add_health_check_indexes(conn: sqlite3.Connection) -> None:
+    """Add observed_at and (realm_slug, ingested_at) indexes on market_observations_raw.
+
+    Serves the check-data-health retention sentinel (MIN(observed_at)) and
+    last-ingest check (MAX(ingested_at) per realm), which full-scanned the raw
+    table on every run before these existed (issue #59). The pruner's
+    observed_at range deletes use the first index as well. Re-executes the
+    whole raw-index DDL constant; IF NOT EXISTS makes the pre-existing
+    indexes a no-op.
+    """
+    from wow_forecaster.db.schema import _DDL_MARKET_OBS_RAW_INDEXES
+
+    for statement in _DDL_MARKET_OBS_RAW_INDEXES.strip().split(";"):
+        stmt = statement.strip()
+        if stmt:
+            conn.execute(stmt)
+    conn.commit()
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 # Add new migrations here. They will run once, in order.
 
@@ -316,6 +335,10 @@ MIGRATIONS: dict[str, tuple[MigrationFn, str]] = {
     "0008_rollup_tables": (
         migration_0008_add_rollup_tables,
         "Add daily_rollup_archetype and daily_rollup_item tables",
+    ),
+    "0009_health_check_indexes": (
+        migration_0009_add_health_check_indexes,
+        "Add observed_at and (realm_slug, ingested_at) indexes on market_observations_raw",
     ),
 }
 
