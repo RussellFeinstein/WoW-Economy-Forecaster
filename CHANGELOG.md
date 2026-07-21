@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.3] - 2026-07-21
+
+### Changed
+- Retired the ACTIVE OPERATIONAL HAZARD section in CLAUDE.md and the pruner risk row in ROADMAP.md: the issue #1 restore runbook executed on 2026-07-20/21 and hourly ingestion is live again after 105 days (restored 2026-07-21 02:43Z, database rebuilt from 78 GB to 105 MB, rollup history certified and expanded from 22 to 34 dates, all three scheduled tasks re-enabled and observed green). CLAUDE.md now carries a short operational-state note, the machine-caution rule for heavy jobs on this hardware, and the recovery timeline; ROADMAP.md marks the restore done and adds #61 (orchestrator rollup UTC date anchor, found during the restore) to the M0 close-out list
+
 ## [2.7.2] - 2026-07-20
 
 ### Added
