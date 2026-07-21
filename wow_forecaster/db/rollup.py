@@ -6,7 +6,8 @@ Two rollup tables cache daily aggregates from ``market_observations_normalized``
 - ``daily_rollup_archetype``: grain (archetype_id, realm_slug, obs_date)
 - ``daily_rollup_item``:      grain (item_id, realm_slug, obs_date)
 
-After each hourly ingest, only today's rows are re-aggregated via UPSERT.
+After each hourly ingest, the previous and current UTC dates are re-aggregated
+via UPSERT (two dates so post-midnight runs complete the prior day's tail).
 All downstream consumers (daily_agg, drift, viz, margins, ...) read from the
 rollup instead of scanning the full 110M-row normalized table.
 

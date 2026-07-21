@@ -13,10 +13,14 @@ What we test
 8. Dry-run mode does not modify DB.
 9. Monitoring tables are populated after a successful run.
 10. HourlyOrchestrator respects check_drift=False flag.
+11. Rollup step anchors on the UTC clock, upserts the previous and current UTC
+    dates per realm, and stays non-fatal on failure (issue #61).
 """
 
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 from wow_forecaster.config import AppConfig, RealmsConfig
@@ -237,6 +241,75 @@ class TestDriftCheckFailure:
         # Drift failed but ingest+normalize succeeded -> partial or success
         assert result.status in ("partial", "success")
         assert result.drift_results == {}
+
+
+# ── Rollup step (issue #61) ───────────────────────────────────────────────────
+
+class TestRollupStep:
+    """Step 3.5 anchors on the UTC clock and covers the UTC-midnight seam."""
+
+    def _run(self, realms, now=None, upsert=None):
+        """Run the orchestrator with every other step mocked and the rollup
+        upsert replaced by ``upsert`` (default: MagicMock returning (1, 1))."""
+        config = _make_config(realms)
+        orch   = HourlyOrchestrator(config=config, db_path=":memory:")
+        if upsert is None:
+            upsert = MagicMock(return_value=(1, 1))
+
+        def fake_ingest(realm_slug, run_id):
+            return RealmIngestionResult(
+                realm_slug=realm_slug, success=True, rows_written=1
+            )
+
+        with (
+            patch.object(orch, "_ensure_schema"),
+            patch.object(orch, "_run_ingest", side_effect=fake_ingest),
+            patch.object(orch, "_run_normalize", return_value=(5, True, None)),
+            patch.object(orch, "_run_drift_and_provenance",
+                         return_value=(None, None)),
+            patch.object(orch, "_persist_run_start", return_value=1),
+            patch.object(orch, "_persist_run_finish"),
+            patch("wow_forecaster.db.rollup.upsert_rollups_for_date", upsert),
+        ):
+            result = orch.run(realms, now=now)
+        return result, upsert
+
+    def test_incident_clock_targets_both_utc_dates(self):
+        """The 2026-07-21 02:43Z restore run (22:43 EDT locally) must upsert
+        the previous and current UTC dates, regardless of the machine's local
+        date. The old local-date anchor produced a single wrong-date call."""
+        result, upsert = self._run(
+            ["us"], now=datetime(2026, 7, 21, 2, 43, tzinfo=UTC)
+        )
+        calls = [c.args[1:] for c in upsert.call_args_list]
+        assert calls == [("us", "2026-07-20"), ("us", "2026-07-21")]
+        assert result.status == "success"
+
+    def test_both_dates_upserted_per_realm(self):
+        """Each realm gets both target dates, previous date first."""
+        _, upsert = self._run(
+            ["r1", "r2"], now=datetime(2026, 3, 15, 12, 0, tzinfo=UTC)
+        )
+        calls = [c.args[1:] for c in upsert.call_args_list]
+        assert calls == [
+            ("r1", "2026-03-14"), ("r1", "2026-03-15"),
+            ("r2", "2026-03-14"), ("r2", "2026-03-15"),
+        ]
+
+    def test_default_clock_upserts_two_dates(self):
+        """Without an injected clock the step still targets two dates."""
+        _, upsert = self._run(["us"])
+        assert upsert.call_count == 2
+
+    def test_upsert_failure_is_non_fatal(self, caplog):
+        """A rollup failure is logged as a warning and never fails the run."""
+        failing = MagicMock(side_effect=RuntimeError("rollup exploded"))
+        with caplog.at_level(
+            logging.WARNING, logger="wow_forecaster.pipeline.orchestrator"
+        ):
+            result, _ = self._run(["us"], upsert=failing)
+        assert result.status == "success"
+        assert "Rollup step failed (non-fatal)" in caplog.text
 
 
 # ── check_drift=False flag ────────────────────────────────────────────────────

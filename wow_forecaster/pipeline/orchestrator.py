@@ -7,6 +7,8 @@ deterministic, testable sequence:
   Step 1 — Pre-flight:    Verify DB accessible, schema current, log start.
   Step 2 — Ingest:        Call IngestStage per realm (failures isolated per-realm).
   Step 3 — Normalize:     Call NormalizeStage once for all unprocessed raw obs.
+  Step 3.5 - Rollup:      Upsert daily rollups for the previous and current UTC
+                          dates (non-fatal; covers the UTC-midnight seam).
   Step 4 — Drift check:   Run DriftChecker per realm on fresh normalized data.
   Step 5 — Adaptive:      Map drift level to uncertainty multiplier + retrain flag.
             (Steps 4–5 are interleaved per-realm for fresh drift state.)
@@ -62,7 +64,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -146,6 +148,7 @@ class HourlyOrchestrator:
         realm_slugs: list[str] | None = None,
         check_drift: bool   = True,
         apply_adaptive: bool = True,
+        now: datetime | None = None,
     ) -> OrchestratorResult:
         """Execute the full hourly refresh pipeline.
 
@@ -153,6 +156,9 @@ class HourlyOrchestrator:
             realm_slugs:    Realms to process.  Defaults to config.realms.defaults.
             check_drift:    Whether to run drift detection after normalize.
             apply_adaptive: Whether to compute adaptive policy from drift.
+            now:            UTC-aware clock anchoring the rollup step's target
+                            dates (default: current UTC time).  Injectable so
+                            tests are deterministic in any timezone.
 
         Returns:
             OrchestratorResult summarising all steps.
@@ -196,23 +202,31 @@ class HourlyOrchestrator:
 
         # ── Step 3.5: Rollup update (non-fatal) ─────────────────────────────
         try:
-            from datetime import date as _date
-
             from wow_forecaster.db.connection import get_connection
             from wow_forecaster.db.rollup import upsert_rollups_for_date
 
-            today_str = _date.today().isoformat()
+            if now is None:
+                now = datetime.now(tz=UTC)
+            today_utc = now.date()
             with get_connection(
                 self.db_path,
                 wal_mode=self.config.database.wal_mode,
                 busy_timeout_ms=self.config.database.busy_timeout_ms,
             ) as conn:
                 for realm in realms:
-                    arch_n, item_n = upsert_rollups_for_date(conn, realm, today_str)
-                    logger.info(
-                        "Rollup updated for realm=%s date=%s: arch=%d item=%d",
-                        realm, today_str, arch_n, item_n,
-                    )
+                    # Both the previous and current UTC dates: observations from
+                    # the tail of a UTC day (after the last pre-midnight run)
+                    # only arrive in runs that fire after UTC midnight, so the
+                    # previous-date upsert is what completes each day. Re-running
+                    # a finished date is an idempotent 0-delta upsert.
+                    for d in (today_utc - timedelta(days=1), today_utc):
+                        arch_n, item_n = upsert_rollups_for_date(
+                            conn, realm, d.isoformat()
+                        )
+                        logger.info(
+                            "Rollup updated for realm=%s date=%s: arch=%d item=%d",
+                            realm, d.isoformat(), arch_n, item_n,
+                        )
         except Exception as exc:
             logger.warning("Rollup step failed (non-fatal): %s", exc, exc_info=True)
 

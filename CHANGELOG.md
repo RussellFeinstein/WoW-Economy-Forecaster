@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- The hourly rollup step now anchors on the UTC date instead of the machine's local date, and upserts both the previous and current UTC dates each run (issue #61, found during the #1 restore when a 22:43 EDT run wrote 237,983 UTC-stamped rows but zero rollup rows). Evening runs now update the current day's rollups immediately instead of lagging up to ~4 hours after UTC midnight, and the final minutes of each UTC day no longer depend on the machine surviving to the next local day's self-healing run. The orchestrator's run() accepts an injectable clock so tests can pin the incident scenario in any timezone
+
 ## [2.7.4] - 2026-07-21
 
 ### Changed
