@@ -108,6 +108,10 @@ CREATE INDEX IF NOT EXISTS idx_obs_raw_item_time
 CREATE INDEX IF NOT EXISTS idx_obs_raw_unprocessed
     ON market_observations_raw(is_processed)
     WHERE is_processed = 0;
+CREATE INDEX IF NOT EXISTS idx_obs_raw_observed
+    ON market_observations_raw(observed_at);
+CREATE INDEX IF NOT EXISTS idx_obs_raw_realm_ingested
+    ON market_observations_raw(realm_slug, ingested_at);
 """
 
 _DDL_MARKET_OBS_NORMALIZED = """

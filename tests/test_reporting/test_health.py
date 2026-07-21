@@ -43,7 +43,7 @@ import itertools
 import os
 import sqlite3
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -297,6 +297,58 @@ class TestCollectHealthReport:
         _insert_item_forecast(conn, 100)  # duplicate item_id
         report = collect_health_report(conn, ["us"])
         assert report.item_forecast_count == 2
+
+
+# ── Tests: coverage window boundary (issue #59) ───────────────────────────────
+
+class TestCoverageWindowBoundary:
+    """Pin the observed_at range predicate to DATE()-comparison semantics.
+
+    Issue #59 rewrote the coverage query's DATE(observed_at) >= cutoff
+    predicate as observed_at >= cutoff so the realm/outlier/time index can
+    serve the range. A bare "YYYY-MM-DD" cutoff sorts before every timestamp
+    on that date and after every timestamp on earlier dates, so the row sets
+    must stay identical; these tests hold the boundary in place.
+    """
+
+    AS_OF = date(2026, 7, 21)  # lookback 14 puts the cutoff at 2026-07-07
+
+    def _insert_at(self, conn, ts: str) -> None:
+        conn.execute(
+            "INSERT INTO market_observations_normalized "
+            "(obs_id, item_id, realm_slug, observed_at, price_gold) "
+            "VALUES (1, 1, 'us', ?, 10.0)",
+            (ts,),
+        )
+        conn.commit()
+
+    def test_midnight_of_cutoff_date_counts(self, conn):
+        self._insert_at(conn, "2026-07-07T00:00:00Z")
+        report = collect_health_report(
+            conn, ["us"], lookback_days=14, as_of=self.AS_OF
+        )
+        assert report.realms[0].days_with_data == 1
+
+    def test_evening_before_cutoff_excluded(self, conn):
+        self._insert_at(conn, "2026-07-06T23:59:59Z")
+        report = collect_health_report(
+            conn, ["us"], lookback_days=14, as_of=self.AS_OF
+        )
+        assert report.realms[0].days_with_data == 0
+
+    def test_live_timestamp_format_counts(self, conn):
+        # The ingest pipeline writes microseconds plus a "+00:00" offset; the
+        # raw string comparison and the DATE() projection must treat it the
+        # same as the Z-suffixed fixture format.
+        self._insert_at(conn, "2026-07-15T12:00:00.123456+00:00")
+        report = collect_health_report(
+            conn, ["us"], lookback_days=14, as_of=self.AS_OF
+        )
+        stats = report.realms[0]
+        assert stats.days_with_data == 1
+        assert "2026-07-15" not in stats.gap_dates
+        assert stats.first_obs_date == "2026-07-15"
+        assert stats.last_obs_date == "2026-07-15"
 
 
 # ── Tests: hourly lock check (issue #5) ───────────────────────────────────────

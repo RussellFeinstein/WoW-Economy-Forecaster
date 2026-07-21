@@ -43,6 +43,8 @@ class TestApplySchema:
         indexes = get_existing_indexes(in_memory_db)
         expected_indexes = [
             "idx_obs_raw_item_time",
+            "idx_obs_raw_observed",
+            "idx_obs_raw_realm_ingested",
             "idx_obs_norm_item_time",
             "idx_events_type_date",
             "idx_forecast_archetype_date",
