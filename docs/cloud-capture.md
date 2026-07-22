@@ -93,8 +93,8 @@ The outage in #1 happened because a failure path exited 0. Every failure path he
 
 - A fetch, sanity, or upload failure exits nonzero, the run shows red, and GitHub emails the failure to the last committer of the workflow's cron line.
 - A sanity check refuses snapshots with implausibly few records (default minimum 50,000 against a normal ~314,000), so an API brownout cannot quietly store an empty hour.
-- After each upload, the run lists the trailing two day-prefixes and fails (exit 3, snapshot already uploaded) when fewer than 20 objects landed in the trailing 24 hours. A silent cron skip therefore surfaces within an hour, on the next run that does fire.
-- Residual blind spots, accepted: an outage of 48+ hours empties both listed prefixes and looks like bootstrap on resume (the failed runs during it already emailed), and an Actions-platform outage stops the alerting along with the capture. Once #43 lands, the local health check (#5) adds an independent second check: newest-cloud-object age, measured from the desktop.
+- After each upload, the run lists the trailing three day-prefixes (today, yesterday, day before yesterday) and fails (exit 3, snapshot already uploaded) when fewer than 20 objects landed in the trailing 24 hours. A silent cron skip therefore surfaces within an hour, on the next run that does fire. The third prefix exists so the just-after-midnight window still sees objects older than 24 hours; with two prefixes that window misread sparse days as bootstrap (#68).
+- Residual blind spots, accepted: an outage of 48+ hours empties all listed prefixes and still looks like bootstrap on resume (the failed runs during it already emailed), and an Actions-platform outage stops the alerting along with the capture. Once #43 lands, the local health check (#5) adds an independent second check: newest-cloud-object age, measured from the desktop.
 
 ## Activation checklist (manual, one time)
 

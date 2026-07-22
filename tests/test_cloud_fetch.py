@@ -172,15 +172,43 @@ def test_gap_guard_ignores_unparseable_keys():
     assert not ok  # one old object, zero recent, garbage not counted
 
 
-def test_list_recent_keys_queries_today_and_yesterday():
+def test_list_recent_keys_queries_three_day_prefixes():
     now = datetime.now(UTC)
     stub = StubS3()
     cloud_fetch.list_recent_keys(stub, "test-bucket", now)
     expected = [
+        f"blizzard_api/{(now - timedelta(days=2)).strftime('%Y/%m/%d')}/",
         f"blizzard_api/{(now - timedelta(days=1)).strftime('%Y/%m/%d')}/",
         f"blizzard_api/{now.strftime('%Y/%m/%d')}/",
     ]
     assert stub.list_prefixes == expected
+
+
+def test_gap_guard_midnight_old_objects_arm_the_guard():
+    """Regression for #68: the 2026-07-22 00:10Z false pass.
+
+    Just after UTC midnight every object older than 24h lives under the
+    day-before-yesterday prefix. The two-prefix listing missed them, ``older``
+    read 0, and a gappy day passed as bootstrap. With three prefixes the old
+    objects are listed, bootstrap does not fire, and the sparse day trips.
+    """
+    midnight_now = datetime(2026, 7, 22, 0, 10, 0, tzinfo=UTC)
+    sparse_recent = [
+        cloud_fetch.build_object_key("us", midnight_now - timedelta(hours=h))
+        for h in [1.0, 3.0, 5.0, 7.0, 9.0, 11.0, 13.0, 15.0, 17.0, 19.0, 21.0, 23.0]
+    ]
+    older_day_before_yesterday = [
+        cloud_fetch.build_object_key("us", midnight_now - timedelta(hours=h))
+        for h in [27.0, 28.0, 29.0]
+    ]
+    stub = StubS3(keys=sparse_recent + older_day_before_yesterday)
+    listed = cloud_fetch.list_recent_keys(stub, "test-bucket", midnight_now)
+    assert set(older_day_before_yesterday) <= set(listed)
+
+    ok, detail = cloud_fetch.evaluate_gap_guard(listed, midnight_now)
+    assert not ok
+    assert "bootstrap" not in detail
+    assert "hours are being missed" in detail
 
 
 # ── Retry helper ───────────────────────────────────────────────────────────────

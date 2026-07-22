@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.8] - 2026-07-22
+
+### Fixed
+- The cloud-capture gap guard no longer has a false-pass blind spot just after UTC midnight (issue #68): the bucket listing now covers three day-prefixes (today, yesterday, day before yesterday), so objects older than the 24-hour cutoff are always visible and the bootstrap rule only fires on a genuinely empty history. Before this, the window from midnight until yesterday's earliest object crossed the 24-hour boundary read sparse days as bootstrap, which is how the 2026-07-22 00:10Z run passed on a day the two prior runs had failed
+
 ## [2.7.7] - 2026-07-22
 
 ### Changed
