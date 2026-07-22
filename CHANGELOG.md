@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.7.7] - 2026-07-22
 
 ### Changed
 - The M0.5 section and work order in docs/ROADMAP.md now carry #67 (GitHub drops most hourly cloud-capture cron firings, 11 of 24 on the first scheduled day, so the schedule needs densifying and the gap-guard metric should count distinct hours covered) and #68 (the gap guard has a false-pass blind spot just after UTC midnight), both found while diagnosing the first gap-guard trips; they precede #43 in the M0.5 order
