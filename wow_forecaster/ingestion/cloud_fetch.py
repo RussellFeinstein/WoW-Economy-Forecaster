@@ -148,9 +148,16 @@ def make_s3_client(endpoint: str, region_name: str = "auto") -> Any:
 
 
 def list_recent_keys(s3: Any, bucket: str, now: datetime) -> list[str]:
-    """List object keys under the today and yesterday day-prefixes."""
+    """List object keys under the today, yesterday, and day-before-yesterday prefixes.
+
+    Three prefixes keep the listing reaching past the guard's 24-hour cutoff
+    even just after UTC midnight, when every object older than 24 hours lives
+    under the day-before-yesterday prefix. With two prefixes the guard's
+    ``older`` count read 0 in that window and the bootstrap rule fired on days
+    that genuinely had gaps (issue #68).
+    """
     keys: list[str] = []
-    for day in (now - timedelta(days=1), now):
+    for day in (now - timedelta(days=2), now - timedelta(days=1), now):
         prefix = f"blizzard_api/{day.strftime('%Y/%m/%d')}/"
         resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
         keys.extend(obj["Key"] for obj in resp.get("Contents", []))
