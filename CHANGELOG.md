@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.9] - 2026-07-22
+
+### Fixed
+- Both rollup UPSERTs now compare observed_at as a raw column against a half-open date range instead of DATE(observed_at) = ?, so idx_obs_norm_realm_outlier_time serves them with an index seek (issue #65). The old expression predicate forced a scan of every normalized row for the realm on each hourly run (2 dates x 2 tables since v2.7.5), which was cheap on the freshly rebuilt table but would have become the hottest DATE() site in the codebase as the table regrows toward its 30-day steady state. Query-plan tests pin the observed_at seek terms and equivalence tests assert identical rollup rows against the legacy form on edge timestamps
+
 ## [2.7.8] - 2026-07-22
 
 ### Fixed
