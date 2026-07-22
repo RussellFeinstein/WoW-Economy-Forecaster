@@ -5,6 +5,12 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] - 2026-07-22
+
+### Changed
+- The cloud snapshot cron now fires three times per hour (:16/:36/:56) because GitHub drops most single hourly firings outright, 11 of 24 on the schedule's first day (issue #67). Any one firing per hour covers that hour; duplicate snapshots coexist under timestamped keys and the 30-day lifecycle rule bounds storage at roughly 4 GB worst case, inside the R2 free tier
+- The gap guard now counts distinct UTC capture hours covered in the trailing 24 hours (floor 20) instead of raw objects, so the guard keeps meaning "hours are being missed" at any cron density: at three firings per hour a gappy day can still hold more than 20 objects. The override env var is now CLOUD_FETCH_GUARD_MIN_HOURS (was CLOUD_FETCH_GUARD_MIN_OBJECTS; set nowhere outside the module and its tests)
+
 ## [2.7.9] - 2026-07-22
 
 ### Fixed

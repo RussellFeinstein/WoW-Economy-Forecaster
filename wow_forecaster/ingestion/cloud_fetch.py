@@ -24,7 +24,7 @@ Environment (set as GitHub Actions secrets; values are never logged):
   SNAPSHOT_S3_REGION                           — optional signing region (default "auto")
   BLIZZARD_REGION                              — optional WoW region (default "us")
   CLOUD_FETCH_MIN_RECORDS                      — optional sanity floor override
-  CLOUD_FETCH_GUARD_MIN_OBJECTS                — optional gap-guard floor override
+  CLOUD_FETCH_GUARD_MIN_HOURS                  — optional gap-guard floor override
 
 Exit codes:
   0 — snapshot uploaded and the trailing 24 hours look healthy
@@ -64,9 +64,11 @@ REQUIRED_ENV = (
 # Far fewer means the API served a brownout or partial payload; refuse to store it.
 MIN_RECORDS_DEFAULT = 50_000
 
-# Trailing-24h object count below which the gap guard trips. Actions cron jitter
-# and the occasional skipped run leave 21-24 objects in a healthy day.
-GUARD_MIN_OBJECTS_DEFAULT = 20
+# Distinct UTC hours covered in the trailing 24h below which the gap guard
+# trips. Counting hours instead of objects keeps the guard meaning "hours are
+# being missed" at any cron density: the 3x/hour schedule (#67) can leave ~72
+# objects on a day that still misses a third of its hours.
+GUARD_MIN_HOURS_DEFAULT = 20
 
 _KEY_TS_RE = re.compile(r"_(\d{8}T\d{6}Z)\.json\.gz$")
 
@@ -113,25 +115,35 @@ def parse_key_timestamp(key: str) -> datetime | None:
 def evaluate_gap_guard(
     keys: list[str],
     now: datetime,
-    min_objects: int = GUARD_MIN_OBJECTS_DEFAULT,
+    min_hours: int = GUARD_MIN_HOURS_DEFAULT,
 ) -> tuple[bool, str]:
     """Decide whether the trailing 24 hours of captures look healthy.
 
-    Returns ``(ok, detail)``. Bootstrap rule: when no listed object is older
-    than 24 hours, a low count is expected (first day of operation, or a
-    resume after a 48h+ outage whose failed runs already alerted) and passes.
+    The metric is distinct UTC hours covered in the trailing 24 hours, so
+    duplicate captures within an hour (the 3x/hour cron) never mask missed
+    hours. Returns ``(ok, detail)``. Bootstrap rule: when no listed object is
+    older than 24 hours, low coverage is expected (first day of operation, or
+    a resume after a 48h+ outage whose failed runs already alerted) and passes.
     """
     stamps = [ts for ts in (parse_key_timestamp(k) for k in keys) if ts is not None]
     cutoff = now - timedelta(hours=24)
-    recent = sum(1 for ts in stamps if ts >= cutoff)
+    hours_covered = len({
+        ts.replace(minute=0, second=0, microsecond=0) for ts in stamps if ts >= cutoff
+    })
     older = sum(1 for ts in stamps if ts < cutoff)
-    if recent >= min_objects:
-        return True, f"{recent} objects in the trailing 24h (minimum {min_objects})"
+    if hours_covered >= min_hours:
+        return True, (
+            f"{hours_covered} distinct hours covered in the trailing 24h "
+            f"(minimum {min_hours})"
+        )
     if older == 0:
-        return True, f"bootstrap: {recent} objects in the trailing 24h, none older"
+        return True, (
+            f"bootstrap: {hours_covered} distinct hours covered in the "
+            "trailing 24h, none older"
+        )
     return False, (
-        f"only {recent} objects in the trailing 24h (minimum {min_objects}); "
-        "hours are being missed"
+        f"only {hours_covered} distinct hours covered in the trailing 24h "
+        f"(minimum {min_hours}); hours are being missed"
     )
 
 
@@ -193,8 +205,8 @@ def main() -> int:
 
     region = os.environ.get("BLIZZARD_REGION", "us")
     min_records = int(os.environ.get("CLOUD_FETCH_MIN_RECORDS", str(MIN_RECORDS_DEFAULT)))
-    min_objects = int(
-        os.environ.get("CLOUD_FETCH_GUARD_MIN_OBJECTS", str(GUARD_MIN_OBJECTS_DEFAULT))
+    min_hours = int(
+        os.environ.get("CLOUD_FETCH_GUARD_MIN_HOURS", str(GUARD_MIN_HOURS_DEFAULT))
     )
     endpoint = os.environ["SNAPSHOT_S3_ENDPOINT"]
     bucket = os.environ["SNAPSHOT_S3_BUCKET"]
@@ -265,7 +277,7 @@ def main() -> int:
     except Exception as exc:
         logger.error("Snapshot uploaded, but the gap-guard listing failed: %s", exc)
         return 3
-    ok, detail = evaluate_gap_guard(keys, now, min_objects)
+    ok, detail = evaluate_gap_guard(keys, now, min_hours)
     if not ok:
         logger.error("Snapshot uploaded, but the gap guard tripped: %s", detail)
         return 3

@@ -442,7 +442,9 @@ Hourly capture that does not depend on the desktop being on. A scheduled workflo
 ([.github/workflows/cloud-snapshot.yml](.github/workflows/cloud-snapshot.yml)) fetches
 the commodities snapshot, gzips it (~59 MB raw -> ~2.2 MiB), and uploads it to a private
 S3-compatible bucket (Cloudflare R2) whose 30-day lifecycle rule enforces the Blizzard
-API ToS deletion window. Design record, measured sizing, and failure modes:
+API ToS deletion window. The cron fires three times per hour because GitHub drops
+individual firings under load; any one firing covers its hour, and duplicates are
+harmless timestamped objects inside the lifecycle window. Design record, measured sizing, and failure modes:
 [docs/cloud-capture.md](docs/cloud-capture.md).
 
 One-time setup (repository owner):
@@ -456,8 +458,9 @@ One-time setup (repository owner):
    (`gh workflow enable "Cloud snapshot capture"` or the Actions tab), trigger the
    first run by hand (Run workflow), and confirm a ~2.2 MiB object lands in the bucket.
 
-A failed run emails the repository owner; a healthy run also verifies the trailing
-24 hours of objects and fails loudly if hours are missing. Local catch-up ingestion
+A failed run emails the repository owner; a healthy run also verifies that the
+trailing 24 hours cover at least 20 distinct capture hours and fails loudly when
+hours are being missed. Local catch-up ingestion
 of the cloud backlog is tracked as issue #43 (`sync-snapshots`).
 
 ---
