@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- .gitignore now covers the dated snapshot layout and the full outputs pile (issue #9): the three data/raw/snapshots rules widen to **/ so blizzard_api/YYYY/MM/DD files match, data/processed and data/outputs gain json/csv rules, and the charts, model_artifacts, and backups directories are ignored wholesale. 570 untracked local artifacts drop out of git status; the three tracked .gitkeep placeholders are unaffected. Contrary to the issue body's assumption there was nothing to git rm --cached: only .gitkeep files were ever tracked under data/outputs
+
 ## [2.8.0] - 2026-07-22
 
 ### Changed
