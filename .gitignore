@@ -21,14 +21,22 @@ ENV/
 *.env.local
 
 # Data files (local only - tracked via .gitkeep)
-data/raw/snapshots/*.parquet
-data/raw/snapshots/*.json
-data/raw/snapshots/*.csv
+# Snapshot rules use **/ because sources write dated subdirectories
+# (blizzard_api/YYYY/MM/DD/...); a single * misses them (issue #9).
+data/raw/snapshots/**/*.parquet
+data/raw/snapshots/**/*.json
+data/raw/snapshots/**/*.csv
 data/raw/events/*.csv
 data/raw/events/*.json
 data/processed/**/*.parquet
+data/processed/**/*.json
+data/processed/**/*.csv
 data/outputs/**/*.parquet
 data/outputs/**/*.json
+data/outputs/**/*.csv
+data/outputs/charts/
+data/outputs/model_artifacts/
+data/outputs/backups/
 data/db/*.db
 data/db/*.db-wal
 data/db/*.db-shm
