@@ -436,6 +436,11 @@ the alert. Its exit code mirrors check-data-health, so Task Scheduler's Last
 Run Result doubles as a durable alert surface. setup_tasks.bat registers it as
 the WoWForecaster-HealthCheck task.
 
+These guards all trace back to one incident: a leaked lock file silenced
+ingestion for 96 days in 2026 while every scheduled run reported success. The
+full account, root cause chain, and fix set are in
+[docs/postmortem-2026-04-lock-outage.md](docs/postmortem-2026-04-lock-outage.md).
+
 ### Cloud Snapshot Capture (GitHub Actions)
 
 Hourly capture that does not depend on the desktop being on. A scheduled workflow

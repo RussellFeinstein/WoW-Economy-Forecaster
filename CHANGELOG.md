@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- docs/postmortem-2026-04-lock-outage.md (issue #2): the full account of the 96-day silent ingestion outage. Timeline from the 2026-04-15 lock leak through the 2026-07-21 restore, the four-failure root cause chain (no lock staleness handling, exit-0 skip path, unscheduled health check, date spine clamping to frozen data), data impact (2026-04-08..07-20 hourly data lost, 12 of 18 rollup dates recovered, ~90 days of frozen-feature forecasts now partially measured at 2,456g/2,077g day-one MAE), the day-one #11 verification results, and the fix set. Linked from the README health-check section and the roadmap; the roadmap work order records #2 and the #11 day-one pass as done
+
 ## [2.8.1] - 2026-07-22
 
 ### Fixed
