@@ -8,10 +8,14 @@ name: Cloud snapshot capture
 
 on:
   schedule:
-    # :16 past each hour, matching the local Task Scheduler tradition. Actions
-    # cron is best effort: expect minutes of jitter and occasional skipped runs.
-    # The in-run gap guard turns silent skips into loud failures (exit 3).
-    - cron: "16 * * * *"
+    # Three firings per hour. Actions cron is best effort, and in practice
+    # GitHub drops most firings outright rather than jittering them (11 of 24
+    # fired on 2026-07-21, spaced 2-3 hours apart; issue #67). Redundancy is
+    # the available lever: any one firing per hour covers that hour, duplicate
+    # snapshots coexist under timestamped keys, and the 30-day lifecycle rule
+    # bounds storage. The in-run gap guard counts distinct hours covered and
+    # turns silent skips into loud failures (exit 3).
+    - cron: "16,36,56 * * * *"
   workflow_dispatch:
 
 permissions:

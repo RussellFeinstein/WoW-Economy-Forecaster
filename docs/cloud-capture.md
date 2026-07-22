@@ -30,7 +30,7 @@ The repo is public, so Actions minutes on standard runners are free. The job nee
 
 Accepted caveats, with mitigations under Failure visibility below:
 
-- Cron is best effort: runs typically start minutes late, and occasional runs are skipped entirely under platform load.
+- Cron is best effort, and in practice GitHub drops most individual firings rather than delaying them: 11 of 24 hourly firings ran on 2026-07-21, spaced 2-3 hours apart (#67). The mitigation is redundancy: the schedule fires at :16/:36/:56 so any one firing per hour covers that hour. Duplicate snapshots within an hour coexist under timestamped keys and stay inside the lifecycle window (worst case about 72 objects/day x ~1.9 MB x 30 days, roughly 4 GB, inside the free tier).
 - Scheduled workflows are disabled after 60 days without repository activity. GitHub emails a warning first, and `gh workflow enable "Cloud snapshot capture"` turns it back on. The repo is under active development through M6, so this is a documented recovery path rather than an expected event.
 - Scheduled workflows run only from the default branch. The schedule does not fire until the workflow file lands on `main` (see Activation checklist).
 
@@ -93,7 +93,7 @@ The outage in #1 happened because a failure path exited 0. Every failure path he
 
 - A fetch, sanity, or upload failure exits nonzero, the run shows red, and GitHub emails the failure to the last committer of the workflow's cron line.
 - A sanity check refuses snapshots with implausibly few records (default minimum 50,000 against a normal ~314,000), so an API brownout cannot quietly store an empty hour.
-- After each upload, the run lists the trailing three day-prefixes (today, yesterday, day before yesterday) and fails (exit 3, snapshot already uploaded) when fewer than 20 objects landed in the trailing 24 hours. A silent cron skip therefore surfaces within an hour, on the next run that does fire. The third prefix exists so the just-after-midnight window still sees objects older than 24 hours; with two prefixes that window misread sparse days as bootstrap (#68).
+- After each upload, the run lists the trailing three day-prefixes (today, yesterday, day before yesterday) and fails (exit 3, snapshot already uploaded) when the trailing 24 hours cover fewer than 20 distinct capture hours. Counting distinct hours instead of raw objects keeps the guard meaning "hours are being missed" at the 3x/hour cron density (#67), where a gappy day can still hold plenty of objects. A silent cron skip therefore surfaces within an hour, on the next run that does fire. The third prefix exists so the just-after-midnight window still sees objects older than 24 hours; with two prefixes that window misread sparse days as bootstrap (#68).
 - Residual blind spots, accepted: an outage of 48+ hours empties all listed prefixes and still looks like bootstrap on resume (the failed runs during it already emailed), and an Actions-platform outage stops the alerting along with the capture. Once #43 lands, the local health check (#5) adds an independent second check: newest-cloud-object age, measured from the desktop.
 
 ## Activation checklist (manual, one time)

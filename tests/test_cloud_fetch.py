@@ -150,14 +150,27 @@ def test_gap_guard_passes_on_healthy_day():
     keys = _keys_hours_ago([h + 0.5 for h in range(23)] + [30.0, 31.0])
     ok, detail = cloud_fetch.evaluate_gap_guard(keys, GUARD_NOW)
     assert ok
-    assert "23 objects" in detail
+    assert "23 distinct hours" in detail
 
 
 def test_gap_guard_trips_when_hours_are_missing():
     keys = _keys_hours_ago([1.0, 2.0, 3.0] + [25.0 + h for h in range(10)])
     ok, detail = cloud_fetch.evaluate_gap_guard(keys, GUARD_NOW)
     assert not ok
-    assert "only 3 objects" in detail
+    assert "only 3 distinct hours" in detail
+
+
+def test_gap_guard_counts_hours_not_objects():
+    """The #67 metric change: duplicate captures within an hour never mask gaps.
+
+    60 objects spread over 12 distinct hours (5 per hour, the dense-cron shape)
+    must trip the 20-hour floor even though the old 20-object floor would pass.
+    """
+    hours = [float(h) + m / 60 for h in range(0, 24, 2) for m in (10, 20, 30, 40, 50)]
+    keys = _keys_hours_ago(hours + [30.0])
+    ok, detail = cloud_fetch.evaluate_gap_guard(keys, GUARD_NOW)
+    assert not ok
+    assert "only 12 distinct hours" in detail
 
 
 def test_gap_guard_passes_on_bootstrap():
