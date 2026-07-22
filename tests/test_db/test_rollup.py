@@ -6,6 +6,7 @@ import sqlite3
 
 import pytest
 
+from wow_forecaster.db import rollup
 from wow_forecaster.db.migrations import run_migrations
 from wow_forecaster.db.rollup import (
     backfill_rollups,
@@ -382,3 +383,154 @@ class TestEdgeCases:
         ).fetchone()
         # Item 200: (300*1 + 310*20) — NULL quantity -> COALESCE to 1
         assert row["qty_weight_sum"] == pytest.approx(1 + 20)
+
+
+# ── Issue #65: half-open range predicates ─────────────────────────────────────
+
+_RANGE_PREDICATE = (
+    "AND mon.observed_at >= ?\n"
+    "  AND mon.observed_at <  DATE(?, '+1 day')"
+)
+_LEGACY_PREDICATE = "AND DATE(mon.observed_at) = ?"
+
+
+def _legacy_sql(sql: str) -> str:
+    """Rebuild the pre-#65 DATE()-equality form of a rollup UPSERT statement."""
+    legacy = sql.replace(_RANGE_PREDICATE, _LEGACY_PREDICATE)
+    assert legacy != sql, "range predicate not found; keep _RANGE_PREDICATE in sync"
+    return legacy
+
+
+def _plan(conn: sqlite3.Connection, sql: str, params: tuple) -> str:
+    rows = conn.execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall()
+    return " | ".join(str(row[-1]) for row in rows)
+
+
+def _rollup_rows(conn: sqlite3.Connection, table: str, key_cols: str) -> list[tuple]:
+    cols = [
+        r["name"]
+        for r in conn.execute(f"PRAGMA table_info({table})")
+        if r["name"] != "updated_at"
+    ]
+    sql = f"SELECT {', '.join(cols)} FROM {table} ORDER BY {key_cols}"
+    return [tuple(row) for row in conn.execute(sql).fetchall()]
+
+
+class TestQueryPlans:
+    """Both UPSERTs must seek idx_obs_norm_realm_outlier_time on observed_at.
+
+    The index name alone is not enough to pin #65: the legacy DATE() = ? form
+    also touches the index for the realm/outlier equality prefix. The rewrite
+    is proven by observed_at appearing in the seek terms. Only substrings are
+    asserted; full plan wording varies across SQLite versions (pattern from
+    tests/test_db/test_migration_0009.py).
+    """
+
+    PARAMS = ("us", "2026-03-15", "2026-03-15")
+
+    def test_archetype_upsert_seeks_observed_at(self, seeded_conn):
+        plan = _plan(seeded_conn, rollup._UPSERT_ARCHETYPE_SQL, self.PARAMS)
+        assert "idx_obs_norm_realm_outlier_time" in plan
+        assert "observed_at>" in plan
+
+    def test_item_upsert_seeks_observed_at(self, seeded_conn):
+        plan = _plan(seeded_conn, rollup._UPSERT_ITEM_SQL, self.PARAMS)
+        assert "idx_obs_norm_realm_outlier_time" in plan
+        assert "observed_at>" in plan
+
+    def test_legacy_form_could_not_seek_observed_at(self, seeded_conn):
+        """Documents why #65 exists: DATE(col) = ? blocks the observed_at seek."""
+        plan = _plan(
+            seeded_conn, _legacy_sql(rollup._UPSERT_ITEM_SQL), ("us", "2026-03-15")
+        )
+        assert "observed_at>" not in plan
+
+
+@pytest.fixture
+def edge_conn(conn: sqlite3.Connection) -> sqlite3.Connection:
+    """Observations with edge timestamps in every format production has stored.
+
+    Target date 2026-03-15 rows: UTC midnight (T + offset), last second of the
+    day (space form), fractional-second production form, plain midday form.
+    Neighbor rows on 03-14 and 03-16 must stay outside the 03-15 group.
+    """
+    conn.execute("""
+        INSERT INTO economic_archetypes (archetype_id, slug, display_name, category_tag)
+        VALUES (1, 'consumable.flask', 'Flasks', 'consumable')
+    """)
+    conn.execute("""
+        INSERT INTO item_categories (category_id, slug, display_name, archetype_tag)
+        VALUES (1, 'flask', 'Flasks', 'consumable.flask')
+    """)
+    conn.execute("""
+        INSERT INTO items (item_id, name, category_id, archetype_id, expansion_slug, quality)
+        VALUES (100, 'Flask A', 1, 1, 'tww', 'epic')
+    """)
+
+    rows = [
+        (1, "2026-03-15T00:00:00+00:00", 500.0),
+        (2, "2026-03-15 23:59:59", 520.0),
+        (3, "2026-03-15T18:30:12.123456+00:00", 540.0),
+        (4, "2026-03-15 12:00:00", 560.0),
+        (5, "2026-03-14 23:59:59", 111.0),
+        (6, "2026-03-16T00:00:00+00:00", 222.0),
+    ]
+    for obs_id, observed_at, price in rows:
+        conn.execute("""
+            INSERT INTO market_observations_raw
+                (obs_id, item_id, realm_slug, observed_at, source)
+            VALUES (?, 100, 'us', ?, 'blizzard_api')
+        """, (obs_id, observed_at))
+        conn.execute("""
+            INSERT INTO market_observations_normalized
+                (obs_id, item_id, archetype_id, realm_slug, observed_at,
+                 price_gold, quantity_listed, num_auctions, is_outlier)
+            VALUES (?, 100, 1, 'us', ?, ?, 10, 2, 0)
+        """, (obs_id, observed_at, price))
+    conn.commit()
+    return conn
+
+
+class TestHalfOpenRangeEquivalence:
+    """The range rewrite must produce byte-identical rollup rows to DATE() = ?."""
+
+    def _snapshot_for(self, conn, sql, params, table, key_cols):
+        conn.execute(f"DELETE FROM {table}")
+        conn.execute(sql, params)
+        conn.commit()
+        return _rollup_rows(conn, table, key_cols)
+
+    @pytest.mark.parametrize("obs_date", ["2026-03-15", "2026-03-14", "2026-03-16"])
+    def test_archetype_rows_identical(self, edge_conn, obs_date):
+        legacy = self._snapshot_for(
+            edge_conn, _legacy_sql(rollup._UPSERT_ARCHETYPE_SQL),
+            ("us", obs_date), "daily_rollup_archetype", "archetype_id, obs_date",
+        )
+        ranged = self._snapshot_for(
+            edge_conn, rollup._UPSERT_ARCHETYPE_SQL,
+            ("us", obs_date, obs_date), "daily_rollup_archetype", "archetype_id, obs_date",
+        )
+        assert ranged == legacy
+        assert ranged, f"expected rollup rows for {obs_date}"
+
+    @pytest.mark.parametrize("obs_date", ["2026-03-15", "2026-03-14", "2026-03-16"])
+    def test_item_rows_identical(self, edge_conn, obs_date):
+        legacy = self._snapshot_for(
+            edge_conn, _legacy_sql(rollup._UPSERT_ITEM_SQL),
+            ("us", obs_date), "daily_rollup_item", "item_id, obs_date",
+        )
+        ranged = self._snapshot_for(
+            edge_conn, rollup._UPSERT_ITEM_SQL,
+            ("us", obs_date, obs_date), "daily_rollup_item", "item_id, obs_date",
+        )
+        assert ranged == legacy
+        assert ranged, f"expected rollup rows for {obs_date}"
+
+    def test_target_date_groups_only_its_own_rows(self, edge_conn):
+        upsert_archetype_rollup(edge_conn, "us", "2026-03-15")
+        row = edge_conn.execute(
+            "SELECT obs_count, price_sum FROM daily_rollup_archetype "
+            "WHERE obs_date = '2026-03-15'"
+        ).fetchone()
+        assert row["obs_count"] == 4
+        assert row["price_sum"] == pytest.approx(500.0 + 520.0 + 540.0 + 560.0)

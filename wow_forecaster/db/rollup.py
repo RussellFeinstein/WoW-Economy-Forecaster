@@ -13,6 +13,13 @@ rollup instead of scanning the full 110M-row normalized table.
 
 Both tables store zero-inclusive AND positive-only price aggregates because
 consumers differ on whether they filter ``price_gold > 0``.
+
+The WHERE predicates compare ``observed_at`` as a raw column against a
+half-open date range so ``idx_obs_norm_realm_outlier_time`` can serve them;
+wrapping the column in ``DATE()`` there would force a table scan (issue #65).
+``DATE(mon.observed_at)`` stays in the SELECT list and GROUP BY only, where it
+cannot affect index use, and with the range covering exactly one date it
+produces the same single group the old equality predicate did.
 """
 
 from __future__ import annotations
@@ -67,7 +74,8 @@ JOIN items i ON mon.item_id = i.item_id
 WHERE i.archetype_id IS NOT NULL
   AND mon.is_outlier  = 0
   AND mon.realm_slug  = ?
-  AND DATE(mon.observed_at) = ?
+  AND mon.observed_at >= ?
+  AND mon.observed_at <  DATE(?, '+1 day')
 GROUP BY i.archetype_id, mon.realm_slug, DATE(mon.observed_at)
 ON CONFLICT(archetype_id, realm_slug, obs_date) DO UPDATE SET
     obs_count              = excluded.obs_count,
@@ -126,7 +134,8 @@ SELECT
 FROM market_observations_normalized mon
 WHERE mon.is_outlier  = 0
   AND mon.realm_slug  = ?
-  AND DATE(mon.observed_at) = ?
+  AND mon.observed_at >= ?
+  AND mon.observed_at <  DATE(?, '+1 day')
 GROUP BY mon.item_id, mon.realm_slug, DATE(mon.observed_at)
 ON CONFLICT(item_id, realm_slug, obs_date) DO UPDATE SET
     obs_count                  = excluded.obs_count,
@@ -159,7 +168,7 @@ def upsert_archetype_rollup(
     Scans only ``market_observations_normalized`` rows matching the given
     realm + date.  Returns number of rows upserted.
     """
-    cur = conn.execute(_UPSERT_ARCHETYPE_SQL, (realm_slug, obs_date))
+    cur = conn.execute(_UPSERT_ARCHETYPE_SQL, (realm_slug, obs_date, obs_date))
     conn.commit()
     return cur.rowcount
 
@@ -173,7 +182,7 @@ def upsert_item_rollup(
 
     Returns number of rows upserted.
     """
-    cur = conn.execute(_UPSERT_ITEM_SQL, (realm_slug, obs_date))
+    cur = conn.execute(_UPSERT_ITEM_SQL, (realm_slug, obs_date, obs_date))
     conn.commit()
     return cur.rowcount
 
@@ -253,8 +262,8 @@ def backfill_rollups(
         d = current
         while d <= batch_end:
             d_str = d.isoformat()
-            arch = conn.execute(_UPSERT_ARCHETYPE_SQL, (realm_slug, d_str)).rowcount
-            item = conn.execute(_UPSERT_ITEM_SQL, (realm_slug, d_str)).rowcount
+            arch = conn.execute(_UPSERT_ARCHETYPE_SQL, (realm_slug, d_str, d_str)).rowcount
+            item = conn.execute(_UPSERT_ITEM_SQL, (realm_slug, d_str, d_str)).rowcount
             total_arch += arch
             total_item += item
             dates_done += 1
