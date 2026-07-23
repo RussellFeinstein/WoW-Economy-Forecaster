@@ -28,7 +28,7 @@ dev = [
     # Exact pin: linter rule sets advance with releases, so a floating bound
     # makes CI stricter with zero code changes (issue #44). Dependabot opens
     # a monthly PR when a new ruff releases; bump happens there, gated by CI.
-    "ruff==0.15.2",
+    "ruff==0.16.0",
 ]
 # Cloud snapshot fetcher upload dependency (see docs/cloud-capture.md).
 # The GitHub Actions workflow installs the package with --no-deps plus httpx
