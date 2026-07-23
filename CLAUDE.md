@@ -37,6 +37,7 @@ BLIZZARD_CLIENT_SECRET=...
 - Work commits take no version bump. Their CHANGELOG lines accumulate under `## [Unreleased]`.
 - A dedicated stamp commit at PR-open bumps pyproject.toml once and moves the [Unreleased] entries under the `## [X.Y.Z] - YYYY-MM-DD` header. One version per PR; PR titles carry the `(vX.Y.Z)` suffix.
 - If two open PRs stamp the same number, the later-to-merge PR re-stamps to the next free number during rebase.
+- Dependabot dependency-bump PRs are exempt from stamping and CHANGELOG. The pinned tool is dev-only (ruff, per .github/dependabot.yml), so a bump does not change the product and stamping the product version would be misleading. These PRs auto-merge on green CI via .github/workflows/dependabot-automerge.yml (CI is a required status check, so a bump that breaks lint or tests never merges). If a bump surfaces new drift, fix it with a conformance commit pushed onto the Dependabot branch, never a parallel takeover PR.
 
 ## Key Files
 - [wow_forecaster/taxonomy/archetype_taxonomy.py](wow_forecaster/taxonomy/archetype_taxonomy.py) — ArchetypeTag, ArchetypeCategory, CATEGORY_TAG_MAP
