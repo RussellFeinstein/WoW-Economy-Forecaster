@@ -282,6 +282,34 @@ class RetentionConfig(BaseModel):
     raw_snapshot_days: int = 30
 
 
+class BackupConfig(BaseModel):
+    """Durable-table backup settings (see docs/db-backup.md).
+
+    A nightly ``.db.gz`` snapshot of the durable tables (everything except the
+    two per-observation tables) is written locally and uploaded to a separate,
+    no-expiry R2 bucket. The bucket name and credentials are secrets and live in
+    ``.env`` (``BACKUP_S3_*``), never here.
+
+    Attributes:
+        output_dir: Directory for local ``.db.gz`` backups.
+        keep_local: Number of most-recent local backups to retain (older ones
+            are pruned each run).
+        upload_enabled: Default for whether ``backup-durable-db`` uploads to R2
+            (the ``--upload/--no-upload`` flag overrides it).
+        stale_hours: Age (hours) beyond which the newest backup is considered
+            stale. Consumed only by the opt-in ``check-data-health
+            --backup-stale-hours`` check; a daily 07:30 backup plus jitter fits
+            comfortably under the 30h default.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    output_dir:     str   = "data/outputs/backups/durable"
+    keep_local:     int   = 7
+    upload_enabled: bool  = True
+    stale_hours:    float = 30.0
+
+
 class AppConfig(BaseModel):
     """Complete application configuration — the single source of truth.
 
@@ -305,6 +333,7 @@ class AppConfig(BaseModel):
     governance: GovernanceConfig = GovernanceConfig()
     crafting:   CraftingConfig   = CraftingConfig()
     retention:  RetentionConfig  = RetentionConfig()
+    backup:     BackupConfig     = BackupConfig()
     debug: bool = False
 
 
@@ -422,5 +451,6 @@ def _build_app_config(raw: dict[str, Any]) -> AppConfig:
         governance=GovernanceConfig(**raw.get("governance", {})),
         crafting=CraftingConfig(**raw.get("crafting", {})),
         retention=RetentionConfig(**raw.get("retention", {})),
+        backup=BackupConfig(**raw.get("backup", {})),
         debug=raw.get("debug", project.get("debug", False)),
     )

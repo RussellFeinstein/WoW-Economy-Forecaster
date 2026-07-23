@@ -86,6 +86,17 @@ class HealthReport:
                           deleting rows the 30-day API ToS §2.r window requires.
         retention_limit_days: retention_days + grace; the age that flips
                           ``retention_violation``.
+        backup_checked:   True when a backup directory was supplied and the
+                          newest-backup-age check ran. When False the backup
+                          fields are inert and never affect ``has_failures``
+                          (opt-in, so a stale backup never trips the daily
+                          forecast's freshness gate).
+        backup_age_hours: Age of the newest durable ``.db.gz`` in the backup
+                          directory (None when the check ran but found none).
+        backup_is_stale:  True when the newest backup is older than
+                          ``backup_stale_hours`` (or none exists) and the check
+                          was enabled.
+        backup_stale_hours: Threshold used to compute ``backup_is_stale``.
     """
 
     generated_at:           str
@@ -104,11 +115,20 @@ class HealthReport:
     oldest_raw_age_days:    float | None        = None
     retention_violation:    bool                   = False
     retention_limit_days:   int                    = 30 + RETENTION_GRACE_DAYS
+    backup_checked:         bool                   = False
+    backup_age_hours:       float | None        = None
+    backup_is_stale:        bool                   = False
+    backup_stale_hours:     float                  = 0.0
 
     @property
     def has_failures(self) -> bool:
         """True when any check failed — the single source for the exit code."""
-        return self.is_stale or self.lock_is_stale or self.retention_violation
+        return (
+            self.is_stale
+            or self.lock_is_stale
+            or self.retention_violation
+            or self.backup_is_stale
+        )
 
 
 # ── Query helpers ─────────────────────────────────────────────────────────────
@@ -232,6 +252,8 @@ def collect_health_report(
     lock_path:             Path | str | None = None,
     lock_stale_minutes:    float = 180.0,
     retention_days:        int   = 30,
+    backup_dir:            Path | str | None = None,
+    backup_stale_hours:    float = 0.0,
 ) -> HealthReport:
     """Build a full data collection health report.
 
@@ -255,6 +277,14 @@ def collect_health_report(
                                ``config.retention.raw_snapshot_days``).  The
                                sentinel flags rows older than this plus
                                :data:`RETENTION_GRACE_DAYS`.
+        backup_dir:            Directory of durable ``.db.gz`` backups
+                               (``config.backup.output_dir``).  None (the
+                               default) skips the backup-age check entirely, so
+                               a stale backup can never affect the exit code of a
+                               caller that does not opt in (e.g. the daily
+                               forecast freshness gate).
+        backup_stale_hours:    Age beyond which the newest backup is stale.
+                               Only consulted when ``backup_dir`` is given.
 
     Returns:
         :class:`HealthReport` with all findings populated.
@@ -267,6 +297,7 @@ def collect_health_report(
         stale_threshold_hours = stale_threshold_hours,
         lock_stale_minutes    = lock_stale_minutes,
         retention_limit_days  = retention_days + RETENTION_GRACE_DAYS,
+        backup_stale_hours    = backup_stale_hours,
     )
 
     # ── Per-realm stats ───────────────────────────────────────────────────────
@@ -354,6 +385,26 @@ def collect_health_report(
                 report.oldest_raw_age_days > report.retention_limit_days
             )
 
+    # ── Backup freshness check (opt-in; issue #80) ────────────────────────────
+    # Only runs when a backup directory is supplied, so a stale backup never
+    # trips a caller that does not ask for it (the daily forecast gate). The
+    # newest .db.gz is stat'ed by mtime; no backup at all is itself stale, since
+    # the point is to catch a task that has silently stopped running.
+    if backup_dir is not None:
+        report.backup_checked = True
+        backups = sorted(
+            Path(backup_dir).glob("durable_*.db.gz"),
+            key=lambda p: p.name,
+        ) if Path(backup_dir).exists() else []
+        if backups:
+            mtime = backups[-1].stat().st_mtime
+            report.backup_age_hours = (
+                datetime.now(tz=UTC) - datetime.fromtimestamp(mtime, tz=UTC)
+            ).total_seconds() / 3600.0
+            report.backup_is_stale = report.backup_age_hours > backup_stale_hours
+        else:
+            report.backup_is_stale = True
+
     return report
 
 
@@ -418,6 +469,16 @@ def format_health_report(report: HealthReport) -> str:
             f"  Oldest raw row   : {report.oldest_raw_age_days:.1f}d old "
             f"(limit {report.retention_limit_days}d){ret_mark}"
         )
+
+    if report.backup_checked:
+        bak_mark = " [STALE BACKUP]" if report.backup_is_stale else ""
+        if report.backup_age_hours is None:
+            lines.append(f"  Newest backup    : none found{bak_mark}")
+        else:
+            lines.append(
+                f"  Newest backup    : {_age_str(report.backup_age_hours)} "
+                f"(limit {report.backup_stale_hours:.0f}h){bak_mark}"
+            )
     lines.append("")
 
     # ── Per-realm detail ──────────────────────────────────────────────────────

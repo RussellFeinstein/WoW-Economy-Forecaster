@@ -2582,6 +2582,15 @@ def check_data_health_cmd(
         "--stale-hours",
         help="Hours without a successful ingest before marking stale (default 4).",
     ),
+    backup_stale_hours: float = typer.Option(
+        0.0,
+        "--backup-stale-hours",
+        help=(
+            "Hours before the newest durable backup counts as stale. "
+            "0 (default) disables the backup check so it never blocks the "
+            "daily forecast gate; run_healthcheck.bat passes 30."
+        ),
+    ),
     config_path: str | None = typer.Option(
         None,
         "--config",
@@ -2639,6 +2648,8 @@ def check_data_health_cmd(
             stale_threshold_hours = stale_hours,
             lock_path      = db_path.parent / ".hourly.lock",
             retention_days = config.retention.raw_snapshot_days,
+            backup_dir     = config.backup.output_dir if backup_stale_hours > 0 else None,
+            backup_stale_hours = backup_stale_hours,
         )
     finally:
         conn.close()
@@ -2657,6 +2668,11 @@ def check_data_health_cmd(
             typer.echo(
                 "[RETENTION] check-data-health: raw rows older than the "
                 "retention limit -- pruner may be dead (ToS 30-day window)."
+            )
+        if report.backup_is_stale:
+            typer.echo(
+                "[STALE BACKUP] check-data-health: newest durable backup older "
+                "than the limit -- the backup task may have stopped running."
             )
         raise typer.Exit(code=1)
 
@@ -3931,6 +3947,80 @@ def export_tsm_cmd(
         typer.echo(f"  Written to: {p}")
 
     typer.echo("[OK] export-tsm complete.")
+
+
+@app.command("backup-durable-db")
+def backup_durable_db_cmd(
+    output_dir: str | None = typer.Option(
+        None,
+        "--output-dir",
+        help="Directory for local .db.gz backups (default from [backup] config).",
+    ),
+    upload: bool = typer.Option(
+        True,
+        "--upload/--no-upload",
+        help="Upload the backup to the R2 backup bucket (reads BACKUP_S3_* from .env).",
+    ),
+    keep_local: int | None = typer.Option(
+        None,
+        "--keep-local",
+        help="Number of most-recent local backups to keep (default from config).",
+    ),
+    config_path: str | None = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Back up the durable tables to a restorable .db.gz (and optionally R2).
+
+    \b
+    Writes a fresh SQLite file containing every table except the two large
+    per-observation tables (which are recreated empty), so the file is a
+    drop-in restore. The build never scans the multi-GB observation tables.
+    With --upload (default), the .db.gz is sent to the separate, no-expiry R2
+    backup bucket configured via BACKUP_S3_* in .env.  See docs/db-backup.md.
+
+    \b
+    Examples:
+        wow-forecaster backup-durable-db --no-upload
+        wow-forecaster backup-durable-db
+        wow-forecaster backup-durable-db --keep-local 14
+    """
+    from wow_forecaster.backup.durable_backup import run_backup
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    do_upload = upload and config.backup.upload_enabled
+
+    try:
+        result = run_backup(
+            config,
+            upload=do_upload,
+            keep_local=keep_local,
+            output_dir=output_dir,
+        )
+    except Exception as exc:
+        typer.echo(f"\n[ERROR] backup-durable-db failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    total_rows = sum(result.tables_copied.values())
+    typer.echo("")
+    typer.echo(f"  Local backup : {result.gz_path}")
+    typer.echo(
+        f"  Size         : {result.bytes_raw:,} bytes raw "
+        f"-> {result.bytes_gz:,} bytes gzipped"
+    )
+    typer.echo(f"  Tables       : {len(result.tables_copied)} ({total_rows:,} rows copied)")
+    if result.uploaded:
+        typer.echo(f"  Uploaded to  : {result.object_key}")
+    elif not upload:
+        typer.echo("  Upload       : skipped (--no-upload)")
+    else:
+        typer.echo("  Upload       : skipped (disabled in [backup] config)")
+    typer.echo("")
+    typer.echo("[OK] backup-durable-db complete.")
 
 
 @app.command("generate-charts")

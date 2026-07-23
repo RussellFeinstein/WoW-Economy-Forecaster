@@ -9,8 +9,11 @@ rem  setup_tasks.bat in issue #6).  Can also be run manually.
 rem
 rem  What it does:
 rem    1. Navigates to the project root (one level above this scripts/ folder)
-rem    2. Runs check-data-health --stale-hours %STALE_HOURS% via the venv CLI
-rem       and appends its output to logs\health.log
+rem    2. Runs check-data-health --stale-hours %STALE_HOURS%
+rem       --backup-stale-hours %BACKUP_STALE_HOURS% via the venv CLI (the backup
+rem       check is opt-in here so a stale durable backup surfaces through this
+rem       alert window without ever blocking the daily forecast gate) and
+rem       appends its output to logs\health.log
 rem    3. On failure:
 rem         - writes data\outputs\monitoring\health_alert.json (timestamp,
 rem           exit code, last 20 log lines) as a durable machine-readable
@@ -39,6 +42,7 @@ cd /d "%~dp0.."
 if not defined WOWFC set "WOWFC=.venv\Scripts\wowfc.exe"
 
 set "STALE_HOURS=4"
+set "BACKUP_STALE_HOURS=30"
 set "SUPPRESS_HOURS=24"
 set "ALERTFILE=data\outputs\monitoring\health_alert.json"
 set "FLAGFILE=data\outputs\monitoring\health_window_raised.json"
@@ -49,7 +53,7 @@ if not exist data\outputs\monitoring mkdir data\outputs\monitoring
 echo [%DATE% %TIME%] ============================================================ >> logs\health.log
 echo [%DATE% %TIME%] Health check starting ^(stale threshold %STALE_HOURS%h^) >> logs\health.log
 
-call "%WOWFC%" check-data-health --stale-hours %STALE_HOURS% >> logs\health.log 2>&1
+call "%WOWFC%" check-data-health --stale-hours %STALE_HOURS% --backup-stale-hours %BACKUP_STALE_HOURS% >> logs\health.log 2>&1
 set "HC_CODE=!ERRORLEVEL!"
 
 echo [%DATE% %TIME%] check-data-health exited with code !HC_CODE! >> logs\health.log

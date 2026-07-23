@@ -1,9 +1,9 @@
 """Windows-only integration tests for scripts/setup_tasks.bat.
 
-Tests cover the Task Scheduler registration script (issues #6 and #40):
-  - Fresh registration: three /Create calls with the pinned /ST anchors
-    (hourly :16, daily 07:00, health-check every 6h at :45), all silent via
-    wscript.exe + run_silent.vbs, each followed by a wake-to-run set.
+Tests cover the Task Scheduler registration script (issues #6, #40, and #80):
+  - Fresh registration: four /Create calls with the pinned /ST anchors
+    (hourly :16, daily 07:00, health-check every 6h at :45, backup 07:30), all
+    silent via wscript.exe + run_silent.vbs, each followed by a wake-to-run set.
   - State preservation: a task that was Disabled before re-registration is
     re-disabled immediately after its /Create (/Create /F recreates tasks
     ENABLED; WoWForecaster-Hourly must stay disabled until the issue #1
@@ -63,7 +63,7 @@ def bat_tree(tmp_path: Path) -> Path:
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     shutil.copyfile(BAT_SOURCE, scripts / "setup_tasks.bat")
-    for name in ("run_hourly.bat", "run_daily.bat", "run_healthcheck.bat"):
+    for name in ("run_hourly.bat", "run_daily.bat", "run_healthcheck.bat", "run_backup.bat"):
         (scripts / name).write_text("@echo off\r\nexit /b 0\r\n", encoding="ascii")
     (scripts / "run_silent.vbs").write_text("' dummy\r\n", encoding="ascii")
 
@@ -178,35 +178,42 @@ def _wakes(calls: list[str]) -> list[str]:
 # ── Fresh registration ────────────────────────────────────────────────────────
 
 
-def test_fresh_registration_creates_three_silent_tasks(bat_tree: Path) -> None:
+def test_fresh_registration_creates_four_silent_tasks(bat_tree: Path) -> None:
     """No existing tasks: create + wake-set per task, pinned anchors, no
     disables."""
     result = _run_bat(bat_tree)
     calls = _calls(bat_tree)
     creates = [c for c in calls if "/Create" in c]
     wakes = _wakes(calls)
-    assert len(creates) == 3
-    assert len(wakes) == 3
-    assert len(calls) == 6  # each create immediately followed by its wake-set
-    hourly, daily, health = creates
+    assert len(creates) == 4
+    assert len(wakes) == 4
+    assert len(calls) == 8  # each create immediately followed by its wake-set
+    hourly, daily, health, backup = creates
     assert "/SC HOURLY /ST 07:16" in hourly
     assert '"WoWForecaster-Hourly"' in hourly
     assert "/SC DAILY /ST 07:00" in daily
     assert '"WoWForecaster-Daily"' in daily
     assert "/SC HOURLY /MO 6 /ST 00:45" in health
     assert '"WoWForecaster-HealthCheck"' in health
+    assert "/SC DAILY /ST 07:30" in backup
+    assert '"WoWForecaster-Backup"' in backup
     for c in creates:
         assert "wscript.exe" in c
         assert "run_silent.vbs" in c
     for wake, name in zip(
         wakes,
-        ("WoWForecaster-Hourly", "WoWForecaster-Daily", "WoWForecaster-HealthCheck"),
+        (
+            "WoWForecaster-Hourly",
+            "WoWForecaster-Daily",
+            "WoWForecaster-HealthCheck",
+            "WoWForecaster-Backup",
+        ),
         strict=True,
     ):
         assert name in wake
         assert "WakeToRun" in wake
-    # Interleaving: create, wake, create, wake, create, wake
-    assert [i for i, c in enumerate(calls) if c.startswith("PS-WAKE")] == [1, 3, 5]
+    # Interleaving: create, wake, create, wake, create, wake, create, wake
+    assert [i for i, c in enumerate(calls) if c.startswith("PS-WAKE")] == [1, 3, 5, 7]
     assert "/DISABLE" not in "\n".join(calls)
     assert result.returncode == 0
 
@@ -231,7 +238,7 @@ def test_disabled_task_stays_disabled_after_reregistration(bat_tree: Path) -> No
     assert calls[2].startswith("PS-WAKE")
     assert "WoWForecaster-Hourly" in calls[2]
     assert "/DISABLE" in calls[3]
-    assert len(calls) == 8  # 3 creates + 3 wakes + 2 hourly disables
+    assert len(calls) == 10  # 4 creates + 4 wakes + 2 hourly disables
     assert "preserved DISABLED state" in result.stdout
     assert result.returncode == 0
 
@@ -269,6 +276,15 @@ def test_missing_healthcheck_bat_aborts_before_any_create(bat_tree: Path) -> Non
     assert _calls(bat_tree) == []
 
 
+def test_missing_backup_bat_aborts_before_any_create(bat_tree: Path) -> None:
+    (bat_tree / "scripts" / "run_backup.bat").unlink()
+    result = _run_bat(bat_tree)
+    assert result.returncode == 1
+    assert "[ERROR]" in result.stdout
+    assert "run_backup.bat" in result.stdout
+    assert _calls(bat_tree) == []
+
+
 def test_missing_vbs_aborts_before_any_create(bat_tree: Path) -> None:
     (bat_tree / "scripts" / "run_silent.vbs").unlink()
     result = _run_bat(bat_tree)
@@ -276,6 +292,21 @@ def test_missing_vbs_aborts_before_any_create(bat_tree: Path) -> None:
     assert "[ERROR]" in result.stdout
     assert "run_silent.vbs" in result.stdout
     assert _calls(bat_tree) == []
+
+
+def test_disabled_backup_task_stays_disabled(bat_tree: Path) -> None:
+    """A Disabled backup task is re-disabled after /Create and again after the
+    wake-set, exactly like the hourly hazard case (the last-registered task must
+    honour the same state-preservation contract)."""
+    result = _run_bat(bat_tree, ps_disabled_match="WoWForecaster-Backup")
+    calls = _calls(bat_tree)
+    disables = [c for c in calls if "/DISABLE" in c]
+    assert len(disables) == 2
+    for d in disables:
+        assert '"WoWForecaster-Backup"' in d
+    assert len([c for c in calls if "/Create" in c]) == 4
+    assert "preserved DISABLED state" in result.stdout
+    assert result.returncode == 0
 
 
 def test_create_failure_stops_the_script(bat_tree: Path) -> None:

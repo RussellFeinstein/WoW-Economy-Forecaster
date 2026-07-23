@@ -460,6 +460,80 @@ class TestHasFailures:
         assert HealthReport(
             generated_at="x", retention_violation=True
         ).has_failures is True
+        assert HealthReport(
+            generated_at="x", backup_is_stale=True
+        ).has_failures is True
+
+
+# ── Tests: backup freshness check (issue #80) ─────────────────────────────────
+
+def _make_backup(directory: Path, age_hours: float = 0.0,
+                 name: str = "durable_20260723T073000Z.db.gz") -> Path:
+    """Create a fake backup .db.gz with an artificial mtime age."""
+    directory.mkdir(parents=True, exist_ok=True)
+    p = directory / name
+    p.write_bytes(b"gz")
+    if age_hours:
+        past = time.time() - age_hours * 3600.0
+        os.utime(p, (past, past))
+    return p
+
+
+class TestBackupFreshnessCheck:
+    def test_no_backup_dir_skips_check(self, conn):
+        """The default (no backup_dir) leaves the check inert: a would-be-stale
+        backup can never affect a caller that does not opt in (the daily
+        forecast freshness gate)."""
+        _insert_ingested_row(conn, "us", hours_ago=1.0)  # otherwise is_stale
+        report = collect_health_report(conn, ["us"])
+        assert report.backup_checked is False
+        assert report.backup_is_stale is False
+        assert report.has_failures is False
+
+    def test_fresh_backup_not_stale(self, conn, tmp_path):
+        _make_backup(tmp_path, age_hours=2.0)
+        report = collect_health_report(
+            conn, ["us"], backup_dir=tmp_path, backup_stale_hours=30.0
+        )
+        assert report.backup_checked is True
+        assert report.backup_is_stale is False
+        assert report.backup_age_hours == pytest.approx(2.0, abs=0.2)
+
+    def test_stale_backup_detected(self, conn, tmp_path):
+        _make_backup(tmp_path, age_hours=40.0)
+        report = collect_health_report(
+            conn, ["us"], backup_dir=tmp_path, backup_stale_hours=30.0
+        )
+        assert report.backup_is_stale is True
+        assert report.has_failures is True
+
+    def test_no_backup_present_is_stale(self, conn, tmp_path):
+        """An empty backup directory is stale: the point is to catch a task
+        that has silently stopped producing backups."""
+        report = collect_health_report(
+            conn, ["us"], backup_dir=tmp_path, backup_stale_hours=30.0
+        )
+        assert report.backup_checked is True
+        assert report.backup_age_hours is None
+        assert report.backup_is_stale is True
+
+    def test_newest_of_several_backups_is_used(self, conn, tmp_path):
+        _make_backup(tmp_path, age_hours=40.0, name="durable_20260721T073000Z.db.gz")
+        _make_backup(tmp_path, age_hours=1.0, name="durable_20260723T073000Z.db.gz")
+        report = collect_health_report(
+            conn, ["us"], backup_dir=tmp_path, backup_stale_hours=30.0
+        )
+        assert report.backup_is_stale is False
+
+    def test_stale_backup_does_not_block_when_check_disabled(self, conn, tmp_path):
+        """The run_daily gate guard: with backup_dir omitted, a stale backup on
+        disk is ignored entirely, so a stale backup never fails a caller (like
+        the forecast gate) that did not ask for the check."""
+        _insert_ingested_row(conn, "us", hours_ago=1.0)  # keep the data fresh
+        _make_backup(tmp_path, age_hours=200.0)
+        report = collect_health_report(conn, ["us"])  # no backup_dir
+        assert report.backup_is_stale is False
+        assert report.has_failures is False
 
 
 # ── Tests: format_health_report ───────────────────────────────────────────────
@@ -556,3 +630,27 @@ class TestFormatHealthReport:
         output = format_health_report(report)
         assert "[UNHEALTHY]" in output
         assert "[HEALTHY]" not in output
+
+    def test_no_backup_line_when_check_not_run(self):
+        output = format_health_report(self._base_report())
+        assert "Newest backup" not in output
+
+    def test_stale_backup_line_and_unhealthy_status(self):
+        report = self._base_report(is_stale=False)
+        report.backup_checked = True
+        report.backup_age_hours = 40.0
+        report.backup_is_stale = True
+        report.backup_stale_hours = 30.0
+        output = format_health_report(report)
+        assert "Newest backup" in output
+        assert "[STALE BACKUP]" in output
+        assert "[UNHEALTHY]" in output
+        assert "[HEALTHY]" not in output
+
+    def test_no_backup_found_line(self):
+        report = self._base_report()
+        report.backup_checked = True
+        report.backup_age_hours = None
+        report.backup_is_stale = True
+        output = format_health_report(report)
+        assert "Newest backup    : none found [STALE BACKUP]" in output
