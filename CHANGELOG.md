@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.3] - 2026-07-23
+
+### Changed
+- Roadmap records the #40 wake-to-run acceptance (2026-07-23): six sleep/wake cycles with every wake attributed by name to a WoWForecaster task, an unbroken hourly ingest chain across the window, and both overnight health checks healthy, so the machine can now sleep between scheduled runs without losing hours. Re-sleep takes about 32 minutes rather than the 10 the issue predicted, because the power plan's 30-minute idle timer governs instead of the unattended timeout; that is a duty-cycle question only and is filed as #78
+
 ## [2.8.2] - 2026-07-22
 
 ### Added
