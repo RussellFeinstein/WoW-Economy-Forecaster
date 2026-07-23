@@ -76,13 +76,13 @@ Retention recommendation: each daily backup is a **complete** snapshot of the
 durable state, so the newest object always holds the full rollup history. Keeping
 only a bounded window of daily backups therefore loses no irreplaceable rollups;
 it only gives up the ability to restore to an old point in time. A lifecycle rule
-on the backup bucket of roughly 90 days keeps storage near 3 GB while preserving
-every rollup through the latest snapshot. The one risk a bounded window adds is a
-backup task that stops for longer than the window with the local disk also lost;
-the scheduled health check (below) catches a stopped task within hours, well
-inside any such window. Set the window to taste, or omit the rule entirely and
-watch free-tier usage. `keep_local` bounds the local copies independently (7 by
-default, about 220 MB).
+on the backup bucket of 100 days keeps storage near 3 GB while preserving every
+rollup through the latest snapshot. The one risk a bounded window adds is a backup
+task that stops for longer than the window with the local disk also lost; the
+scheduled health check (below) catches a stopped task within hours, well inside
+any such window. Set the window to taste, or omit the rule entirely and watch
+free-tier usage. `keep_local` bounds the local copies independently (7 by default,
+about 220 MB).
 
 ### Cadence: its own scheduled task
 
@@ -141,9 +141,9 @@ Steps for the repo owner; none of them belong in git, and no agent handles the
 credential values:
 
 1. Create a Cloudflare R2 bucket (private, default settings), for example
-   `wow-forecaster-backups`. Optionally add a lifecycle rule of about 90 days
-   (safe, since each snapshot is complete; see Retention recommendation above);
-   omit it to keep every backup and watch free-tier usage instead.
+   `wow-forecaster-backups`. Add a lifecycle rule of 100 days (safe, since each
+   snapshot is complete; see Retention recommendation above); or omit it to keep
+   every backup and watch free-tier usage instead.
 2. Create an R2 API token scoped to that bucket with read and write access.
 3. Add the five `BACKUP_S3_*` variables above to the desktop `.env`.
 4. `pip install -e ".[cloud]"` in the project venv if boto3 is not installed.
