@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.9.1] - 2026-07-23
 
 ### Changed
 - Cloud capture is now triggered by an external Cloudflare Worker cron instead of GitHub's own schedule (issue #83). GitHub delivers only about 11 of 24 scheduled cron firings a day for this repo, deterministically, and densifying the cron does not help because the cap is on run delivery, not on schedule expressions, so #67's three-firings-an-hour change is reverted. A Worker on the account that holds the R2 buckets POSTs `workflow_dispatch` at :16 and :46, bypassing the schedule backlog; the GitHub schedule is thinned to a single :06 fallback that doubles as a dead-man alarm (if the Worker or its token dies, capture falls back to about 11 hours a day and the gap guard goes red). The Worker source and deploy steps live in `cloud-trigger/`; it authenticates with a fine-grained personal access token stored as a Worker secret, never in the repo
