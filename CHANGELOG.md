@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.9.0] - 2026-07-23
 
 ### Added
 - Durable-table backup (issue #80): a new `backup-durable-db` command writes a restorable `.db.gz` of every table except the two large per-observation tables (those are recreated empty, so the file is a drop-in restore) and uploads it to a separate, private R2 bucket. The schema is copied from the live database's `sqlite_master`, so migration-added columns and any future tables are captured, and the build never reads the multi-GB observation tables. A real snapshot on 2026-07-23 was 118 MB uncompressed, 31 MB gzipped, 24 tables, built in under 6 seconds. Design record and restore steps: [docs/db-backup.md](docs/db-backup.md)
