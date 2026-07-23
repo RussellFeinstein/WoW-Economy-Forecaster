@@ -5,6 +5,14 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Durable-table backup (issue #80): a new `backup-durable-db` command writes a restorable `.db.gz` of every table except the two large per-observation tables (those are recreated empty, so the file is a drop-in restore) and uploads it to a separate, private R2 bucket. The schema is copied from the live database's `sqlite_master`, so migration-added columns and any future tables are captured, and the build never reads the multi-GB observation tables. A real snapshot on 2026-07-23 was 118 MB uncompressed, 31 MB gzipped, 24 tables, built in under 6 seconds. Design record and restore steps: [docs/db-backup.md](docs/db-backup.md)
+- A dedicated `WoWForecaster-Backup` scheduled task (daily 07:30, after the 07:00 forecast) via `scripts/run_backup.bat`, registered by `setup_tasks.bat` with the same wake-to-run and disabled-state-preservation handling as the other tasks. Its exit code is an independent backup-health signal
+- `check-data-health --backup-stale-hours N` (opt-in, 0 = off) flags the newest durable backup when it is older than N hours; `run_healthcheck.bat` passes 30, so a backup task that has stopped raises the existing health alert window. The check is off by default so a stale backup never blocks the daily forecast freshness gate
+- `[backup]` config section (`output_dir`, `keep_local`, `upload_enabled`, `stale_hours`) and `BACKUP_S3_*` credentials in `.env` (see `.env.example`). Uploading needs boto3 from the `[cloud]` extra
+
 ## [2.8.3] - 2026-07-23
 
 ### Changed

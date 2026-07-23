@@ -9,14 +9,15 @@ rem  Idempotent: /F overwrites any existing task with the same name, and a
 rem  task an operator has Disabled stays Disabled after re-registration
 rem  (see the state-preservation blocks below).
 rem
-rem  Creates three tasks (all run hidden via run_silent.vbs; the vbs waits
+rem  Creates four tasks (all run hidden via run_silent.vbs; the vbs waits
 rem  for the batch and propagates its exit code, so Task Scheduler's Last
 rem  Run Result stays truthful):
 rem    WoWForecaster-Hourly      -- run_hourly.bat every hour at :16
 rem    WoWForecaster-Daily       -- run_daily.bat once per day at DAILY_TIME
 rem    WoWForecaster-HealthCheck -- run_healthcheck.bat every 6 hours at :45
+rem    WoWForecaster-Backup      -- run_backup.bat once per day at BACKUP_TIME
 rem
-rem  All three tasks are set to wake the machine from sleep (WakeToRun,
+rem  All four tasks are set to wake the machine from sleep (WakeToRun,
 rem  issue #40), so the machine may sleep between runs without losing
 rem  capture hours. The script warns at the end if the active power plan
 rem  blocks wake timers. Wake covers sleep (and hibernate on supporting
@@ -30,6 +31,7 @@ rem  To remove tasks later:
 rem    schtasks /Delete /TN "WoWForecaster-Hourly" /F
 rem    schtasks /Delete /TN "WoWForecaster-Daily" /F
 rem    schtasks /Delete /TN "WoWForecaster-HealthCheck" /F
+rem    schtasks /Delete /TN "WoWForecaster-Backup" /F
 rem ---------------------------------------------------------------------------
 
 rem ---- Configuration (edit as needed) ----------------------------------------
@@ -37,9 +39,15 @@ rem ---- Configuration (edit as needed) ----------------------------------------
 set HOURLY_TASK=WoWForecaster-Hourly
 set DAILY_TASK=WoWForecaster-Daily
 set HEALTH_TASK=WoWForecaster-HealthCheck
+set BACKUP_TASK=WoWForecaster-Backup
 
 rem Time to run the daily pipeline (HH:MM, 24-hour local clock)
 set DAILY_TIME=07:00
+
+rem Time to run the durable-table backup. 07:30 sits after the 07:00 daily
+rem forecast so each backup includes that morning's forecasts and
+rem recommendations. Pinning /ST keeps re-runs from moving the phase.
+set BACKUP_TIME=07:30
 
 rem Hourly anchor. The :16 minute is deliberate (issue #6): it avoids a
 rem head-on collision with the 07:00 daily task, samples away from
@@ -64,6 +72,7 @@ set SCRIPTS_DIR=%~dp0
 set HOURLY_BAT=%SCRIPTS_DIR%run_hourly.bat
 set DAILY_BAT=%SCRIPTS_DIR%run_daily.bat
 set HEALTH_BAT=%SCRIPTS_DIR%run_healthcheck.bat
+set BACKUP_BAT=%SCRIPTS_DIR%run_backup.bat
 set SILENT_VBS=%SCRIPTS_DIR%run_silent.vbs
 
 echo.
@@ -73,6 +82,7 @@ echo  Scripts dir  : %SCRIPTS_DIR%
 echo  Hourly task  : %HOURLY_TASK% at :16 past each hour
 echo  Daily task   : %DAILY_TASK% at %DAILY_TIME%
 echo  Health task  : %HEALTH_TASK% every 6h at %HEALTH_TIME% anchor
+echo  Backup task  : %BACKUP_TASK% at %BACKUP_TIME%
 echo  Silent mode  : Yes (via run_silent.vbs)
 echo  Wake to run  : Yes (tasks wake the machine from sleep)
 echo.
@@ -88,6 +98,10 @@ if not exist "%DAILY_BAT%" (
 )
 if not exist "%HEALTH_BAT%" (
     echo [ERROR] Cannot find run_healthcheck.bat at: %HEALTH_BAT%
+    exit /b 1
+)
+if not exist "%BACKUP_BAT%" (
+    echo [ERROR] Cannot find run_backup.bat at: %BACKUP_BAT%
     exit /b 1
 )
 if not exist "%SILENT_VBS%" (
@@ -258,6 +272,52 @@ echo [ERROR] PowerShell is available, then re-run this script.
 exit /b 1
 :health_finished
 
+rem ---- Register backup task --------------------------------------------------
+echo Registering backup task...
+
+set "BACKUP_WAS_DISABLED=0"
+call powershell -NoProfile -NonInteractive -Command "try { if ((Get-ScheduledTask -TaskName '%BACKUP_TASK%' -ErrorAction Stop).State -eq 'Disabled') { exit 2 } else { exit 0 } } catch { exit 0 }"
+if errorlevel 1 set "BACKUP_WAS_DISABLED=1"
+
+call "%WOWFC_SCHTASKS%" /Create /SC DAILY /ST %BACKUP_TIME% ^
+    /TN "%BACKUP_TASK%" ^
+    /TR "wscript.exe \"%SILENT_VBS%\" \"%BACKUP_BAT%\"" ^
+    /F
+
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] Failed to create backup task.
+    exit /b 1
+)
+
+if "%BACKUP_WAS_DISABLED%"=="0" goto :backup_done
+call "%WOWFC_SCHTASKS%" /Change /TN "%BACKUP_TASK%" /DISABLE
+if errorlevel 1 goto :backup_disable_failed
+echo [OK] %BACKUP_TASK% re-registered; preserved DISABLED state.
+goto :backup_registered
+:backup_disable_failed
+echo [ERROR] %BACKUP_TASK% was Disabled before re-registration but re-disabling
+echo [ERROR] FAILED. The task may now be ENABLED. Disable it manually NOW:
+echo [ERROR]     schtasks /Change /TN "%BACKUP_TASK%" /DISABLE
+exit /b 1
+:backup_done
+echo [OK] Backup task registered.
+:backup_registered
+
+rem Wake-to-run (same pattern as the hourly task above).
+call powershell -NoProfile -NonInteractive -Command "try { $t = Get-ScheduledTask -TaskName '%BACKUP_TASK%' -ErrorAction Stop; $t.Settings.WakeToRun = $true; Set-ScheduledTask -InputObject $t -ErrorAction Stop | Out-Null; exit 0 } catch { exit 1 }"
+if errorlevel 1 goto :backup_wake_failed
+if "%BACKUP_WAS_DISABLED%"=="0" goto :backup_wake_done
+call "%WOWFC_SCHTASKS%" /Change /TN "%BACKUP_TASK%" /DISABLE
+if errorlevel 1 goto :backup_disable_failed
+:backup_wake_done
+echo [OK] Wake-to-run set on %BACKUP_TASK%.
+goto :backup_finished
+:backup_wake_failed
+echo [ERROR] Could not set wake-to-run on %BACKUP_TASK%. Check that Windows
+echo [ERROR] PowerShell is available, then re-run this script.
+exit /b 1
+:backup_finished
+
 rem ---- Verify the power plan allows wake timers (issue #40) ------------------
 rem Wake-to-run only works when the active power plan's "Allow wake timers"
 rem is Enable (0x1). Disable (0x0) and Important Wake Timers Only (0x2) both
@@ -281,14 +341,17 @@ echo  Done.  To verify:
 echo    schtasks /Query /TN "%HOURLY_TASK%"
 echo    schtasks /Query /TN "%DAILY_TASK%"
 echo    schtasks /Query /TN "%HEALTH_TASK%"
+echo    schtasks /Query /TN "%BACKUP_TASK%"
 echo.
 echo  To run immediately (for testing):
 echo    schtasks /Run /TN "%HOURLY_TASK%"
 echo    schtasks /Run /TN "%DAILY_TASK%"
 echo    schtasks /Run /TN "%HEALTH_TASK%"
+echo    schtasks /Run /TN "%BACKUP_TASK%"
 echo.
 echo  To remove:
 echo    schtasks /Delete /TN "%HOURLY_TASK%" /F
 echo    schtasks /Delete /TN "%DAILY_TASK%" /F
 echo    schtasks /Delete /TN "%HEALTH_TASK%" /F
+echo    schtasks /Delete /TN "%BACKUP_TASK%" /F
 echo.

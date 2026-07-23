@@ -17,7 +17,7 @@ Uses historical data from **The War Within (TWW)** to learn economy patterns, th
 - **Walk-forward backtesting** with leakage-free event handling — `WoWEvent.is_known_at()` prevents look-ahead bias
 - **5-component recommendation scoring** — opportunity, liquidity, volatility, event_boost, uncertainty with principled thresholds
 - **Adaptive confidence intervals** — drift detection widens CIs when market conditions shift; cold-start blending anchors predictions to source-expansion prices
-- **Production-grade pipeline** — 36 CLI commands, 21 SQLite tables, 1,200+ tests, hourly automation
+- **Production-grade pipeline** — 39 CLI commands, 23 SQLite tables, 1,400+ tests, hourly automation
 
 ## Architecture
 
@@ -121,6 +121,7 @@ notebooks/                    # Jupyter analysis notebooks (portfolio narratives
 └── 03_backtest_and_evaluation.ipynb
 
 scripts/
+├── run_backup.bat            # Daily durable-table backup to R2 (07:30)
 ├── run_daily.bat             # Daily pipeline wrapper (freshness gate + build + forecast)
 ├── run_healthcheck.bat       # Scheduled health check + failure alerting
 ├── run_hourly.bat            # Hourly refresh wrapper (stale-lock takeover guard)
@@ -309,6 +310,34 @@ wow-forecaster check-drift         [--realm SLUG] [--output-json/--no-output-jso
 wow-forecaster evaluate-live-forecast [--realm SLUG] [--window-days N]
 ```
 
+### Database Backup
+
+The durable tables (rollups, forecasts, recommendations, backtests, drift/health
+snapshots, and reference data) are the part of the database that cannot be
+regenerated once the underlying raw ages out of the 30-day window. `backup-durable-db`
+writes a restorable `.db.gz` of everything except the two large per-observation
+tables (recreated empty, so the file is a drop-in restore) and uploads it to a
+separate, private R2 bucket. See [docs/db-backup.md](docs/db-backup.md) for the
+design and restore steps.
+
+```bash
+# Build a local .db.gz and upload to the R2 backup bucket
+wow-forecaster backup-durable-db       [--output-dir PATH] [--upload/--no-upload] \
+                                       [--keep-local N]
+```
+
+**Setup (one time, on the machine that runs backups):**
+
+1. Create a separate private R2 bucket (see [docs/db-backup.md](docs/db-backup.md)
+   for the lifecycle recommendation).
+2. Add the backup credentials to `.env` (see `.env.example`):
+   `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, `BACKUP_S3_ACCESS_KEY_ID`,
+   `BACKUP_S3_SECRET_ACCESS_KEY`.
+3. Install the upload dependency: `pip install -e ".[cloud]"`.
+4. `scripts/setup_tasks.bat` registers `WoWForecaster-Backup` (daily 07:30). The
+   scheduled health check (`run_healthcheck.bat`) then flags a stale backup via
+   `check-data-health --backup-stale-hours 30`.
+
 ### Reporting
 
 All report commands read already-written output files — they never re-run the pipeline.
@@ -337,9 +366,10 @@ wow-forecaster report-feature-importance [--realm SLUG] [--horizon 1d|7d|28d] \
 
 # DB-backed data collection health: coverage, gaps, freshness, plus a stale
 # hourly-lock check and a retention sentinel (oldest raw row vs the 30-day
-# ToS window). Exits 1 when any check fails.
+# ToS window). Exits 1 when any check fails. --backup-stale-hours (opt-in,
+# 0 = off) also flags a durable backup older than N hours.
 wow-forecaster check-data-health       [--realm SLUG] [--lookback-days 14] \
-                                       [--stale-hours 4]
+                                       [--stale-hours 4] [--backup-stale-hours 0]
 ```
 
 **Common options for all report commands:**

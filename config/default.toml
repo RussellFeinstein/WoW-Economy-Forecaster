@@ -205,6 +205,24 @@ block_disabled_sources = true
 # Derived artefacts (Parquet features, model weights) are NOT pruned.
 raw_snapshot_days = 30
 
+# ── Durable-table Backup ───────────────────────────────────────────────────────
+
+[backup]
+# Nightly .db.gz snapshot of the durable tables (everything except the two
+# per-observation tables). Written locally and uploaded to a separate, no-expiry
+# R2 bucket. Bucket name + credentials are secrets in .env (BACKUP_S3_*), not here.
+# See docs/db-backup.md.
+# Directory for local .db.gz backups.
+output_dir = "data/outputs/backups/durable"
+# Number of most-recent local backups to keep; older ones are pruned each run.
+keep_local = 7
+# Default for whether backup-durable-db uploads to R2 (--no-upload overrides).
+upload_enabled = true
+# Age (hours) beyond which the newest backup counts as stale. Only the opt-in
+# check-data-health --backup-stale-hours check reads this; a 07:30 daily backup
+# plus jitter sits well under 30h.
+stale_hours = 30.0
+
 # ── Crafting Margin Detector ───────────────────────────────────────────────────
 
 [crafting]
