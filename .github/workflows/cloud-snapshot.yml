@@ -8,14 +8,15 @@ name: Cloud snapshot capture
 
 on:
   schedule:
-    # Three firings per hour. Actions cron is best effort, and in practice
-    # GitHub drops most firings outright rather than jittering them (11 of 24
-    # fired on 2026-07-21, spaced 2-3 hours apart; issue #67). Redundancy is
-    # the available lever: any one firing per hour covers that hour, duplicate
-    # snapshots coexist under timestamped keys, and the 30-day lifecycle rule
-    # bounds storage. The in-run gap guard counts distinct hours covered and
-    # turns silent skips into loud failures (exit 3).
-    - cron: "16,36,56 * * * *"
+    # Fallback and alarm only. The primary trigger is a Cloudflare Worker cron
+    # that POSTs workflow_dispatch at :16 and :46 (see cloud-trigger/, issue
+    # #83), because GitHub delivers only ~11 of 24 scheduled firings a day for
+    # this repo and densifying the cron does not help (the cap is on run
+    # delivery, not on schedule expressions; #67). This single :06 firing is
+    # the dead-man alarm: if the Worker or its token dies, capture drops to
+    # fallback-only, the in-run gap guard falls below 20 distinct hours, and
+    # runs go red (exit 3).
+    - cron: "6 * * * *"
   workflow_dispatch:
 
 permissions:
