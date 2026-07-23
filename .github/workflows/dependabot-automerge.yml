@@ -1,0 +1,34 @@
+# Auto-merge Dependabot dependency bumps once CI is green.
+#
+# The repo's Dependabot config (.github/dependabot.yml) is scoped to ruff only,
+# and the linter is exact-pinned (issue #44), so each bump arrives as a small PR
+# whose CI run shows exactly what the new rule set flags. When CI passes there is
+# nothing for a human to decide, so this workflow enables GitHub auto-merge on the
+# PR and lets the required status checks (test (3.11), test (3.12)) gate the merge.
+# A bump that breaks lint or tests simply never merges and waits for a human.
+#
+# Safety model: this only works because CI is a REQUIRED status check on the
+# main-pr-only ruleset. Without that, auto-merge would land the PR before CI runs.
+#
+# Dependabot-triggered runs get a read-only GITHUB_TOKEN with no access to secrets;
+# the permissions block below restores the write scopes gh needs, and no secrets
+# are used, so the restriction does not matter here.
+
+name: Dependabot auto-merge
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Enable auto-merge
+        run: gh pr merge --auto --merge "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
