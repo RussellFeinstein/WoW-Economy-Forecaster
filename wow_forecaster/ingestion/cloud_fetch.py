@@ -66,8 +66,9 @@ MIN_RECORDS_DEFAULT = 50_000
 
 # Distinct UTC hours covered in the trailing 24h below which the gap guard
 # trips. Counting hours instead of objects keeps the guard meaning "hours are
-# being missed" at any cron density: the 3x/hour schedule (#67) can leave ~72
-# objects on a day that still misses a third of its hours.
+# being missed" no matter how many triggers fire per hour: the Worker's two
+# dispatches plus the :06 fallback (#83) can leave several objects on a day
+# that still misses a third of its hours.
 GUARD_MIN_HOURS_DEFAULT = 20
 
 _KEY_TS_RE = re.compile(r"_(\d{8}T\d{6}Z)\.json\.gz$")
@@ -120,8 +121,9 @@ def evaluate_gap_guard(
     """Decide whether the trailing 24 hours of captures look healthy.
 
     The metric is distinct UTC hours covered in the trailing 24 hours, so
-    duplicate captures within an hour (the 3x/hour cron) never mask missed
-    hours. Returns ``(ok, detail)``. Bootstrap rule: when no listed object is
+    duplicate captures within an hour (the Worker's :16/:46 plus the :06
+    fallback, #83) never mask missed hours. Returns ``(ok, detail)``.
+    Bootstrap rule: when no listed object is
     older than 24 hours, low coverage is expected (first day of operation, or
     a resume after a 48h+ outage whose failed runs already alerted) and passes.
     """

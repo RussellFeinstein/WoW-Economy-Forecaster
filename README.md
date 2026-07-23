@@ -477,9 +477,11 @@ Hourly capture that does not depend on the desktop being on. A scheduled workflo
 ([.github/workflows/cloud-snapshot.yml](.github/workflows/cloud-snapshot.yml)) fetches
 the commodities snapshot, gzips it (~59 MB raw -> ~2.2 MiB), and uploads it to a private
 S3-compatible bucket (Cloudflare R2) whose 30-day lifecycle rule enforces the Blizzard
-API ToS deletion window. The cron fires three times per hour because GitHub drops
-individual firings under load; any one firing covers its hour, and duplicates are
-harmless timestamped objects inside the lifecycle window. Design record, measured sizing, and failure modes:
+API ToS deletion window. The workflow is triggered by a Cloudflare Worker cron
+([cloud-trigger/](cloud-trigger/)) that POSTs `workflow_dispatch` at :16 and :46, because
+GitHub delivers only about 11 of 24 scheduled firings a day for this repo and cron density
+does not change that. GitHub's own schedule is kept as a single :06 fallback that also acts
+as a dead-man alarm. Design record, measured sizing, and failure modes:
 [docs/cloud-capture.md](docs/cloud-capture.md).
 
 One-time setup (repository owner):
@@ -492,6 +494,11 @@ One-time setup (repository owner):
 3. Enable the workflow, which stays disabled until the secrets exist
    (`gh workflow enable "Cloud snapshot capture"` or the Actions tab), trigger the
    first run by hand (Run workflow), and confirm a ~2.2 MiB object lands in the bucket.
+4. Deploy the trigger Worker so capture no longer relies on GitHub's schedule:
+   create a fine-grained PAT scoped to this repo with the Actions permission set to
+   read and write, then from [cloud-trigger/](cloud-trigger/) run
+   `wrangler secret put GH_PAT` (paste the PAT) and `wrangler deploy`. Confirm
+   dispatch runs appear at :16 and :46. Details: [cloud-trigger/README.md](cloud-trigger/README.md).
 
 A failed run emails the repository owner; a healthy run also verifies that the
 trailing 24 hours cover at least 20 distinct capture hours and fails loudly when

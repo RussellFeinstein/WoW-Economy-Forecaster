@@ -1,0 +1,21 @@
+# Cloudflare Worker that triggers the cloud-capture GitHub workflow on a
+# reliable cron, working around GitHub's schedule delivery cap (issue #83).
+# Deploy from this directory: `wrangler deploy`.
+# Secret (never committed): `wrangler secret put GH_PAT` (a fine-grained PAT
+# scoped to this repo only, with the Actions permission set to read and write).
+name = "wow-forecaster-cloud-trigger"
+main = "worker.js"
+compatibility_date = "2026-07-23"
+
+[triggers]
+# Two dispatches an hour. GitHub's own schedule stays a single :06 fallback in
+# .github/workflows/cloud-snapshot.yml, so a Worker or token outage degrades to
+# the fallback and trips the in-run gap guard rather than failing silently.
+crons = ["16,46 * * * *"]
+
+[vars]
+# Non-secret configuration. The PAT is a Worker secret, set out of band.
+GH_OWNER = "RussellFeinstein"
+GH_REPO = "WoW-Economy-Forecaster"
+GH_WORKFLOW = "cloud-snapshot.yml"
+GH_REF = "main"
