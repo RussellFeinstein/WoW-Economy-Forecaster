@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import subprocess
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,6 +38,7 @@ from wow_forecaster.learning.loader import (
     content_root,
     lab_path,
     load_all_banks,
+    load_bank,
     load_curriculum,
 )
 from wow_forecaster.learning.models import Question
@@ -168,11 +170,18 @@ def _check_see_also(root: Path, q: Question) -> list[Problem]:
     return problems
 
 
-def check_content(root: Path | None = None) -> list[Problem]:
+def check_content(
+    root: Path | None = None,
+    module_ids: Sequence[str] | None = None,
+) -> list[Problem]:
     """Run every content integrity check.
 
     Args:
         root: Repo root override. Defaults to discovery via ``content_root()``.
+        module_ids: Restrict to these modules. None checks every authored bank.
+            Scoping matters while authoring: loading every bank means one
+            half-written file makes the whole check fail, which is misleading
+            when several banks are being edited at once.
 
     Returns:
         Problems found, in a stable order. Empty means the content is coherent
@@ -183,7 +192,10 @@ def check_content(root: Path | None = None) -> list[Problem]:
 
     curriculum = load_curriculum(base)
     declared = {m.id for m in curriculum.modules}
-    banks = load_all_banks(base)
+    if module_ids is None:
+        banks = load_all_banks(base)
+    else:
+        banks = {mid: load_bank(mid, base) for mid in module_ids}
 
     # A declared module with no bank is legal: the curriculum lists the whole
     # track so its shape is visible, while banks land one part per PR. A bank

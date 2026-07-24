@@ -103,6 +103,18 @@ class TestGuardDetectsDrift:
         root = _synthetic_tree(tmp_path)
         assert check_content(root) == []
 
+    def test_module_scope_ignores_other_banks(self, tmp_path):
+        """Scoping keeps one half-written bank from failing everyone else's check.
+
+        Several banks get authored at once, so an unscoped check reports a
+        neighbour's in-progress file and sends you to fix the wrong thing.
+        """
+        root = _synthetic_tree(tmp_path)
+        (root / "learning" / "banks" / "m02.toml").write_text(
+            "[[question]\nid = ", encoding="utf-8"
+        )
+        assert check_content(root, module_ids=["m01"]) == []
+
     def test_undeclared_bank_is_reported(self, tmp_path):
         root = _synthetic_tree(tmp_path)
         (root / "learning" / "banks" / "m09.toml").write_text(

@@ -423,18 +423,29 @@ def lab_command(
 
 
 @learn_app.command("validate")
-def validate_command() -> None:
+def validate_command(
+    module: str = typer.Option(
+        None, "--module", "-m", help="Check one module only. Useful while authoring."
+    ),
+) -> None:
     """Check every question's citations against the current code. Exits 1 on failure."""
     from wow_forecaster.learning.integrity import check_content
-    from wow_forecaster.learning.loader import authored_module_ids, load_all_banks
+    from wow_forecaster.learning.loader import BankParseError, authored_module_ids, load_bank
 
-    problems = check_content()
-    banks = load_all_banks()
+    module_ids = [module.lower()] if module else None
+    try:
+        problems = check_content(module_ids=module_ids)
+        banks = {
+            mid: load_bank(mid) for mid in (module_ids or authored_module_ids())
+        }
+    except BankParseError as exc:
+        typer.echo(f"[FAIL] {exc}", err=True)
+        raise typer.Exit(code=1) from None
     n_questions = sum(len(qs) for qs in banks.values())
 
     if not problems:
         typer.echo(
-            f"[OK] {n_questions} question(s) across {len(authored_module_ids())} "
+            f"[OK] {n_questions} question(s) across {len(banks)} "
             "module(s); every citation resolves."
         )
         return

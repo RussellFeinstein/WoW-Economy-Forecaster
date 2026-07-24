@@ -74,6 +74,17 @@ class TestValidate:
         assert result.exit_code == 0, result.output
         assert "[OK]" in result.output
 
+    def test_module_scope_checks_one_bank(self, learn_env):
+        result = runner.invoke(app, ["learn", "validate", "-m", "m06"], env=learn_env)
+        assert result.exit_code == 0, result.output
+        assert "1 module(s)" in result.output
+
+    def test_module_scope_on_an_unauthored_bank_exits_one(self, learn_env):
+        """Scoping is for authoring, so a missing bank is a failure, not a no-op."""
+        result = runner.invoke(app, ["learn", "validate", "-m", "m20"], env=learn_env)
+        assert result.exit_code == 1
+        assert "m20" in result.output
+
 
 class TestNext:
     def test_list_shows_the_queue_without_prompting(self, learn_env):
