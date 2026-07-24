@@ -310,6 +310,16 @@ wow-forecaster check-drift         [--realm SLUG] [--output-json/--no-output-jso
 wow-forecaster evaluate-live-forecast [--realm SLUG] [--window-days N]
 ```
 
+### Cloud Catch-up
+
+Drains hourly snapshots the cloud capture stored while this machine was asleep or
+off. Idempotent, so re-running is a no-op. Setup and behavior:
+[Cloud Catch-up Ingestion](#cloud-catch-up-ingestion-sync-snapshots).
+
+```bash
+wow-forecaster sync-snapshots      [--since YYYY-MM-DD] [--dry-run] [--limit N]
+```
+
 ### Database Backup
 
 The durable tables (rollups, forecasts, recommendations, backtests, drift/health
@@ -502,8 +512,50 @@ One-time setup (repository owner):
 
 A failed run emails the repository owner; a healthy run also verifies that the
 trailing 24 hours cover at least 20 distinct capture hours and fails loudly when
-hours are being missed. Local catch-up ingestion
-of the cloud backlog is tracked as issue #43 (`sync-snapshots`).
+hours are being missed.
+
+### Cloud Catch-up Ingestion (`sync-snapshots`)
+
+The desktop half. The commodities endpoint serves only the current snapshot, so an
+hour missed while this machine slept is unrecoverable from the API; draining the
+bucket is the only way those hours reach the database.
+
+```bash
+wowfc sync-snapshots --dry-run          # list what would be ingested, write nothing
+wowfc sync-snapshots                    # drain, normalize, roll up
+wowfc sync-snapshots --since 2026-07-20 # widen the window after a longer outage
+```
+
+Each object runs through the same ingest path a live fetch uses, so the snapshot
+lands on disk exactly where the local pipeline would have written it, with the
+same `_meta` envelope and the same item foreign-key guard. Normalization and daily
+rollups run afterwards for every UTC date touched.
+
+The command is idempotent, so it is safe to run at any time and re-running is a
+no-op. Two rules make it so: an object already ingested is skipped by its snapshot
+path, and a UTC hour that already holds observations is skipped entirely. The
+second matters because the desktop's own hourly run and the cloud capture fetch
+the *same* underlying AH snapshot, so without it an overlapping hour would be
+counted twice.
+
+By default it looks back `cloud_sync.max_backfill_days` (3) and ingests at most
+`cloud_sync.max_objects_per_run` (96) objects, and it never reads past the
+retention window, since those rows would be deleted by the next pruner run.
+Whatever the cap leaves behind is reported, not silently dropped, and the next
+run picks it up. Pass `--limit 0` to lift the cap for a large recovery.
+
+Local setup (once, on the machine that runs it):
+
+1. `pip install -e ".[cloud]"` for boto3.
+2. Create an R2 API token scoped **read-only** to the snapshots bucket.
+3. Add `SNAPSHOT_S3_ENDPOINT`, `SNAPSHOT_S3_BUCKET`, `SNAPSHOT_S3_ACCESS_KEY_ID`,
+   and `SNAPSHOT_S3_SECRET_ACCESS_KEY` to `.env` (see `.env.example`).
+
+The run holds `data/db/.hourly.lock` while writing, the same lock
+`run_hourly.bat` takes, so a catch-up and an overrunning hourly run never write
+concurrently. If the lock is held by a live run it waits and then fails loudly
+rather than skipping quietly, because a skipped catch-up would leave a whole
+night unrecovered.
 
 ---
 

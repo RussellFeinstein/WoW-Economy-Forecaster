@@ -5,6 +5,20 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `sync-snapshots` command (issue #43): ingests hourly commodities snapshots that the cloud capture wrote to R2 while this machine was asleep or off. The commodities endpoint serves only the current snapshot, so hours missed locally are unrecoverable from the API; draining the bucket is the only way they reach the database. Each object goes through the same ingest path a live fetch uses (same on-disk location, same `_meta` envelope, same item foreign-key guard), followed by normalization and a rollup upsert for every UTC date touched
+- Idempotency, so the command is safe to run at any time and re-running is a no-op: objects already ingested are skipped by snapshot path, and UTC hours that already hold observations are skipped outright. The second rule is what prevents double-counting, because the desktop's own hourly run and the cloud capture fetch the same underlying auction-house snapshot seconds apart
+- `[cloud_sync]` config section (`max_backfill_days`, `max_objects_per_run`, `lock_wait_seconds`) and `SNAPSHOT_S3_*` read credentials in `.env` (see `.env.example`). The default 3-day lookback and 96-object cap keep the first run after setup from pulling the entire retention window in one pass; whatever a cap leaves behind is reported and picked up by the next run, never silently dropped. `--limit 0` lifts the cap for a large recovery
+- `--dry-run`, which lists what would be ingested and writes nothing
+
+### Changed
+- `parse_blizzard_records()` moved from a method on `IngestStage` to module level in `wow_forecaster/pipeline/ingest.py`, so the live path and the cloud catch-up path share one implementation. The method remains as a delegate
+
+### Fixed
+- `cloud-trigger/.wrangler/`, the Wrangler build cache, is now gitignored
+
 ## [2.9.1] - 2026-07-23
 
 ### Changed

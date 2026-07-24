@@ -152,6 +152,39 @@ class IngestionSnapshotRepository(BaseRepository):
         )
         return _row_to_snapshot(row) if row else None
 
+    def get_ingested_paths_since(
+        self,
+        source: str,
+        since: datetime,
+    ) -> set[str]:
+        """Return snapshot paths successfully ingested at or after ``since``.
+
+        The idempotency check for the cloud catch-up path: a bucket object whose
+        derived local path is already in this set has been ingested, so
+        re-running ``sync-snapshots`` skips it and inserts nothing.
+
+        Failed snapshots are excluded on purpose.  An object that failed to
+        download or parse must be retried on the next run, not treated as done.
+
+        Args:
+            source: Provider name, e.g. ``"blizzard_api"``.
+            since:  Inclusive lower bound on ``fetched_at``.
+
+        Returns:
+            Set of non-empty ``snapshot_path`` values.
+        """
+        rows = self.fetchall(
+            """
+            SELECT snapshot_path FROM ingestion_snapshots
+            WHERE source = ?
+              AND success = 1
+              AND fetched_at >= ?
+              AND snapshot_path <> '';
+            """,
+            (source, since.isoformat()),
+        )
+        return {row["snapshot_path"] for row in rows}
+
     def get_failed(self, limit: int = 20) -> list[IngestionSnapshot]:
         """Fetch recent failed ingestion attempts for debugging.
 

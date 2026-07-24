@@ -50,6 +50,9 @@ logs/
 # Claude Code (local permission settings — not shared across machines)
 .claude/
 
+# Wrangler build/state cache for the cloud-capture trigger Worker
+cloud-trigger/.wrangler/
+
 # IDE
 .vscode/settings.json
 .idea/

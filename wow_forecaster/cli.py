@@ -25,7 +25,7 @@ Install and run::
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import typer
@@ -4021,6 +4021,110 @@ def backup_durable_db_cmd(
         typer.echo("  Upload       : skipped (disabled in [backup] config)")
     typer.echo("")
     typer.echo("[OK] backup-durable-db complete.")
+
+
+@app.command("sync-snapshots")
+def sync_snapshots_cmd(
+    since: str | None = typer.Option(
+        None,
+        "--since",
+        help="Oldest capture date to consider (YYYY-MM-DD). Defaults to "
+             "cloud_sync.max_backfill_days back; always clamped to the "
+             "retention window.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Report what would be ingested and touch nothing.",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        help="Cap objects ingested this run (0 = no cap). Overrides config.",
+    ),
+    config_path: str | None = typer.Option(
+        None,
+        "--config",
+        help="Path to TOML config file.",
+    ),
+) -> None:
+    """Ingest cloud-captured snapshots the local pipeline has not seen.
+
+    \b
+    The commodities endpoint serves only the current snapshot, so hours missed
+    while this machine slept are unrecoverable from the API. The cloud capture
+    stores them hourly in R2; this drains that backlog through the normal ingest
+    path, then normalizes and rolls up.
+
+    \b
+    Idempotent: objects already ingested, and UTC hours this machine already
+    captured for itself, are skipped. Re-running immediately is a no-op.
+    Reads SNAPSHOT_S3_* from .env. See docs/cloud-capture.md.
+
+    \b
+    Examples:
+        wow-forecaster sync-snapshots --dry-run
+        wow-forecaster sync-snapshots
+        wow-forecaster sync-snapshots --since 2026-07-20 --limit 0
+    """
+    from wow_forecaster.pipeline.sync_stage import sync_snapshots
+
+    config = _load_config_or_exit(config_path)
+    _configure_logging(config)
+
+    since_dt: datetime | None = None
+    if since:
+        try:
+            since_dt = datetime.strptime(since, "%Y-%m-%d")
+        except ValueError as exc:
+            typer.echo(f"\n[ERROR] --since must be YYYY-MM-DD, got {since!r}", err=True)
+            raise typer.Exit(code=1) from exc
+
+    try:
+        result = sync_snapshots(
+            config, since=since_dt, dry_run=dry_run, limit=limit
+        )
+    except Exception as exc:
+        typer.echo(f"\n[ERROR] sync-snapshots failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo("")
+    typer.echo(f"  Objects listed   : {result.listed}")
+    typer.echo(f"  Selected         : {result.selected}")
+    typer.echo(f"  Skipped          : {result.skips.total()} ({result.skips.summary()})")
+    if result.dry_run:
+        typer.echo("")
+        typer.echo("[OK] sync-snapshots dry run complete (nothing was written).")
+        return
+
+    typer.echo(f"  Ingested         : {result.ingested}")
+    typer.echo(f"  Observations     : {result.observations_inserted:,} inserted")
+    if result.items_skipped_fk:
+        typer.echo(
+            f"  Unknown items    : {result.items_skipped_fk:,} records skipped "
+            "(item not in registry; run bootstrap-items)"
+        )
+    typer.echo(f"  Normalized       : {result.normalized_rows:,} rows")
+    if result.dates_touched:
+        typer.echo(f"  Dates rolled up  : {', '.join(result.dates_touched)}")
+    if result.truncated:
+        typer.echo(
+            f"  Capped           : {result.skips.over_limit} more objects waiting; "
+            "re-run to continue"
+        )
+    typer.echo("")
+
+    if result.failures:
+        for key, error in result.failures:
+            typer.echo(f"  [FAIL] {key}: {error}", err=True)
+        typer.echo(
+            f"\n[ERROR] sync-snapshots finished with {len(result.failures)} "
+            "failure(s); they will be retried on the next run.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    typer.echo("[OK] sync-snapshots complete.")
 
 
 @app.command("generate-charts")
