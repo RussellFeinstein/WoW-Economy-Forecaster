@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/actions/workflows/ci.yml/badge.svg)](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
-![Tests](https://img.shields.io/badge/tests-1%2C200%2B%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1%2C600%2B%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-personal%20research-orange)
 
 A **local-first ML forecasting system** for World of Warcraft auction house economy research.
@@ -17,7 +17,7 @@ Uses historical data from **The War Within (TWW)** to learn economy patterns, th
 - **Walk-forward backtesting** with leakage-free event handling — `WoWEvent.is_known_at()` prevents look-ahead bias
 - **5-component recommendation scoring** — opportunity, liquidity, volatility, event_boost, uncertainty with principled thresholds
 - **Adaptive confidence intervals** — drift detection widens CIs when market conditions shift; cold-start blending anchors predictions to source-expansion prices
-- **Production-grade pipeline** — 39 CLI commands, 23 SQLite tables, 1,400+ tests, hourly automation
+- **Production-grade pipeline** — 40 CLI commands, 23 SQLite tables, 1,600+ tests, hourly automation
 
 ## Architecture
 
@@ -87,8 +87,16 @@ wow_forecaster/
 │   ├── theme.py     # WoW dark palette, apply_wow_theme(), Plotly template
 │   ├── data_queries.py  # SQL/file -> pandas DataFrame fetchers
 │   └── charts/      # 6 chart modules: forecast, backtest, feature, recommendation, drift, transfer
+├── learning/        # Study track engine: SM-2 scheduler, progress store,
+│                    # content loader, citation drift guard (content in learning/)
 ├── scheduler.py     # SchedulerDaemon (stdlib only) — hourly + daily automation
-└── cli.py           # Typer CLI: 36 commands
+└── cli.py           # Typer CLI: 40 commands plus the `learn` sub-app
+
+learning/            # Study track content (syllabus, question banks, lab briefs)
+├── curriculum.toml  # 20 modules: objectives, reading lists, prereqs, labs
+├── modules/         # One page of framing per module
+├── banks/           # Question banks, TOML, path + verbatim anchor citations
+└── labs/            # Lab briefs: real work on real branches
 
 config/
 ├── default.toml             # Static defaults (committed)
@@ -816,6 +824,41 @@ BLIZZARD_CLIENT_SECRET=...   # required for live Blizzard AH data
 ```
 
 Without Blizzard credentials the pipeline cannot ingest live data.
+
+---
+
+## Learning Track
+
+A study and assessment track for this codebase, shipped alongside it:
+[`learning/`](learning/). The premise is that the repo is the textbook and the
+track is the syllabus and the exam, so no module here restates what a docstring
+already explains. Twenty modules across four parts, question banks with spaced
+repetition, and four labs that are real open work rather than exercises.
+
+```bash
+wowfc learn status              # mastery per module, cards due, lab state
+wowfc learn next                # drill what is due, then new material
+wowfc learn next --list         # inspect the queue without answering
+wowfc learn module m06          # objectives, reading list, lab
+wowfc learn exam -m m06 -n 10   # scored; nothing revealed until the end
+wowfc learn lab lab-01-purge-embargo
+wowfc learn validate            # check every citation against current code
+```
+
+Progress lives in `data/learn/progress.db` (gitignored, overridable with
+`WOWFC_LEARN_DB`). It is deliberately a separate file from the product database,
+which is copied into every durable backup and feeds the analytics warehouse.
+
+**The drift guard.** Every question cites a file path plus a verbatim single-line
+anchor, never a line number, because a line number is wrong the moment a line is
+inserted above it. `wowfc learn validate` and
+`tests/test_learning/test_bank_integrity.py` both call the same `check_content()`
+implementation, so editing a cited line turns CI red until the question is
+updated. A study guide that quietly describes last month's code is worse than
+none.
+
+See [learning/README.md](learning/README.md) for the module map and authoring
+notes.
 
 ---
 

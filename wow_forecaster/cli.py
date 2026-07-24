@@ -30,11 +30,19 @@ from pathlib import Path
 
 import typer
 
+from wow_forecaster.learning.cli import learn_app
+
 app = typer.Typer(
     name="wow-forecaster",
     help="WoW Auction House Economy Forecaster — local-first research CLI.",
     add_completion=False,
 )
+
+# Grouped as a sub-app rather than more flat commands: this module is already
+# large, and the study track is a separate concern from the pipeline. The
+# learning module imports typer plus stdlib only, so registering it here costs
+# nothing at startup; its loader and store are imported inside command bodies.
+app.add_typer(learn_app, name="learn")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

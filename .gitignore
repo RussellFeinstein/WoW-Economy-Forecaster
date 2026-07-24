@@ -41,6 +41,9 @@ data/db/*.db
 data/db/*.db-wal
 data/db/*.db-shm
 data/db/.*.lock
+# Learning-track review state. Personal progress, deliberately kept out of the
+# product database so it never lands in a durable backup or the M3 warehouse.
+data/learn/
 data/*.db
 data/*.db-wal
 data/*.db-shm
