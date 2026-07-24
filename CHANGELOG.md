@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.11.1] - 2026-07-24
 
 ### Added
 - The learning track's remaining nineteen modules, filling in every part after the M06 pilot that shipped in 2.11.0. 328 new questions across M01 to M05, M07 to M20, each with a one-page lesson, plus the three remaining lab briefs (LightGBM into the backtest loop, the cloud snapshot drain, and the realization ledger). The track now covers the whole system: the domain and the data pipeline, features and the model and the statistics under them, the failure history and operations, and the work still ahead for validation, paper trading, causal inference, and publishing
