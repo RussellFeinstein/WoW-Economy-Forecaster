@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.1] - 2026-07-24
+
+### Fixed
+- Roadmap now names issue #86 (sleep overnight and let cloud capture cover it) in the M0.5 issue range and in the work order, where it was described in prose before the issue existed
+
 ## [2.10.0] - 2026-07-23
 
 ### Added
