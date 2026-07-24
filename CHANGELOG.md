@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.2] - 2026-07-24
+
+### Fixed
+- `docs/cloud-capture.md` now carries the local activation checklist for `sync-snapshots` (install the `[cloud]` extra, create a read-only R2 token, add the four `SNAPSHOT_S3_*` variables to `.env`, verify with `--dry-run`). The command's missing-credentials error already pointed at that file, but the file only documented the GitHub Actions repo secrets for the capture side, so the one page the error sent you to was the one page that did not answer it
+
 ## [2.10.1] - 2026-07-24
 
 ### Fixed

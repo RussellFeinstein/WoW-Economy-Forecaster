@@ -126,6 +126,27 @@ Capture is only half the loop. The desktop drains what the cloud stored with `wo
 
 Each object is downloaded, gunzipped, and written to disk **verbatim** at the path `build_snapshot_path()` would have produced, so the original `_meta` block survives and provenance records that the snapshot came from the cloud fetcher. Records then go through the same `parse_blizzard_records()` the live path uses (extracted to module level from `IngestStage` for exactly this reason), followed by normalization and a rollup upsert for every UTC date touched.
 
+### Local activation checklist (manual, one time)
+
+This is the counterpart to the cloud-side checklist above, and it is what `sync-snapshots` points you at when it exits with `Missing required environment variables for cloud snapshot sync`. Steps for whoever runs the desktop; none of them belong in git:
+
+1. Install the read dependency: `pip install -e ".[cloud]"` (boto3, from the `[cloud]` extra).
+2. Create an R2 API token scoped **read-only** to the snapshots bucket. Deliberately a different token from the capture workflow's, which needs write access, and from the durable backup's `BACKUP_S3_*`, which points at an entirely different bucket. The desktop only ever reads here.
+3. Add four variables to `.env` at the repo root, which is gitignored. Placeholder forms are in `.env.example`:
+
+   ```
+   SNAPSHOT_S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+   SNAPSHOT_S3_BUCKET=<the capture bucket, not the backup bucket>
+   SNAPSHOT_S3_ACCESS_KEY_ID=<read-only token key>
+   SNAPSHOT_S3_SECRET_ACCESS_KEY=<read-only token secret>
+   ```
+
+   `SNAPSHOT_S3_REGION` is optional and defaults to `auto`. The names are explicit rather than boto3's bare `AWS_*` because a desktop may have unrelated AWS credentials in its environment; `cloud_fetch` keeps using `AWS_*` because that is boto3's standard resolution on the Actions runner, where nothing competes for it.
+
+4. Verify without writing anything: `wowfc sync-snapshots --dry-run`. It should list candidate objects and report what it would skip.
+
+Until step 3 is done the command exits 1 and names every missing variable, never their values. **A green test suite is not evidence this works:** every test runs against a stub S3 client, so the first real proof is a `--dry-run` against the live bucket.
+
 ### Selection rules, and why each exists
 
 Applied in order:
