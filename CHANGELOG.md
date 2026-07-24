@@ -5,6 +5,12 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `PLAN.md`: an audit of the project as a portfolio artifact, plus a sequenced plan for the lifecycle and legibility work that follows from it. Four tool choices (orchestrator, experiment tracking, serving target, infrastructure as code) are recorded as open decisions with reasoning, not adopted. Runs as a parallel track to `docs/ROADMAP.md`, which stays the source of truth for the research arc and the issue numbering
+- `LESSONS.md`: repo-level record of approaches that turned out wrong and had to be corrected, seeded with the two modeling findings from the audit
+
 ## [2.10.2] - 2026-07-24
 
 ### Fixed
