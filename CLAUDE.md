@@ -46,7 +46,7 @@ BLIZZARD_CLIENT_SECRET=...
 - [wow_forecaster/config.py](wow_forecaster/config.py) — AppConfig via load_config()
 - [wow_forecaster/db/schema.py](wow_forecaster/db/schema.py) — 21 tables, apply_schema() idempotent
 - [wow_forecaster/pipeline/base.py](wow_forecaster/pipeline/base.py) — PipelineStage ABC
-- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (39 commands)
+- [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (40 commands)
 - [config/default.toml](config/default.toml) — static config
 - [config/sources.toml](config/sources.toml) — 3 source policies
 - [config/events/tww_events.json](config/events/tww_events.json) — TWW seed events
@@ -195,7 +195,20 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Bucket keys mirror local layout: `blizzard_api/YYYY/MM/DD/commodities_us_<ts>Z.json.gz`; private R2 bucket, 30-day lifecycle rule = ToS 2.r enforcement
 - Exit codes: 0 ok, 1 fetch/sanity/upload failure, 2 missing env (named, never values), 3 uploaded but trailing-24h gap guard tripped (<20 distinct capture hours with history present; bootstrap passes; listing spans three day-prefixes per #68)
 - Sanity floor: refuses snapshots <50K records (healthy ~314K); design record + activation checklist (secrets are added by hand, never by agents): [docs/cloud-capture.md](docs/cloud-capture.md)
-- Activated 2026-07-20 (bucket + lifecycle + 6 repo secrets in place, workflow enabled); #43 sync-snapshots (catch-up ingestion) not yet implemented
+- Activated 2026-07-20 (bucket + lifecycle + 6 repo secrets in place, workflow enabled)
+
+### Cloud Catch-up Ingestion (v2.10.0, issue #43)
+- [wow_forecaster/ingestion/cloud_sync.py](wow_forecaster/ingestion/cloud_sync.py) — listing, download, selection, write lock. NO database code: `select_objects_to_ingest()` is a pure function over key names so ordering/dedup are testable without S3 or SQLite. Reuses `cloud_fetch.parse_key_timestamp` + `_retry`; `local_path_for_key()` is the exact inverse of `cloud_fetch.build_object_key`
+- [wow_forecaster/pipeline/sync_stage.py](wow_forecaster/pipeline/sync_stage.py) — `SyncSnapshotsStage` (three-phase connections, per-object try/except) + `sync_snapshots()` entry point mirroring `durable_backup.run_backup`
+- Selection order (each rule load-bearing, see docs/cloud-capture.md): unparseable -> beyond retention -> already ingested (by snapshot path) -> UTC hour already covered -> one per hour (earliest) -> oldest first -> cap at max_objects_per_run
+- **The hour rule is what prevents double-counting**: `fetched_at` is client-side `datetime.now(UTC)` (blizzard_client.py:296), NOT the AH snapshot's own mtime, so the local :16 run and the Worker's :16 dispatch record the same underlying snapshot seconds apart and nothing else dedupes them
+- Objects are written to disk VERBATIM (raw gunzipped bytes), not re-serialized, so the cloud `_meta` block survives as provenance; `content_hash` via `compute_hash(envelope)` reproduces what cloud_fetch stored
+- `parse_blizzard_records()` extracted to module level in pipeline/ingest.py (method kept as delegate) so both paths share one implementation
+- Holds `data/db/.hourly.lock` for the write phase (bulk inserts exceed the 30s busy timeout). Mirrors run_hourly.bat's 180-minute stale takeover but WAITS then fails loudly instead of skipping: a skipped catch-up loses a whole night, and exit-0 skips are what hid the 96-day outage
+- Failed objects are never recorded in `ingestion_snapshots`, so the next run retries them; CLI exits 1 when any object failed
+- New queries: `MarketObservationRepository.get_covered_hours()` (bare `observed_at` range so `idx_obs_raw_observed` seeks; `substr()` in the SELECT list only) and `IngestionSnapshotRepository.get_ingested_paths_since()` (success = 1 only)
+- `VALID_PIPELINE_STAGES` in models/meta.py gained `sync_snapshots`
+- CLI: `sync-snapshots` (--since YYYY-MM-DD, --dry-run, --limit N, 0 = no cap); `[cloud_sync]` config; `SNAPSHOT_S3_*` in .env (read-only token, separate from BACKUP_S3_*)
 
 ### Visualization & Portfolio (v2.2.0)
 - [wow_forecaster/viz/](wow_forecaster/viz/) — publication-quality chart layer (matplotlib/seaborn/Plotly)
@@ -214,7 +227,7 @@ Next-phase work (M0 restore/harden ops -> M0.5 unattended capture -> M1 model va
 
 ## Operational state (hazard retired 2026-07-21)
 - **Ingestion restored 2026-07-21 02:43Z after 105 days dead** (leaked `data/db/.hourly.lock` from a 2026-04-15 crash). The issue #1 runbook executed in full on 2026-07-20/21: rollup backfill (coverage 22 -> 34 dates, all certified against independent sources after two hardware-induced corruption events), evidence captured to `data/outputs/backups/evidence_2026-07-20/`, both observation tables dropped and rebuilt (DB 78 GB -> 105 MB via VACUUM INTO; the known corrupt raw page never copied), lock deleted, first run green, all three scheduled tasks re-enabled and observed green (hourly every hour, health 06:45, daily 07:00 with forecasts + recommendations). Close-out record on issue #1.
-- Data gap 2026-04-08..2026-07-20 is permanent locally (Blizzard serves current snapshots only); cloud capture (#42) has been collecting hourly to R2 since 2026-07-20 21:02Z and #43 catch-up ingestion will drain it. Drift detection rebuilds its baseline over ~30 days; item-level forecasts return ~2026-08-03 (14 fresh days); #11 tracks the verification window.
+- Data gap 2026-04-08..2026-07-20 is permanent locally (Blizzard serves current snapshots only); cloud capture (#42) has been collecting hourly to R2 since 2026-07-20 21:02Z and #43 catch-up ingestion (`sync-snapshots`) drains it, dormant until the read-only SNAPSHOT_S3_* token is added to .env on rex-desktop. Drift detection rebuilds its baseline over ~30 days; item-level forecasts return ~2026-08-03 (14 fresh days); #11 tracks the verification window.
 - Machine caution (rex-desktop): systemic instability under sustained multi-GB load; after any large index build / VACUUM / bulk copy on this box, cross-verify outputs against independent sources before trusting them (two corruption events during the runbook, one after a clean mdsched pass).
 - Migrations end at 0009 (health-check indexes); new migrations start at 0010.
 
@@ -228,4 +241,4 @@ Next-phase work (M0 restore/harden ops -> M0.5 unattended capture -> M1 model va
 - Note: `except Exception` does NOT catch KeyboardInterrupt/SystemExit (those are BaseException subclasses). The global standard pattern `except (KeyboardInterrupt, SystemExit): raise` is redundant here — signals always propagate through `except Exception:` automatically.
 
 ## Test Count
-All 1408 tests passing locally as of 2026-07-23. Thirty-four of them (5 run_hourly.bat lock-guard tests from issue #3, 4 run_daily.bat freshness-gate tests from issue #12, 8 run_healthcheck.bat alerting tests from issue #4, 13 setup_tasks.bat registration + wake-to-run + backup-task tests from issues #6/#40/#80, and 4 run_backup.bat tests from issue #80, all in tests/test_scripts/) are Windows-only and skip on the Linux CI runners, so CI reports 1374 passed + 34 skipped, green on Python 3.11 and 3.12. Issue #80 also adds 15 durable-backup tests (tests/test_backup/) and 9 backup-freshness health-check tests (tests/test_reporting/test_health.py), all cross-platform.
+All 1481 tests passing locally as of 2026-07-23. Thirty-four of them (5 run_hourly.bat lock-guard tests from issue #3, 4 run_daily.bat freshness-gate tests from issue #12, 8 run_healthcheck.bat alerting tests from issue #4, 13 setup_tasks.bat registration + wake-to-run + backup-task tests from issues #6/#40/#80, and 4 run_backup.bat tests from issue #80, all in tests/test_scripts/) are Windows-only and skip on the Linux CI runners, so CI reports 1447 passed + 34 skipped, green on Python 3.11 and 3.12. Issue #80 also adds 15 durable-backup tests (tests/test_backup/) and 9 backup-freshness health-check tests (tests/test_reporting/test_health.py), all cross-platform. Issue #43 adds 73 cross-platform tests: 47 in tests/test_ingestion/test_cloud_sync.py, 14 in tests/test_db/test_cloud_sync_queries.py, 11 in tests/test_cli/test_sync_snapshots_cli.py, plus 1 smoke case. CLI `--help` assertions must check only "Usage:" (test_cli_smoke.py convention): rich colorizes and wraps the options table, so option names are not contiguous in `result.output` at the CI runner's terminal width.

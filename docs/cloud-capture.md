@@ -120,7 +120,37 @@ Steps for the repo owner; none of them belong in git:
 7. Deploy the trigger Worker (issue #83), so capture no longer depends on GitHub's schedule. Create a fine-grained PAT scoped to this repo with the Actions permission set to read and write. Then from [../cloud-trigger/](../cloud-trigger/): `wrangler secret put GH_PAT` (paste the PAT), `wrangler deploy`. The non-secret config is already in `wrangler.toml`. Fine-grained PATs expire within a year, so set a renewal reminder. Confirm with `wrangler tail` and the Actions tab that dispatch runs appear at :16 and :46.
 8. Acceptance per #42/#83: a rolling 24 hours covers at least 20 distinct capture hours and the gap guard exits 0; killing the Worker or its PAT drops delivery to fallback-only and trips the guard red within a day; one forced failure (for example, temporarily rename a secret) produces the failure email; lifecycle deletion verified on a short-TTL test prefix or a manually aged object.
 
+## Draining the bucket: `sync-snapshots` (issue #43)
+
+Capture is only half the loop. The desktop drains what the cloud stored with `wowfc sync-snapshots`, implemented as [wow_forecaster/ingestion/cloud_sync.py](../wow_forecaster/ingestion/cloud_sync.py) (listing, download, selection) and [wow_forecaster/pipeline/sync_stage.py](../wow_forecaster/pipeline/sync_stage.py) (the database work). The split is deliberate: selection is a pure function over key names, so the ordering and deduplication rules are testable without S3 or SQLite.
+
+Each object is downloaded, gunzipped, and written to disk **verbatim** at the path `build_snapshot_path()` would have produced, so the original `_meta` block survives and provenance records that the snapshot came from the cloud fetcher. Records then go through the same `parse_blizzard_records()` the live path uses (extracted to module level from `IngestStage` for exactly this reason), followed by normalization and a rollup upsert for every UTC date touched.
+
+### Selection rules, and why each exists
+
+Applied in order:
+
+1. **Unparseable keys are ignored.** Foreign objects in the bucket are not our business.
+2. **Captures older than the retention window are dropped.** `SnapshotPruner` deletes rows by `observed_at` on the next hourly run, so ingesting them would write rows destined for immediate deletion (ToS 2.r).
+3. **Objects already ingested are dropped**, matched on the derived local snapshot path. This is what makes re-running a no-op.
+4. **UTC hours that already hold observations are dropped.** This is the load-bearing one. `fetched_at` is client-side wall clock, not the AH snapshot's own modification time, so the desktop's `:16` run and the Worker's `:16` dispatch produce two records of the *same* underlying snapshot with timestamps seconds apart, and nothing else would dedupe them.
+5. **One object per UTC hour survives, the earliest.** The bucket holds two or three captures an hour; ingesting all of them would silently multiply the sample density of catch-up hours relative to every hour the desktop captured itself.
+6. **Oldest first**, so rolling normalization stats and daily rollups build forward chronologically.
+7. **Capped at `cloud_sync.max_objects_per_run`.** The remainder is logged and picked up next run. A capped run must never read as a complete one.
+
+### Bounds and defaults
+
+`max_backfill_days` defaults to 3 rather than the full retention window. On the first run after credentials are added, nothing is recorded as ingested, so an unbounded default would pull every object in the bucket (hundreds, at ~250K records each) in a single pass, on a machine with a documented history of instability under sustained multi-GB writes. Longer recoveries are an explicit `--since`, run with someone watching.
+
+### Concurrency
+
+The write phase holds `data/db/.hourly.lock`, the same lock `run_hourly.bat` takes. Bulk inserts here run to hundreds of thousands of rows and can exceed the 30s busy timeout, so SQLite's own serialization is not sufficient. The semantics mirror the bat with one deliberate difference: a fresh lock makes the bat skip, but makes this **wait, then fail loudly**. A skipped hourly run costs one sample; a skipped catch-up would leave a whole night unrecovered, and an exit-0 skip is precisely what hid the 96-day outage.
+
+### Partial failure
+
+A corrupt, truncated, or malformed object is logged, recorded as a failure, and skipped. It is never written to `ingestion_snapshots`, so the next run retries it. One bad object does not abandon the rest of the backlog, and the command exits nonzero when any object failed.
+
 ## Out of scope, noted for later
 
-- Capturing the API's `Last-Modified` response header into `_meta` would let #43 dedupe identical snapshots cheaply. `BlizzardClient` discards headers today; not worth touching the shared client in this milestone. Content hashes already give an equivalent, slightly costlier dedupe.
+- Capturing the API's `Last-Modified` response header into `_meta` would let the catch-up path dedupe on the AH snapshot's own identity rather than on the UTC hour, which is a coarser proxy. `BlizzardClient` discards headers today, and changing `observed_at` semantics would touch the whole history, so the hour rule stands.
 - Per-realm (non-commodity) auctions, EU region, and news capture stay desktop-only until there is a reason to move them.

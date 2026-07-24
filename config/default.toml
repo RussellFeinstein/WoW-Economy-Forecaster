@@ -223,6 +223,23 @@ upload_enabled = true
 # plus jitter sits well under 30h.
 stale_hours = 30.0
 
+# ── Cloud Snapshot Catch-up ────────────────────────────────────────────────────
+
+[cloud_sync]
+# sync-snapshots drains hourly commodities snapshots the cloud capture wrote to
+# R2 while this machine was asleep or off. Bucket name + credentials are secrets
+# in .env (SNAPSHOT_S3_*), not here. See docs/cloud-capture.md.
+# Default lookback when --since is not given. Kept short on purpose: on the
+# first run nothing is recorded as ingested, so an unbounded default would pull
+# the whole 30-day retention window in one pass. Use --since for real outages.
+max_backfill_days = 3
+# Cap on objects ingested per run (96 = four days of hourly captures). Whatever
+# is left over is logged and picked up by the next run, never silently dropped.
+max_objects_per_run = 96
+# Seconds to wait for data/db/.hourly.lock before failing loudly. A catch-up
+# that skipped quietly would leave a whole night unrecovered.
+lock_wait_seconds = 900.0
+
 # ── Crafting Margin Detector ───────────────────────────────────────────────────
 
 [crafting]

@@ -53,6 +53,52 @@ class MarketObservationRepository(BaseRepository):
         )
         return self.last_insert_rowid()
 
+    def get_covered_hours(
+        self,
+        source: str,
+        start: datetime,
+        end: datetime,
+    ) -> set[datetime]:
+        """Return the distinct UTC hours that already hold observations.
+
+        Used by the cloud catch-up path to skip hours the desktop captured for
+        itself; the two paths fetch the same underlying AH snapshot, so an
+        overlapping hour would otherwise be counted twice.
+
+        The ``observed_at`` column is compared bare against the bounds and
+        truncated only in the SELECT list, so ``idx_obs_raw_observed`` serves
+        the range as a seek rather than a scan.  Applying ``DATE()`` or
+        ``strftime()`` inside the predicate would defeat it.
+
+        Args:
+            source: Provider name, e.g. ``"blizzard_api"``.
+            start:  Inclusive lower bound (naive UTC).
+            end:    Exclusive upper bound (naive UTC).
+
+        Returns:
+            Set of hour-truncated naive UTC datetimes.
+        """
+        rows = self.fetchall(
+            """
+            SELECT DISTINCT substr(observed_at, 1, 13) AS hour_key
+            FROM market_observations_raw
+            WHERE observed_at >= ?
+              AND observed_at <  ?
+              AND source = ?;
+            """,
+            (start.isoformat(), end.isoformat(), source),
+        )
+        hours: set[datetime] = set()
+        for row in rows:
+            key = row["hour_key"]
+            if not key:
+                continue
+            try:
+                hours.add(datetime.strptime(key, "%Y-%m-%dT%H"))
+            except ValueError:
+                logger.warning("Unparseable observed_at hour key in raw table: %r", key)
+        return hours
+
     def insert_raw_batch(self, observations: list[RawMarketObservation]) -> int:
         """Bulk-insert raw observations.
 

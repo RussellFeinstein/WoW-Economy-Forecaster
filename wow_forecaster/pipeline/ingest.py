@@ -41,6 +41,74 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def parse_blizzard_records(
+    records_data: list[dict],
+    observed_at: datetime,
+    known_item_ids: set[int],
+) -> tuple[list[RawMarketObservation], int]:
+    """Convert Blizzard AH records to :class:`RawMarketObservation` objects.
+
+    Module-level so the cloud catch-up path
+    (:mod:`wow_forecaster.pipeline.sync_stage`) parses snapshots exactly the way
+    the live path does, from one implementation.  ``IngestStage`` delegates here.
+
+    Blizzard auction records contain per-auction listings without TSM-style
+    market values.  The min-buyout field is derived as follows:
+
+    - ``unit_price > 0`` (commodity): use ``unit_price`` as ``min_buyout_raw``
+    - ``buyout > 0`` (non-commodity with buyout): use ``buyout``
+    - Otherwise (bid-only listing): ``min_buyout_raw = None``
+
+    Faction is always ``"neutral"`` — Blizzard connected-realm auctions are
+    not faction-segregated for our modelling purposes.
+
+    Args:
+        records_data: List of serialised record dicts from the snapshot.
+        observed_at: UTC timestamp from the API response (``fetched_at``).
+        known_item_ids: Set of item IDs present in ``items`` table.
+
+    Returns:
+        Tuple of ``(observations, skipped_count)``.
+    """
+    from wow_forecaster.models.market import RawMarketObservation
+
+    observations: list[RawMarketObservation] = []
+    skipped = 0
+
+    for rec in records_data:
+        item_id = rec["item_id"]
+        if item_id not in known_item_ids:
+            skipped += 1
+            continue
+
+        unit_price = rec.get("unit_price") or 0
+        buyout = rec.get("buyout") or 0
+        if unit_price > 0:
+            min_buyout_raw: int | None = unit_price
+        elif buyout > 0:
+            min_buyout_raw = buyout
+        else:
+            min_buyout_raw = None
+
+        observations.append(
+            RawMarketObservation(
+                item_id=item_id,
+                realm_slug=rec["realm_slug"],
+                faction="neutral",
+                observed_at=observed_at,
+                source="blizzard_api",
+                min_buyout_raw=min_buyout_raw,
+                market_value_raw=None,
+                historical_value_raw=None,
+                quantity_listed=rec.get("quantity"),
+                num_auctions=1,
+                raw_json=json.dumps(rec, separators=(",", ":")),
+            )
+        )
+
+    return observations, skipped
+
+
 class IngestStage(PipelineStage):
     """Fetch raw AH data from all configured providers and persist to disk.
 
@@ -190,63 +258,12 @@ class IngestStage(PipelineStage):
         observed_at: datetime,
         known_item_ids: set[int],
     ) -> tuple[list[RawMarketObservation], int]:
-        """Convert Blizzard AH records to :class:`RawMarketObservation` objects.
+        """Delegate to :func:`parse_blizzard_records`.
 
-        Blizzard auction records contain per-auction listings without TSM-style
-        market values.  The min-buyout field is derived as follows:
-
-        - ``unit_price > 0`` (commodity): use ``unit_price`` as ``min_buyout_raw``
-        - ``buyout > 0`` (non-commodity with buyout): use ``buyout``
-        - Otherwise (bid-only listing): ``min_buyout_raw = None``
-
-        Faction is always ``"neutral"`` — Blizzard connected-realm auctions are
-        not faction-segregated for our modelling purposes.
-
-        Args:
-            records_data: List of serialised record dicts from the snapshot.
-            observed_at: UTC timestamp from the API response (``fetched_at``).
-            known_item_ids: Set of item IDs present in ``items`` table.
-
-        Returns:
-            Tuple of ``(observations, skipped_count)``.
+        Kept as a method so existing callers and tests are unaffected; the
+        implementation is module-level so the cloud catch-up path shares it.
         """
-        from wow_forecaster.models.market import RawMarketObservation
-
-        observations: list[RawMarketObservation] = []
-        skipped = 0
-
-        for rec in records_data:
-            item_id = rec["item_id"]
-            if item_id not in known_item_ids:
-                skipped += 1
-                continue
-
-            unit_price = rec.get("unit_price") or 0
-            buyout = rec.get("buyout") or 0
-            if unit_price > 0:
-                min_buyout_raw: int | None = unit_price
-            elif buyout > 0:
-                min_buyout_raw = buyout
-            else:
-                min_buyout_raw = None
-
-            observations.append(
-                RawMarketObservation(
-                    item_id=item_id,
-                    realm_slug=rec["realm_slug"],
-                    faction="neutral",
-                    observed_at=observed_at,
-                    source="blizzard_api",
-                    min_buyout_raw=min_buyout_raw,
-                    market_value_raw=None,
-                    historical_value_raw=None,
-                    quantity_listed=rec.get("quantity"),
-                    num_auctions=1,
-                    raw_json=json.dumps(rec, separators=(",", ":")),
-                )
-            )
-
-        return observations, skipped
+        return parse_blizzard_records(records_data, observed_at, known_item_ids)
 
     # ── Per-source fetch helpers ───────────────────────────────────────────────
 

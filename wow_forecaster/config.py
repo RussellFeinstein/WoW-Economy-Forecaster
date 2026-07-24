@@ -310,6 +310,36 @@ class BackupConfig(BaseModel):
     stale_hours:    float = 30.0
 
 
+class CloudSyncConfig(BaseModel):
+    """Cloud snapshot catch-up settings (see docs/cloud-capture.md).
+
+    ``sync-snapshots`` drains hourly commodities snapshots that the cloud
+    capture wrote to R2 while this machine was asleep or off.  The bucket name
+    and credentials are secrets and live in ``.env`` (``SNAPSHOT_S3_*``), never
+    here.
+
+    Attributes:
+        max_backfill_days: Default lookback when ``--since`` is not given.
+            Deliberately short: on the first run after credentials are added,
+            nothing is recorded as ingested yet, so an unbounded default would
+            pull the entire 30-day retention window (hundreds of objects at
+            ~250K records each) in one pass.  Widen it explicitly with
+            ``--since`` when recovering from a longer outage.
+        max_objects_per_run: Cap on objects ingested in a single run.  The count
+            left behind is logged, never silently dropped, and the next run
+            picks it up.  96 is four days of hourly captures.
+        lock_wait_seconds: How long to wait for ``data/db/.hourly.lock`` before
+            giving up.  A catch-up that quietly skipped would leave a whole
+            night unrecovered, so it waits and then fails loudly.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    max_backfill_days:   int   = 3
+    max_objects_per_run: int   = 96
+    lock_wait_seconds:   float = 900.0
+
+
 class AppConfig(BaseModel):
     """Complete application configuration — the single source of truth.
 
@@ -334,6 +364,7 @@ class AppConfig(BaseModel):
     crafting:   CraftingConfig   = CraftingConfig()
     retention:  RetentionConfig  = RetentionConfig()
     backup:     BackupConfig     = BackupConfig()
+    cloud_sync: CloudSyncConfig  = CloudSyncConfig()
     debug: bool = False
 
 
