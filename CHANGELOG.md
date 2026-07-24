@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.11.0] - 2026-07-24
 
 ### Added
 - `wowfc learn`, a study and assessment track for this codebase, shipped alongside it. Twenty modules across four parts (the domain and the data; features, models, and statistics; failure, history, and operations; proving it and shipping it), question banks with spaced repetition, and labs that are real open work rather than exercises. Runs as a third parallel track: `docs/ROADMAP.md` owns the research arc, `PLAN.md` owns the lifecycle arc, and this one owns understanding. The premise is that the repo is the textbook and the track is the syllabus and the exam, so no module restates what a docstring already explains
