@@ -121,7 +121,7 @@ instead if the Terraform license is a concern.
 
 | Concern | Where |
 |---|---|
-| Entry points | `wow-forecaster` / `wowfc` Typer CLI, 41 commands, [wow_forecaster/cli.py](wow_forecaster/cli.py) at 4,508 lines |
+| Entry points | `wow-forecaster` / `wowfc` Typer CLI, 40 commands plus the `learn` sub-app, [wow_forecaster/cli.py](wow_forecaster/cli.py) at 4,508 lines |
 | Training | `TrainStage` to `train_models()` in [wow_forecaster/ml/trainer.py](wow_forecaster/ml/trainer.py). Runs unconditionally every day via `run-daily-forecast` |
 | Inference | `ForecastStage` to `run_inference()` in [wow_forecaster/ml/predictor.py](wow_forecaster/ml/predictor.py), batch only, writes `forecast_outputs` |
 | Model artifacts | joblib `.pkl` plus JSON sidecar in `data/outputs/model_artifacts/` (gitignored) |
@@ -206,7 +206,9 @@ They currently display nothing.
 
 Doc drift found along the way: README says 37 model features (actual 40), 23
 tables in one place and 21 in another (actual 23), "1,200+ tests" in a badge and
-"1,400+" in the body (actual 1,481), 39 CLI commands (actual 41).
+"1,400+" in the body (actual 1,481), 39 CLI commands (actual 40; the audit's own
+"41" was itself wrong, and all three numbers were corrected when the learning
+track landed in v2.11.0).
 
 ### MLOps story
 

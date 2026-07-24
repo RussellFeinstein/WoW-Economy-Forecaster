@@ -1,0 +1,588 @@
+# M06: Splitting time series without lying to yourself.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+
+# ── The correct component: backtest/splits.py ─────────────────────────────────
+
+[[question]]
+id = "m06-q01"
+kind = "recall"
+prompt = """
+Walk-forward validation in this repo makes exactly one structural promise about
+every fold it generates. What is the promise, and why is stating it in terms of
+dates rather than rows the whole point?
+"""
+rubric = [
+  "test_date > train_end, for every fold, with no exceptions",
+  "It is a statement about the date being predicted, not about row counts or ordering",
+  "So no information from the test window can reach the model during training",
+  "It is a design-level guarantee, not a runtime assertion: nothing checks it at execution time",
+]
+answer = """
+Every fold satisfies test_date > train_end. The docstring says so directly, and
+calls it a design-level guarantee rather than a runtime check, which is honest:
+the generator is constructed so the property holds, and nothing asserts it later.
+
+The reason to phrase it as a date relation is that a forecasting row is two
+different points in time at once. It has a feature date (when the inputs were
+observed) and a label date (the future price being predicted). A split defined
+over rows, or over feature dates alone, does not pin down where the labels fall.
+A split defined over the predicted date does. Hold onto that distinction; M06
+exists because the other half of this repo does not make it.
+"""
+source = "wow_forecaster/backtest/splits.py"
+anchor = "The structural guarantee is: test_date > train_end for every fold."
+see_also = ["LESSONS.md"]
+
+[[question]]
+id = "m06-q02"
+kind = "mcq"
+prompt = """
+The fold generator uses a fixed rolling training window rather than an expanding
+one that grows from a fixed start. Why, for this data specifically?
+"""
+answer = """
+Rolling origin with a fixed window tests generalization across market regimes,
+which is the real production question for a system whose whole premise is
+transferring across expansions.
+
+An expanding window is easier to justify statistically (more data per fold, lower
+variance in the estimate) but it means the earliest data influences every fold,
+and a large historical sample smooths regime shifts away. WoW markets move
+through regimes on a schedule: the race-to-world-first spike, the mid-season lull,
+a content-patch burst, the season-end crash. A model that only looks good because
+three years of history diluted the regime change has not been tested on the thing
+that will actually break it.
+"""
+options = [
+  { text = "A fixed window tests whether the model generalizes across market regimes, which an expanding window smooths away", correct = true },
+  { text = "A fixed window is faster to train, which matters because folds multiply by series and horizon", note = "True but not the reason. The docstring argues from regimes, not from cost, and a correctness argument outranks a performance one." },
+  { text = "An expanding window would leak future data into early folds", note = "It would not. An expanding window still satisfies test_date > train_end; it just uses more history per fold. Leakage is a separate axis from window shape." },
+  { text = "The 30-day retention wall makes an expanding window impossible", note = "The wall limits raw observations, not the daily rollups the backtest reads. Rollups are the durable history and are not capped at 30 days." },
+]
+source = "wow_forecaster/backtest/splits.py"
+anchor = "Rolling origin better tests: \"can the model generalize across regimes?\""
+
+[[question]]
+id = "m06-q03"
+kind = "predict"
+prompt = """
+Data runs 2025-01-01 to 2025-03-31. Config sets window_days = 30, step_days = 7,
+and you generate folds for horizon_days = 3.
+
+What is the train_end of fold 0, and what stops the loop at the end?
+"""
+answer = """
+Fold 0 has train_end = 2025-01-30.
+
+The first cutoff is start_date + (window_days - 1), which is 2025-01-01 plus 29
+days. The off-by-one to watch: window_days counts days inclusively, so a 30-day
+window starting 2025-01-01 ends on 2025-01-30, not 2025-01-31.
+
+The loop breaks when test_date > end_date, where test_date = cutoff +
+horizon_days. So it stops as soon as the date being predicted would fall outside
+the data, not when the training window would. That is why a longer horizon
+produces fewer folds from the same date range: each fold needs its label to exist.
+"""
+options = [
+  { text = "train_end = 2025-01-30; the loop stops when test_date would exceed end_date", correct = true },
+  { text = "train_end = 2025-01-31; the loop stops when test_date would exceed end_date", note = "Off by one. window_days is inclusive: 2025-01-01 plus (30 - 1) days is 2025-01-30. Getting this wrong shifts every fold by a day." },
+  { text = "train_end = 2025-01-30; the loop stops when train_end would exceed end_date", note = "The break condition is on test_date, not train_end. Stopping on train_end would generate folds whose labels do not exist in the data." },
+  { text = "train_end = 2025-01-04; the window is counted backwards from the first cutoff", note = "The window is counted forward from start_date to find the first cutoff. train_start is then derived backwards from that cutoff, which is where 2025-01-01 comes back." },
+]
+source = "wow_forecaster/backtest/splits.py"
+anchor = "cutoff = start_date + timedelta(days=window_days - 1)"
+
+[[question]]
+id = "m06-q04"
+kind = "find"
+prompt = """
+The fold generator validates its arguments and raises ValueError on three of
+them, but one invalid-looking input returns an empty list instead of raising.
+Which input, and why is returning empty the right call there?
+"""
+rubric = [
+  "end_date <= start_date returns an empty list rather than raising",
+  "window_days, step_days, and horizon_days below 1 all raise ValueError",
+  "A too-short date range is a data condition, not a programming error",
+  "So a caller sweeping a range that happens to be empty gets zero folds, not a crash",
+]
+answer = """
+end_date <= start_date returns []. The three integer parameters raise ValueError
+when below 1.
+
+The distinction is between a caller mistake and a data condition. window_days = 0
+is nonsense no matter what data exists, so it is a bug in the call and should be
+loud. A date range that is empty or inverted is something a caller can legitimately
+arrive at by sweeping dates over a database that turned out to have one day of
+history, and the honest answer is "no folds", not an exception. The same file
+also returns [] when the range is long enough to validate but too short to fit a
+single fold, which is the same reasoning applied one step further.
+"""
+source = "wow_forecaster/backtest/splits.py"
+anchor = "if end_date <= start_date:"
+
+# ── The incorrect component: ml/trainer.py ───────────────────────────────────
+
+[[question]]
+id = "m06-q05"
+kind = "recall"
+prompt = """
+trainer.py holds out the last 14 calendar days as validation, splitting rows by
+obs_date. The docstring says random splits would create look-ahead bias, and that
+is correct.
+
+The 1d model is fine. Why is the 28d model's validation MAE meaningless?
+"""
+rubric = [
+  "Each training row at date T carries the label price(T + h)",
+  "With h = 28, training labels run to split_date + 28",
+  "That covers the entire 14-day validation window and 14 days beyond it",
+  "So every validation label is a price the model already saw as a training label",
+]
+answer = """
+Because the split is on the feature date, and the label reaches past it.
+
+A training row at obs_date = T carries the target price(T + h). The split keeps
+every row with obs_date <= split_date in training. For h = 28 that means training
+labels extend to split_date + 28. The validation window is only 14 days wide, so
+it is entirely inside the range the training labels already covered, with two
+weeks to spare. Every single validation label is a price the model was fit on.
+
+The 7d model leaks half the window: labels reach split_date + 7 against a 14-day
+window. The 1d model leaks one day out of 14, which is small but not zero.
+
+The split prevents exactly the failure its docstring names, and misses the one it
+does not. That is what makes it worth studying rather than just fixing: the
+reasoning was sound and the conclusion was still wrong.
+"""
+source = "wow_forecaster/ml/trainer.py"
+anchor = "val_split_date = date_strs[-(val_days + 1)]"
+see_also = ["LESSONS.md", "PLAN.md"]
+lab = "lab-01-purge-embargo"
+
+[[question]]
+id = "m06-q06"
+kind = "recall"
+prompt = """
+Name the general rule this repo violated, in one sentence, in a form that would
+have prevented it. Then say which component got it right and what its rule
+looks like.
+"""
+rubric = [
+  "For a forecasting target, the split boundary belongs on the label date, not the feature date",
+  "backtest/splits.py got it right, independently",
+  "Its guarantee test_date > train_end is a statement about labels",
+  "Two components in one repo disagreed about what a split means, and only one was audited",
+]
+answer = """
+The rule: for a forecasting target, the split boundary belongs on the label date,
+not the feature date.
+
+backtest/splits.py already encodes exactly that. Its guarantee, test_date >
+train_end, is a statement about the date being predicted. It arrived at the right
+rule independently and never shared it, because the two components were written
+for different purposes and only one of them was ever audited for leakage.
+
+The generalizable lesson is not "remember to purge". It is that when two parts of
+a system both implement a concept as fundamental as a train/test split, the fact
+that they disagree is itself the finding, and it is visible without running
+anything.
+"""
+source = "wow_forecaster/backtest/splits.py"
+anchor = "The structural guarantee is: test_date > train_end for every fold."
+see_also = ["LESSONS.md"]
+
+[[question]]
+id = "m06-q07"
+kind = "predict"
+prompt = """
+Config: validation_split_days = 14, target_horizons_days = [1, 7, 28].
+
+Training data covers 2025-01-01 through 2025-03-31 with no gaps. Give the
+validation window, and for each horizon, how many days of the validation window
+are contaminated.
+"""
+answer = """
+There are 90 dates. The split date is the 15th from the end, so validation covers
+2025-03-18 through 2025-03-31, which is 14 days, and split_date = 2025-03-17.
+
+Training labels reach split_date + h:
+
+  h = 1   -> 2025-03-18.  1 of 14 validation days contaminated.
+  h = 7   -> 2025-03-24.  7 of 14 contaminated.
+  h = 28  -> 2025-04-14.  14 of 14 contaminated, plus 14 days past the window.
+
+The h = 28 row is the one to remember: the contamination is not partial. There is
+no clean validation label anywhere in that model's holdout, so its reported
+validation_mae is not a weak estimate of generalization error. It is a training
+error wearing a validation label.
+"""
+options = [
+  { text = "Validation is 2025-03-18 to 2025-03-31; contamination is 1, 7, and 14 of 14 days", correct = true },
+  { text = "Validation is 2025-03-18 to 2025-03-31; contamination is 0, 0, and 14 of 14 days", note = "The 1d and 7d models leak too, just less. Training labels reach split_date + h for every h >= 1, so the only uncontaminated case is h = 0, which is not a forecast." },
+  { text = "Validation is 2025-03-17 to 2025-03-31; contamination is 1, 7, and 15 of 15 days", note = "Off by one on the window. split_date itself stays in training (the filter is obs_date <= val_split_date), so validation starts the day after and is 14 days, matching validation_split_days." },
+  { text = "Validation is 2025-03-18 to 2025-03-31; contamination is 1, 7, and 28 of 14 days", note = "Contamination cannot exceed the window width. The 28d model's labels do run 14 days past the window, but only 14 days of validation exist to contaminate." },
+]
+source = "wow_forecaster/ml/trainer.py"
+anchor = "train_rows = [r for r in encoded_rows if str(r.get(\"obs_date\", \"\")) <= val_split_date]"
+
+[[question]]
+id = "m06-q08"
+kind = "recall"
+prompt = """
+The leaked validation set does more damage than one wrong number in a metadata
+table. What is the second-order effect, and which mechanism causes it?
+"""
+rubric = [
+  "The same validation set drives LightGBM early stopping",
+  "Early stopping picks the boosting round that minimizes validation error",
+  "That error is measured on labels the model already trained on, so it keeps improving",
+  "So the stopping round is chosen against a contaminated signal: the model is mis-sized, not just mis-scored",
+]
+answer = """
+The validation set is passed to LightGBM as a watchlist, and early stopping halts
+training when validation error stops improving. But that error is computed on
+labels the model already fit, so it keeps going down past the point where genuine
+generalization error would have turned around. The chosen stopping round is
+therefore too high: the model is overfit by construction, not merely
+optimistically scored.
+
+This is why the fix cannot be "report a different number". A mis-scored model is
+still the right model with the wrong label on it. A mis-sized model is a different
+model. Retraining after the split is fixed will produce different boosters, and
+the honest reading is that no current accuracy claim survives.
+"""
+source = "wow_forecaster/ml/lgbm_model.py"
+anchor = "stopping_rounds=self._early_stopping_rounds,"
+see_also = ["PLAN.md"]
+lab = "lab-01-purge-embargo"
+
+[[question]]
+id = "m06-q09"
+kind = "find"
+prompt = """
+trainer.py has a second split path that does not use dates at all. Find it, say
+when it triggers, and say what it does about label leakage.
+"""
+rubric = [
+  "The 80/20 row-count fallback, used when the data has fewer dates than validation_split_days",
+  "It slices the encoded row list by index, not by date",
+  "It does nothing about label leakage, and additionally does not guarantee temporal ordering of the split",
+  "It logs a warning, so it is at least visible when it happens",
+]
+answer = """
+The fallback splits the encoded rows 80/20 by list index when the training window
+holds fewer distinct dates than validation_split_days. It logs a warning, which is
+the one thing it does right.
+
+It is worse than the date path on two counts. It inherits the label leakage
+unchanged, and it also drops the temporal guarantee entirely: the split follows
+row order in the Parquet, which is whatever the dataset builder emitted, so a
+"validation" row can predate a "training" row. The docstring's own warning about
+random splits applies to this branch, from inside the same function.
+
+Worth noting where this actually bites. It is the cold-start path, which is
+exactly the regime the whole transfer-learning premise operates in.
+"""
+source = "wow_forecaster/ml/trainer.py"
+anchor = "# Fallback: 80/20 row-count split when window is very short"
+
+# ── The fix: purging and embargo ─────────────────────────────────────────────
+
+[[question]]
+id = "m06-q10"
+kind = "recall"
+prompt = """
+Define purging and embargo as they apply to this training split. What does each
+one remove, and why is purging alone not enough?
+"""
+rubric = [
+  "Purging drops training rows whose target date falls at or after the validation start",
+  "That removes the direct overlap: no training label is a validation label",
+  "Embargo additionally drops training rows within h days before the purge boundary",
+  "Because adjacent rows share overlapping rolling-feature windows, so information bleeds across the boundary even when labels do not",
+]
+answer = """
+Purging: drop every training row whose target date (obs_date + h) falls at or
+after the validation start. That kills the direct overlap. After purging, no
+training label is also a validation label.
+
+Embargo: additionally drop training rows in a buffer of h days immediately before
+the purge boundary. Purging handles the labels; embargo handles the features. Rows
+adjacent to the boundary carry rolling windows and lags computed over spans that
+reach into the validation period, so two rows straddling the cut are correlated
+even when neither one's label crosses. Without the buffer, the model can learn the
+local regime of the validation window from features rather than labels.
+
+Cost: for h = 28, purging plus embargo removes roughly 56 days from the end of the
+training set. That is real, and on a 90-day history it is most of it. Which is the
+argument for the walk-forward backtest doing the heavy lifting on evaluation
+rather than a single holdout.
+"""
+source = "wow_forecaster/ml/trainer.py"
+anchor = "# ── Time-based validation split ───────────────────────────────────────────"
+lab = "lab-01-purge-embargo"
+
+[[question]]
+id = "m06-q11"
+kind = "mcq"
+prompt = """
+You are writing the regression test for the purge fix. Which assertion actually
+catches the bug, in a way that fails against today's trainer.py?
+"""
+answer = """
+Assert on the label date. For every horizon, no training row's target date may
+fall at or after the validation start.
+
+That is the property that is violated right now, and it is violated per horizon,
+so the test has to be parameterized over horizons or it will pass on 1d and tell
+you nothing. Asserting on obs_date instead just re-checks the split that already
+works.
+"""
+options = [
+  { text = "For each horizon h, assert max(obs_date + h) over training rows < validation start", correct = true },
+  { text = "Assert max(obs_date) over training rows < min(obs_date) over validation rows", note = "This passes today. It tests the feature-date split, which is already correct, so it would give a green light to the exact bug being fixed." },
+  { text = "Assert the training and validation row counts sum to the input row count", note = "This passes today and must stop passing after the fix: purging deliberately drops rows, so they no longer sum. A useful invariant to update, but it detects nothing." },
+  { text = "Assert validation_mae is above some floor after retraining", note = "Directionally true, since the honest number will be worse, but a threshold on a metric is not a leakage test. It would drift, need retuning, and never say what is wrong." },
+]
+source = "wow_forecaster/ml/trainer.py"
+anchor = "val_days = config.model.validation_split_days"
+lab = "lab-01-purge-embargo"
+
+[[question]]
+id = "m06-q12"
+kind = "predict"
+prompt = """
+After purging and embargo land, what happens to the validation_mae recorded in
+model_metadata for the 28d model, and what should you conclude if it barely
+changes?
+"""
+rubric = [
+  "It should get worse, because the current number is measured on seen labels",
+  "If it barely changes, that is a signal the model was not learning much beyond the current price",
+  "Because price_mean is both a feature and the basis of the target",
+  "So a model behaving like the last_value baseline scores similarly either way, and the leak was hiding that rather than causing it",
+]
+answer = """
+It should get worse. The current figure is an optimistic training error.
+
+If it barely moves, do not take that as reassurance. price_mean is both a model
+feature and the basis of the target, so a model that learned nothing beyond
+"predict roughly today's price" will post a respectable MAE whether or not it saw
+the labels. In that case the leak was not inflating the score much because there
+was not much skill to inflate, and the flat result is evidence the model is close
+to the last_value baseline.
+
+Which is exactly why the fix is worth little on its own. Nothing in the system can
+currently distinguish a good model from a random walk, because the comparison has
+never been run. That is the next lab.
+"""
+options = [
+  { text = "It should get worse; a flat result suggests the model is close to the last_value baseline", correct = true },
+  { text = "It should get worse; a flat result confirms the leak was not material", correct = false, note = "A flat result is ambiguous, and the benign reading is the less likely one. price_mean feeding both features and target means low skill also produces a flat result, and that possibility has to be ruled out by comparison, not assumed away." },
+  { text = "It should improve, because training on cleaner data generalizes better", note = "Purging removes training rows and cannot improve fit. It changes what the number means, not how good the model is. Expect the honest number to be worse than the dishonest one." },
+  { text = "It should stay identical, since the same rows are used, just partitioned differently", note = "Purging drops rows rather than moving them, so both the training set and the measured error change." },
+]
+source = "wow_forecaster/backtest/models.py"
+anchor = "If an ML model cannot beat ALL of these baselines, it is not ready for use."
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m06-q13"
+kind = "recall"
+prompt = """
+There is a config-level tell that the model-versus-baseline comparison could
+never have been run, visible without reading any code. What is it?
+"""
+rubric = [
+  "backtest.horizons_days is [1, 3]",
+  "features.target_horizons_days is [1, 7, 28]",
+  "They share only horizon 1, so 7d and 28d have no baseline to compare against at all",
+  "A comparison across mismatched horizons is not a comparison, and the mismatch sat in config in plain sight",
+]
+answer = """
+The two horizon lists in config/default.toml do not match. Backtests run at
+[1, 3]; production forecasts at [1, 7, 28]. The only shared value is 1.
+
+So even if the backtest harness had included the ML model, two of the three
+production horizons had no baseline to be compared against, and the third was
+compared on a different partition with different aggregation. The stated
+acceptance bar in backtest/models.py, that a model must beat all four baselines,
+was unmeasurable the whole time, and the evidence was two lines of config.
+
+The transferable habit: when a docstring states an acceptance bar, check that
+something actually evaluates it. Otherwise the stated standard and the enforced
+standard drift apart silently, and the drift is invisible in every green test run.
+"""
+source = "config/default.toml"
+anchor = "horizons_days = [1, 3]"
+see_also = ["LESSONS.md", "PLAN.md"]
+
+[[question]]
+id = "m06-q14"
+kind = "mcq"
+prompt = """
+Someone proposes fixing the leak by shrinking the horizon set to [1, 3] so it
+matches the backtest config. What is wrong with that?
+"""
+answer = """
+It solves the wrong problem. The leak is caused by the split rule, not by the
+horizon values, and dropping the 7d and 28d models removes the product's most
+useful outputs to make a measurement problem disappear.
+
+The 28d forecast is what the crafting windows and the longer-horizon
+recommendations are built on. Deleting it to make validation clean is choosing to
+measure less rather than measure honestly. The right direction is the opposite:
+align backtest.horizons_days up to [1, 7, 28] so the comparison becomes possible,
+and fix the split so the holdout means something.
+"""
+options = [
+  { text = "The leak comes from the split rule, not the horizon values; shrinking horizons deletes useful output to hide a measurement problem", correct = true },
+  { text = "Nothing is wrong; matching the two config values is the documented fix", note = "The two lists do need to match, but by raising the backtest horizons to [1, 7, 28], not by lowering the production ones. The mismatch is a symptom; the direction of the fix matters." },
+  { text = "It would work, but only after the realization ledger lands", note = "The ledger is unrelated to this. It scores forecasts against actuals after they mature; it does not make a leaked training split clean." },
+  { text = "It would break the crafting advisor's imports", note = "The advisor reads forecasts by horizon from the database and degrades to fallbacks when one is absent, so it would keep running. The cost is a worse product, not an ImportError." },
+]
+source = "config/default.toml"
+anchor = "target_horizons_days = [1, 7, 28]"
+
+[[question]]
+id = "m06-q15"
+kind = "recall"
+prompt = """
+Why is the walk-forward harness the right place to evaluate this model, rather
+than a bigger or better single holdout?
+"""
+rubric = [
+  "A single holdout gives one estimate from one regime, so it cannot show degradation over time",
+  "Purging and embargo cost roughly 2h days off the end of the training data, which is severe on a short history",
+  "Walk-forward reuses the whole date range as many folds, so the evaluation set is far larger than one holdout",
+  "And it produces per-fold errors, which is what a paired significance test needs",
+]
+answer = """
+Three reasons, and the third is the one that matters most later.
+
+First, a single holdout is one estimate from one market regime. It cannot answer
+whether the model degrades as an expansion matures, which is the actual production
+question here.
+
+Second, purging plus embargo removes about 2h days from the end of training. At
+h = 28 on a 90-day history, a single holdout leaves very little to train on.
+Walk-forward amortizes that cost across many folds instead of paying it once at
+the end.
+
+Third, walk-forward produces a per-fold error series per model. That is exactly
+the input a paired test needs: Diebold-Mariano and Wilcoxon signed-rank both
+operate on paired error differences across folds. A single holdout gives one
+number per model, and you cannot test a difference between two numbers.
+"""
+source = "wow_forecaster/backtest/splits.py"
+anchor = "Rolling origin better tests: \"can the model generalize across regimes?\""
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m06-q16"
+kind = "find"
+prompt = """
+The backtest harness was built so an ML model could be dropped into it later.
+Find the sentence that says so, name the two methods a model must implement, and
+say what "later never arrived" means concretely.
+"""
+rubric = [
+  "The protocol is intentionally minimal so ML models can implement the same interface later",
+  "fit(rows) and predict(horizon_days)",
+  "BacktestStage calls all_baseline_models() and nothing else, so only the four baselines ever run",
+  "A grep for LightGBMForecaster across backtest/ returns nothing",
+]
+answer = """
+backtest/models.py states it in the interface-contract section: the protocol is
+intentionally minimal so ML models can implement the same interface later. The
+contract is two methods, fit(rows) and predict(horizon_days), both already
+implemented by LightGBMForecaster in spirit.
+
+Concretely, later never arrived: BacktestStage calls all_baseline_models() and
+nothing else, so every backtest run has compared four naive baselines against each
+other. LightGBMForecaster appears nowhere under backtest/.
+
+The lesson worth keeping: a baseline the candidate model is never run against is
+not a baseline, it is a fixture. Building the harness and running the comparison
+are separate pieces of work, and only one of them got done.
+"""
+source = "wow_forecaster/backtest/models.py"
+anchor = "This protocol is intentionally minimal so ML models can implement the same"
+see_also = ["LESSONS.md"]
+
+[[question]]
+id = "m06-q17"
+kind = "mcq"
+prompt = """
+Which of these is a feature-leakage problem rather than a label-leakage problem?
+"""
+answer = """
+Computing a 7-day rolling mean with a window that includes the target date is
+feature leakage: an input contains information from after the prediction point.
+
+The distinction is worth holding precisely, because this repo handles the two
+asymmetrically. Feature leakage is handled carefully: features/lag_rolling.py
+documents its boundary, and the inference column set is deliberately smaller than
+the training set. Label leakage in the training split is not handled at all. Two
+different failure modes, two different fixes, and knowing which one you are
+looking at determines whether you reach for the feature builder or the splitter.
+"""
+options = [
+  { text = "A 7-day rolling mean whose window includes the target date", correct = true },
+  { text = "Training rows whose target date falls inside the validation window", note = "That is label leakage: the input features are fine, the labels overlap. This is the trainer.py defect." },
+  { text = "Early stopping choosing its round against a contaminated validation set", note = "A downstream consequence of label leakage, not a feature problem. The features going into early stopping are legitimate; the labels it scores against are not." },
+  { text = "backtest.horizons_days disagreeing with features.target_horizons_days", note = "A config-to-code mismatch that makes comparison impossible. Not leakage of either kind, though it hid the consequences of both." },
+]
+source = "wow_forecaster/features/lag_rolling.py"
+anchor = "Lag and rolling features only access obs_date ≤ current date."
+
+[[question]]
+id = "m06-q18"
+kind = "recall"
+prompt = """
+You are asked in an interview: "your repo's LESSONS.md says a time-based split
+was not enough. Walk me through it." Give the ninety-second answer.
+"""
+rubric = [
+  "The split was on obs_date, holding out the last 14 calendar days, which is correct for feature leakage",
+  "But each row's label is price(obs_date + h), so labels crossed the boundary for h > 0",
+  "At h = 28 the entire 14-day validation window was contaminated, and early stopping used that signal too",
+  "The fix is purging on label date plus an h-day embargo; splits.py had the right rule all along",
+  "And the honest framing: no current accuracy claim survives, which is why the baseline comparison comes next",
+]
+answer = """
+A ninety-second version that lands:
+
+"We split the training Parquet by observation date and held out the last fourteen
+calendar days. That reasoning was right as far as it went, and it does prevent the
+random-split failure. What it missed is that a forecasting row has two dates. The
+features are stamped at T, but the label is the price at T plus the horizon. So for
+any horizon above zero, training labels cross the split boundary. At our 28-day
+horizon they covered the entire validation window and two weeks past it, so every
+validation label was a price the model had already trained on. Worse, that same
+validation set drove LightGBM's early stopping, so the stopping round was chosen
+against the contaminated signal too. The model was mis-sized, not just mis-scored.
+
+The fix is purging plus an embargo: drop training rows whose target date lands at
+or after the validation start, then buffer another horizon's worth to stop rolling
+features bleeding across. The interesting part is that our walk-forward backtest
+had the right rule all along, test_date greater than train_end, which is a
+statement about labels. Two components in one repo disagreed about what a split
+means and only one had been audited.
+
+And the honest part: this means none of our accuracy numbers survive, so the next
+piece of work is running the model against the baselines for the first time."
+
+That last paragraph is what separates a candidate who found a bug from one who
+understands what it invalidates.
+"""
+source = "wow_forecaster/ml/trainer.py"
+anchor = "val_split_date = date_strs[-(val_days + 1)]"
+see_also = ["LESSONS.md", "PLAN.md"]
+lab = "lab-01-purge-embargo"

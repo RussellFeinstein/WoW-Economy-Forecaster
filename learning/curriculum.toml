@@ -1,0 +1,487 @@
+# Learning track syllabus.
+#
+# All twenty modules are declared here from the first phase onward, so the shape
+# of the track is visible before the content is written. Question banks land one
+# part per PR; a module with no bank file reports as "not authored yet" rather
+# than being hidden. See learning/README.md.
+#
+# Fields:
+#   id          m01 .. m20, matching banks/<id>.toml and modules/<id>-*.md
+#   title       one line, shown in status and drill headers
+#   part        which of the four parts the module belongs to
+#   summary     why this module exists, in a sentence or two
+#   objectives  what you can do after it
+#   reading     real files in this repo. The repo is the textbook.
+#   prereqs     soft ordering only; nothing is gated
+#   lab         optional lab id, resolving to labs/<lab>.md
+
+# ── Part I. The domain and the data ───────────────────────────────────────────
+
+[[module]]
+id = "m01"
+title = "The market and the problem"
+part = "Part I. The domain and the data"
+summary = """
+What the system forecasts and why that is not trivial. The interesting
+constraints are structural, not modeling choices: the commodity auction house is
+region-wide, the API serves only the current snapshot, and the Terms of Service
+cap raw retention at 30 days, which puts a hard ceiling on how much history any
+long-horizon evaluation can ever see.
+"""
+objectives = [
+  "Explain what a forecast target is here: an archetype's daily mean price, not an item's",
+  "Say why transfer is category-level and not item-to-item across expansions",
+  "Name the four structural constraints that make this hard",
+  "Describe what the commodity auction house being region-wide implies for realm handling",
+]
+reading = [
+  "README.md",
+  "wow_forecaster/taxonomy/archetype_taxonomy.py",
+  "wow_forecaster/taxonomy/event_taxonomy.py",
+  "PLAN.md (Data science legibility)",
+]
+
+[[module]]
+id = "m02"
+title = "API to rows"
+part = "Part I. The domain and the data"
+summary = """
+How a Blizzard API response becomes rows in market_observations_raw, and the
+judgement calls made on the way: which price field wins, what faction means for
+a region-wide auction house, and why the connection is opened three times rather
+than held across the network call.
+"""
+objectives = [
+  "Trace one commodity snapshot from OAuth token to inserted row",
+  "Explain the min_buyout_raw fallback chain and why order matters",
+  "Say why the item foreign-key guard runs before the fetch, not after",
+  "Explain the three-phase connection pattern and the failure it prevents",
+]
+reading = [
+  "wow_forecaster/ingestion/blizzard_client.py",
+  "wow_forecaster/ingestion/snapshot.py",
+  "wow_forecaster/pipeline/ingest.py",
+]
+prereqs = ["m01"]
+
+[[module]]
+id = "m03"
+title = "Normalization, rollups, and the date spine"
+part = "Part I. The domain and the data"
+summary = """
+Turning irregular hourly observations into a dense daily series. Covers the
+rolling z-score and its cold-start fallback, why the date spine is generated in
+Python rather than by a recursive CTE, and the difference between a predicate
+SQLite can serve from an index and one it cannot.
+"""
+objectives = [
+  "Explain what the rolling z-score normalizes against and what happens on day one",
+  "Say why DATE(observed_at) = ? defeats an index and what replaces it",
+  "Describe the UTC anchor defect and why the previous-date upsert is load-bearing",
+]
+reading = [
+  "wow_forecaster/pipeline/normalize.py",
+  "wow_forecaster/features/daily_agg.py",
+  "wow_forecaster/pipeline/orchestrator.py",
+]
+prereqs = ["m02"]
+
+# ── Part II. Features, models, statistics ─────────────────────────────────────
+
+[[module]]
+id = "m04"
+title = "Features and the leakage boundary"
+part = "Part II. Features, models, statistics"
+summary = """
+The feature registry, and why the training column set is larger than the
+inference set. Feature leakage is the failure most people know about; this module
+is where the repo gets it right, which makes it the necessary contrast for M06,
+where the repo gets label leakage wrong.
+"""
+objectives = [
+  "Explain why the inference column set is smaller than the training set",
+  "State the leakage boundary for a lag or rolling feature in one sentence",
+  "Explain what is_known_at() guards against and why announced_at exists separately",
+  "Say what features_hash is for and what it cannot detect",
+]
+reading = [
+  "wow_forecaster/features/registry.py",
+  "wow_forecaster/features/lag_rolling.py",
+  "wow_forecaster/ml/feature_selector.py",
+  "wow_forecaster/models/event.py",
+]
+prereqs = ["m03"]
+
+[[module]]
+id = "m05"
+title = "Baselines and what good means"
+part = "Part II. Features, models, statistics"
+summary = """
+Four baselines, each testing one hypothesis about the market, and four metrics,
+each answering a different question. The statistics here are the ones you need
+to read a result table honestly: when RMSE above MAE is telling you something,
+why MAPE needs an epsilon guard, and why directional accuracy drops ties.
+"""
+objectives = [
+  "Name each baseline and the hypothesis it tests",
+  "Explain what RMSE greater than MAE implies about the error distribution",
+  "Say why MAPE enables cross-archetype comparison when MAE does not",
+  "Explain why ties are excluded from the directional-accuracy denominator",
+  "State the acceptance bar the repo already wrote down",
+]
+reading = [
+  "wow_forecaster/backtest/models.py",
+  "wow_forecaster/backtest/metrics.py",
+]
+prereqs = ["m04"]
+
+[[module]]
+id = "m06"
+title = "Splitting time series without lying to yourself"
+part = "Part II. Features, models, statistics"
+summary = """
+Two components in this repo disagree about what a train/test split means, and
+only one of them is right. backtest/splits.py puts the boundary on the label
+date; ml/trainer.py puts it on the feature date. For a multi-horizon target
+those are different splits, and the difference is that every validation label
+the 28-day model is scored against is a price it already trained on.
+"""
+objectives = [
+  "State the split boundary rule for a forecasting target in one sentence",
+  "Compute which horizons leak, and by how many days, given a validation window",
+  "Define purging and embargo, and say what each one fixes",
+  "Explain the second-order damage: what early stopping did with the leaked signal",
+  "Explain why rolling origin is preferred over an expanding window here",
+]
+reading = [
+  "wow_forecaster/backtest/splits.py",
+  "wow_forecaster/ml/trainer.py",
+  "wow_forecaster/ml/lgbm_model.py",
+  "LESSONS.md",
+]
+prereqs = ["m05"]
+lab = "lab-01-purge-embargo"
+
+[[module]]
+id = "m07"
+title = "The model"
+part = "Part II. Features, models, statistics"
+summary = """
+Gradient boosting in plain terms, and the argument for trees over the
+alternatives on this particular data: thin per-series history, hundreds of
+series, and a need to pool across them. Also the global cross-archetype design
+and what is_cold_start_int actually signals to the booster.
+"""
+objectives = [
+  "Explain gradient boosting well enough to answer a follow-up question about it",
+  "Give the argument for LightGBM over ARIMA, Prophet, and an LSTM on this data",
+  "Explain why one global model beats one model per archetype here",
+  "Distinguish gain-based from split-based feature importance and say when each misleads",
+]
+reading = [
+  "wow_forecaster/ml/lgbm_model.py",
+  "wow_forecaster/ml/trainer.py",
+  "wow_forecaster/ml/predictor.py",
+]
+prereqs = ["m06"]
+# lab = "lab-02-lightgbm-backtest"  declared with its brief in Phase 2
+
+[[module]]
+id = "m08"
+title = "Uncertainty"
+part = "Part II. Features, models, statistics"
+summary = """
+Every forecast ships a confidence interval, and none of them is calibrated. The
+intervals are a z-score times a rolling standard deviation, widened by a transfer
+heuristic and then clamped. Understanding exactly what that does and does not
+claim is the difference between reporting an interval and reporting coverage.
+"""
+objectives = [
+  "Explain what the current interval is computed from, step by step",
+  "Define coverage and say why a stated 80 percent interval may not cover 80 percent",
+  "Say what the 5 percent floor and 10x cap are protecting against",
+  "Describe how quantile regression and conformal prediction would each improve this",
+]
+reading = [
+  "wow_forecaster/ml/cold_start.py",
+  "PLAN.md (CEILING)",
+]
+prereqs = ["m07"]
+
+[[module]]
+id = "m09"
+title = "Cold start and transfer"
+part = "Part II. Features, models, statistics"
+summary = """
+The premise the whole project rests on: a new expansion has no price history, so
+forecasts for its archetypes borrow from the analogous archetype in the previous
+one. Covers the blend formula, how confidence weights it, and why the mapping
+carries a required rationale field.
+"""
+objectives = [
+  "Write the blend formula and explain both limiting cases",
+  "Explain why transfer_confidence appears in both the blend and the interval",
+  "Say why mapping_rationale is required and what that buys",
+  "Explain what the model slug suffix records and why provenance matters here",
+]
+reading = [
+  "wow_forecaster/ml/cold_start.py",
+  "wow_forecaster/ml/predictor.py",
+  "wow_forecaster/taxonomy/archetype_taxonomy.py",
+]
+prereqs = ["m08"]
+
+[[module]]
+id = "m10"
+title = "Forecasts to decisions"
+part = "Part II. Features, models, statistics"
+summary = """
+A price forecast is not a recommendation. Five weighted components turn one into
+the other, and every weight in that formula was chosen by hand. Knowing where the
+arbitrary numbers are is the point of this module, because M2 turns them into a
+named policy that can be tested.
+"""
+objectives = [
+  "Reproduce the score formula and say what each component is a proxy for",
+  "Explain why risk level is computed independently of the action",
+  "Say what the volume gate excludes and why a hard filter rather than a penalty",
+  "Identify every hand-chosen constant in the scorer",
+]
+reading = [
+  "wow_forecaster/recommendations/scorer.py",
+  "wow_forecaster/recommendations/ranker.py",
+  "wow_forecaster/recommendations/crafting_advisor.py",
+]
+prereqs = ["m09"]
+
+# ── Part III. Failure, history, operations ────────────────────────────────────
+
+[[module]]
+id = "m11"
+title = "How this system fails"
+part = "Part III. Failure, history, operations"
+summary = """
+A crashed run left a lock file behind, the hourly wrapper read that lock as
+"previous run still active", logged SKIPPED, and exited zero. Task Scheduler
+recorded success 1,933 times in a row while no data arrived, and the daily
+forecast kept succeeding on features frozen at the last ingest. This module is
+the most transferable content in the track.
+"""
+objectives = [
+  "Explain how exiting zero on a skip turned a crash into a 105-day silent outage",
+  "State the dead-man principle in one sentence and give two places it is applied",
+  "Explain why the stale-lock takeover waits rather than skipping",
+  "Say what the freshness gate protects and at which two seams it is enforced",
+]
+reading = [
+  "docs/postmortem-2026-04-lock-outage.md",
+  "scripts/run_hourly.bat",
+  "wow_forecaster/reporting/health.py",
+]
+
+[[module]]
+id = "m12"
+title = "Every bug, by failure class"
+part = "Part III. Failure, history, operations"
+summary = """
+Twenty-two fix commits, grouped by what went wrong rather than when. The classes
+repeat: a default silently substituted for missing data, a config value that
+drifted from the code reading it, a documented count that stopped matching, and
+resource contention that only appears under load.
+"""
+objectives = [
+  "Name the five recurring failure classes and give an instance of each",
+  "Explain why silent zeroing is worse than raising",
+  "Explain what makes a config-to-code mismatch a correctness bug and not a style issue",
+  "Find a live documentation drift in this repo without being told where it is",
+]
+reading = [
+  "CHANGELOG.md",
+  "LESSONS.md",
+  "PLAN.md (Audit findings)",
+]
+
+[[module]]
+id = "m13"
+title = "The git history as a design record"
+part = "Part III. Failure, history, operations"
+summary = """
+Seventy released versions in ten recognizable eras, and three changes to how the
+project works on itself: per-commit version bumps became a single stamp at PR
+open, an umbrella branch became trunk-based development, and direct pushes to
+main became PR-gated. Each shift has a reason worth being able to state.
+"""
+objectives = [
+  "Sketch the ten eras and what each one added",
+  "Explain why per-commit version bumps were retired and what replaced them",
+  "Explain what the umbrella branch was for and why it stopped being worth it",
+  "Say what branch protection with no bypass actors buys that a convention does not",
+]
+reading = [
+  "CHANGELOG.md",
+  "CLAUDE.md",
+  "docs/ROADMAP.md",
+]
+
+[[module]]
+id = "m14"
+title = "Capture without the desktop"
+part = "Part III. Failure, history, operations"
+summary = """
+The API serves only the current snapshot, so an hour missed is an hour gone. This
+module covers the cloud capture path and its most interesting finding: GitHub
+delivers roughly 11 of 24 scheduled cron firings for this repo, densifying the
+schedule does not help, and the fix was to move the trigger off GitHub entirely.
+"""
+objectives = [
+  "Explain the cron delivery ceiling and why densification was disproved",
+  "Explain how the thinned fallback schedule doubles as a dead-man alarm",
+  "Explain why the UTC hour rule is what prevents double counting, and what fetched_at is",
+  "Say why the durable backup copies schema from sqlite_master rather than apply_schema",
+]
+reading = [
+  "docs/cloud-capture.md",
+  "wow_forecaster/ingestion/cloud_sync.py",
+  "wow_forecaster/backup/durable_backup.py",
+  "docs/db-backup.md",
+]
+# lab = "lab-03-sync-snapshots-drain"  declared with its brief in Phase 3
+
+# ── Part IV. Proving it and shipping it ───────────────────────────────────────
+
+[[module]]
+id = "m15"
+title = "Measuring whether it works"
+part = "Part IV. Proving it and shipping it"
+summary = """
+Over 300,000 forecasts have been issued and none has been compared to what the
+price actually did. The realization ledger closes that loop. On the monitoring
+side, the existing error-drift baseline is wrong in four separate ways, including
+reporting "cannot compute" as "no drift".
+"""
+objectives = [
+  "Describe the realization ledger's grain and what maturity means for a forecast",
+  "List the four defects in the current error-drift baseline",
+  "Explain why an absolute MAE pooled across archetypes moves with the archetype mix",
+  "Say why returning unknown rather than none matters for an alarm",
+]
+reading = [
+  "wow_forecaster/monitoring/drift.py",
+  "wow_forecaster/monitoring/health.py",
+  "PLAN.md (Audit findings)",
+]
+# lab = "lab-04-realization-ledger"  declared with its brief in Phase 4
+
+[[module]]
+id = "m16"
+title = "Is the difference real?"
+part = "Part IV. Proving it and shipping it"
+summary = """
+A model with lower MAE than a baseline has not been shown to be better. This is
+the significance-testing module: paired error differences, the Diebold-Mariano
+test, the Wilcoxon signed-rank alternative when normality is doubtful, and what
+twelve simultaneous comparisons do to a p-value.
+"""
+objectives = [
+  "Explain why forecast comparison is paired and what pairing buys",
+  "State what Diebold-Mariano tests and what it assumes",
+  "Say when to prefer Wilcoxon signed-rank and what it gives up",
+  "Explain the multiple-comparison problem across 3 horizons and 4 baselines",
+  "Distinguish a significant difference from a difference that matters",
+]
+reading = [
+  "wow_forecaster/backtest/metrics.py",
+  "wow_forecaster/backtest/evaluator.py",
+  "docs/ROADMAP.md (M1)",
+]
+prereqs = ["m05", "m06"]
+
+[[module]]
+id = "m17"
+title = "Does it make gold?"
+part = "Part IV. Proving it and shipping it"
+summary = """
+Forecast accuracy and profit are different questions, and a model can win the
+first while losing the second. Paper trading, the auction house cut, per-horizon
+exit rules, and the two comparator portfolios that keep a positive return
+honest.
+"""
+objectives = [
+  "Explain how a more accurate model can be less profitable",
+  "Say why random-portfolio and buy-everything are the right comparators",
+  "Explain what an equity curve shows that a total return does not",
+  "Say why a live A/B needs wall clock and what offline replay can and cannot claim",
+]
+reading = [
+  "wow_forecaster/recommendations/scorer.py",
+  "docs/ROADMAP.md (M2)",
+]
+prereqs = ["m10", "m16"]
+
+[[module]]
+id = "m18"
+title = "Causal questions"
+part = "Part IV. Proving it and shipping it"
+summary = """
+"Did the patch move prices?" is a causal question, not a forecasting one.
+Interrupted time series and difference-in-differences, the assumption each one
+rests on, and why announced_at plus is_known_at() is the identification backbone
+rather than a convenience.
+"""
+objectives = [
+  "Set up an interrupted time series design for one patch event",
+  "State the parallel trends assumption and how to probe it",
+  "Explain what a placebo check would falsify",
+  "Explain why announcement date and effective date must be separate columns",
+]
+reading = [
+  "wow_forecaster/models/event.py",
+  "wow_forecaster/features/event_features.py",
+  "docs/events.md",
+  "docs/ROADMAP.md (M5)",
+]
+prereqs = ["m16"]
+
+[[module]]
+id = "m19"
+title = "The lifecycle gap"
+part = "Part IV. Proving it and shipping it"
+summary = """
+What is present and what is absent when this repo is read as a production system.
+The sharpest example: three different pieces of code select the active model
+three different ways, and the authoritative one, the is_active flag in
+model_metadata, is the one nothing reads.
+"""
+objectives = [
+  "Name the three model-selection strategies and which one should win",
+  "Separate what is genuinely built from what is missing in the lifecycle table",
+  "State each of the four open tool decisions and the argument for the recommendation",
+  "Say why Windows Task Scheduler is the one blocking coupling",
+]
+reading = [
+  "PLAN.md (MLOps story)",
+  "wow_forecaster/pipeline/forecast.py",
+  "wow_forecaster/ml/trainer.py",
+]
+
+[[module]]
+id = "m20"
+title = "The path forward"
+part = "Part IV. Proving it and shipping it"
+summary = """
+Two roadmaps and why each is ordered the way it is. The non-obvious calls are the
+interesting ones: CI/CD comes late because it is largely built, M2 precedes M3 so
+that realizations land in the marts in one pass, and M5 is deliberately the
+filler for weeks blocked on wall clock.
+"""
+objectives = [
+  "Reconstruct the milestone dependency graph from memory",
+  "Explain why CI/CD is a slice of a late phase rather than an early one",
+  "Explain why paper trading precedes the warehouse",
+  "Name three ceiling items and say what each would replace",
+  "Say what is deliberately excluded from the ceiling and why",
+]
+reading = [
+  "docs/ROADMAP.md",
+  "PLAN.md (Phases, Sequencing rationale, CEILING)",
+]

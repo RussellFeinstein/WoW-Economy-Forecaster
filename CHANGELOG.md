@@ -5,6 +5,22 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.0] - 2026-07-24
+
+### Added
+- `wowfc learn`, a study and assessment track for this codebase, shipped alongside it. Twenty modules across four parts (the domain and the data; features, models, and statistics; failure, history, and operations; proving it and shipping it), question banks with spaced repetition, and labs that are real open work rather than exercises. Runs as a third parallel track: `docs/ROADMAP.md` owns the research arc, `PLAN.md` owns the lifecycle arc, and this one owns understanding. The premise is that the repo is the textbook and the track is the syllabus and the exam, so no module restates what a docstring already explains
+- Seven subcommands under the `learn` group: `status` (mastery per module, cards due, lab state), `next` (drill what is due, then new material), `module` (objectives and reading list), `exam` (scored, nothing revealed until the end), `lab` (print a brief, record progress), `validate` (check every citation against current code), and `reset`
+- A citation drift guard, which is what makes a hand-authored question bank worth writing. Every question cites a file path plus a verbatim single-line anchor, never a line number, because a line number is wrong the moment a line is inserted above it. The command line resolves the anchor to a current line number at display time, so a citation is always right without a stored number that would go stale. `wowfc learn validate` and `tests/test_learning/test_bank_integrity.py` call the same `check_content()` implementation, so editing a cited line turns CI red until the question is updated
+- Module 06 authored in full (18 questions on splitting time series, purging, and embargo) plus its lab brief. The remaining nineteen modules are declared in `learning/curriculum.toml` so the shape of the track is visible, and report as not authored yet until their banks land
+- Spaced repetition using an SM-2 variant with four grades and an injectable clock. A passing grade schedules a card at least a day out, so re-running a drill the same day serves no repeat of anything graded good or better, while a failed card stays due and does come back. Re-drilling a module repeatedly in one afternoon does not push cards months out: the last grade of the day replaces the earlier ones rather than compounding on them
+
+### Changed
+- Review progress lives in its own SQLite file at `data/learn/progress.db`, gitignored and overridable with `WOWFC_LEARN_DB`. Deliberately not the product database, which is copied into every durable backup and is the upstream source for the analytics warehouse
+- `learn` is registered as a Typer sub-app rather than seven more flat commands, since `cli.py` is already 4,500 lines. The learning command module imports typer and stdlib only at import time and defers everything else to command bodies, so the new group costs nothing at startup
+
+### Fixed
+- Command and test counts reconciled across `README.md`, `CLAUDE.md`, and `PLAN.md`. The three documents disagreed (39, 40, and 41 commands respectively, against an actual 40), the README architecture tree said 36, and the test badge said 1,200+ while the body said 1,400+
+
 ## [2.10.3] - 2026-07-24
 
 ### Added
