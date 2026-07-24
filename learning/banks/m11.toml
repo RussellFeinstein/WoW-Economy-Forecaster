@@ -1,0 +1,720 @@
+# M11: How this system fails.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code or doc forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+#
+# This module is about the 2026-04-15 lock leak and the 96-day silent outage it
+# caused, plus every guard added afterwards. It is the most transferable content
+# in the track: nothing here is specific to auction houses.
+
+# ── The outage itself ─────────────────────────────────────────────────────────
+
+[[question]]
+id = "m11-q01"
+kind = "recall"
+prompt = """
+The postmortem says four independent failures had to line up. Name all four,
+one line each.
+"""
+rubric = [
+  "The overlap guard had no staleness handling: any existing lock read as 'previous run still active'",
+  "The skip path exited 0, so Task Scheduler's Last Run Result showed success 1,933 times",
+  "check-data-health existed since v2.1.0 but was never registered as a scheduled task",
+  "The daily forecast could not notice, because the feature date spine clamps to the newest observation",
+]
+answer = """
+1. **No staleness handling in the overlap guard.** `run_hourly.bat` treated the
+existence of a lock file as proof that a previous run was still going. A
+crash-leaked lock is indistinguishable from a live run under that rule, and
+crash-leaked locks are a certainty: a .bat has no cleanup path when its process
+tree is killed.
+
+2. **The skip path exited 0.** Skipping was modeled as a normal outcome, so every
+layer above the log file saw success. The word SKIPPED appeared in exactly one
+place, a log nobody was reading.
+
+3. **The health check was never scheduled.** The code that would have caught this
+within hours shipped months earlier. It was never registered as a task, so it
+caught nothing.
+
+4. **The forecast pipeline could not notice.** The date spine clamps to the data
+extent, so training and inference kept running on a frozen window without an
+error. Forecast CSVs kept appearing daily, which reads as a healthy system.
+
+A fifth factor did not cause the outage but shaped the restore: the retention
+pruner deletes raw rows past 30 days on every hourly run, so by discovery time the
+wedged lock was the only thing standing between the surviving history and a mass
+delete.
+
+One honest note while reading the timeline: it dates the last successful ingest to
+2026-04-07 and the lock-leaking crash to 2026-04-15. The eight days between them
+are not accounted for anywhere in the document.
+"""
+source = "docs/postmortem-2026-04-lock-outage.md"
+anchor = "A crash-leaked lock is indistinguishable from a running job under that rule"
+
+[[question]]
+id = "m11-q02"
+kind = "mcq"
+prompt = """
+Four failures lined up. Which one made the outage invisible at the layer that was
+actually being watched?
+"""
+answer = """
+The exit-0 skip path. That is the failure that removed the signal from the only
+surface anyone looks at without being asked to.
+
+Windows Task Scheduler shows Last Run Result. It showed 0 for 1,933 consecutive
+runs. Every other failure in the chain contributed a missing control or a missing
+recovery; this one actively produced a green light. A system that is broken and
+silent is worse than a system that is broken and loud, because the silent one
+consumes the attention budget of a working system.
+
+The postmortem puts it as a rule: loud beats correct-but-quiet. Skipping really
+was the correct behavior under the guard's own logic, and reporting it as success
+was defensible in isolation. The defect is that "correct" and "worth reporting"
+were treated as the same question.
+"""
+options = [
+  { text = "The skip path exiting 0, which made Task Scheduler's Last Run Result read success for 1,933 consecutive runs", correct = true },
+  { text = "The crash that leaked the lock file in the first place", note = "Crash-leaked locks are inevitable on a long enough timeline: a .bat killed by process-tree termination has no cleanup path. The design defect is treating any lock as live, not the crash, and even with the leak a loud skip would have surfaced this on day one." },
+  { text = "The health check never being registered as a scheduled task", note = "A real failure and one of the two cheap day-one catches the postmortem names. But it is an absent control rather than a false signal: nothing about it produced the green light that kept anyone from looking." },
+  { text = "The retention pruner standing ready to delete the surviving history", note = "That is the fifth factor, and it made the restore harder rather than the outage longer. It never ran during the wedge, precisely because the lock stopped the run that would have called it." },
+]
+source = "docs/postmortem-2026-04-lock-outage.md"
+anchor = "Loud beats correct-but-quiet."
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m11-q03"
+kind = "recall"
+prompt = """
+The overlap guard was not deleted, it was given staleness handling. Describe the
+rule `run_hourly.bat` uses now, including what it does when the age check itself
+fails, and state the cost asymmetry that justifies the bias.
+"""
+rubric = [
+  "A lock older than STALE_MINUTES (180) is treated as leaked: logged as STALE LOCK TAKEOVER, deleted, and the run continues",
+  "A lock younger than that still skips with exit 0",
+  "PowerShell exits 0 only when the lock is provably fresh, so a vanished file or any PowerShell failure falls through to takeover",
+  "The asymmetry: a wedged lock already cost 96 days, while a rare double run is covered by SQLite's 30s busy timeout",
+]
+answer = """
+The guard now asks how old the lock is rather than whether it exists. Past 180
+minutes it is assumed leaked, logged as STALE LOCK TAKEOVER, deleted, and the run
+proceeds. Under 180 minutes it still skips with exit 0, which is correct: a
+genuinely overlapping run is a real condition and a healthy hourly run finishes in
+well under an hour.
+
+The part worth stealing is the failure bias. The PowerShell one-liner exits 0 only
+when it can prove the lock is fresh. A vanished file (a race with the run that is
+finishing), a PowerShell that will not start, an unresolvable path: all of them
+exit nonzero, and `if errorlevel 1` means "greater than or equal to 1", so all of
+them take the lock over. Uncertainty resolves toward running.
+
+That is a deliberate choice made by comparing costs, not by picking the safer
+sounding branch. Taking over a lock that was actually live means two runs write
+concurrently, and SQLite's 30-second busy timeout absorbs that. Skipping a lock
+that was actually leaked means the pipeline is dead until a human notices, and the
+measured price of that outcome is 96 days. When the two errors cost that
+differently, the guard should be tuned to make the cheap mistake.
+"""
+source = "scripts/run_hourly.bat"
+anchor = "already caused a 96-day silent outage; a rare double run is"
+
+[[question]]
+id = "m11-q04"
+kind = "predict"
+prompt = """
+`run_hourly.bat` fires. `data\\db\\.hourly.lock` exists and was written 20 minutes
+ago. But PowerShell is not resolvable on this machine's PATH at all, so the
+age-check command cannot run.
+
+What does the script do?
+"""
+answer = """
+It takes the lock over: logs STALE LOCK TAKEOVER, deletes the lock, and runs the
+pipeline, even though the lock is only 20 minutes old and probably belongs to a
+live run.
+
+The mechanism is that an unresolvable executable leaves a nonzero errorlevel, and
+the branch is `if errorlevel 1`, which tests for "greater than or equal to 1"
+rather than equality. So a failed check is indistinguishable from a stale lock by
+design. The comment block says so directly: the age check failing biases toward
+takeover.
+
+The consequence in this scenario is a concurrent run, which SQLite's busy timeout
+is expected to survive. The alternative bias would have been to skip whenever the
+check cannot be completed, and that is the exact shape of the original bug:
+uncertainty resolving toward doing nothing, quietly.
+
+Note that the block is evaluated at execution time, which is why no delayed
+expansion is needed inside it. That is a cmd-specific detail, but it is the kind of
+detail that silently inverts a guard if you get it wrong.
+"""
+options = [
+  { text = "Logs STALE LOCK TAKEOVER, deletes the lock, and runs the pipeline", correct = true },
+  { text = "Logs SKIPPED and exits 0, because the lock is younger than STALE_MINUTES", note = "That would require the age check to succeed and report a fresh lock. It could not run at all, and the script only skips when freshness is proven. This branch is what the original bug looked like." },
+  { text = "Exits nonzero so Task Scheduler records a failure, since the environment is broken", note = "Plausible, but the script has no such branch. A broken age check is treated as a stale lock, not as a fatal environment error. Whether that is the right call is a judgement about which mistake is cheaper, and this repo chose to keep running." },
+  { text = "Waits and retries the age check until PowerShell becomes available", note = "That is the sync-snapshots behavior, not the hourly wrapper's. The bat has no wait loop: it decides once and moves on, because a delayed hourly run has already missed its sample." },
+]
+source = "scripts/run_hourly.bat"
+anchor = "set STALE_MINUTES=180"
+
+# ── The dead-man principle ────────────────────────────────────────────────────
+
+[[question]]
+id = "m11-q05"
+kind = "recall"
+prompt = """
+State the dead-man principle in one sentence, then give two places in this repo
+where it is applied. For each, say what the "man" is and what happens when it dies.
+"""
+rubric = [
+  "One sentence roughly: a monitor must go red when the thing it watches stops, and the alarm must not be satisfiable by the failure mode itself",
+  "Cloud capture: the GitHub :06 schedule is kept as a fallback so Worker or PAT death drops coverage below the 20-hour gap guard floor and the runs go red",
+  "Health check: no durable backup at all sets backup_is_stale = True, so a backup task that silently stopped is caught, not exempted",
+  "Also acceptable: run_healthcheck.bat raises the alert window when the suppression flag is unverifiable, and run_hourly.bat takes over on an unverifiable lock age",
+]
+answer = """
+One sentence: an alarm must fire when the thing it watches stops existing, and its
+threshold must sit above anything the failure mode can produce on its own.
+
+**Cloud capture (issue #83).** The Cloudflare Worker POSTs a workflow_dispatch at
+:16 and :46 and is the primary trigger. The GitHub `schedule:` was thinned to a
+single :06 firing rather than removed, and that single firing is the alarm. If the
+Worker or its token dies, capture falls back to GitHub cron alone, which measurably
+delivers only about 11 of 24 hours a day for this repo. That is below the guard's
+floor of 20 distinct captured hours, so the runs turn red. The failure of the
+trigger is detected by the surviving trigger being insufficient.
+
+**Backup freshness (issue #80).** In `collect_health_report`, an empty or absent
+backup directory sets `backup_is_stale = True`. Finding no backups is not "nothing
+to check", it is the worst possible reading, because the point of the check is to
+catch a task that stopped running. A check that treats absence as a pass is not a
+check.
+
+Two smaller instances of the same reflex: `run_healthcheck.bat` raises its alert
+window when it cannot verify the suppression flag's age, and `run_hourly.bat` takes
+the lock over when it cannot verify the lock's age. Both comments name the outage
+as the reason. Skip-on-uncertainty is how a silent outage happens.
+
+The general form is the negative: any alarm whose "everything is fine" state is
+also reachable by the failure it watches for is decorative. Absence of a
+heartbeat, absence of a backup, absence of a captured hour: all three must count as
+failures rather than as missing data.
+"""
+source = "docs/cloud-capture.md"
+anchor = "The guard floor stays at 20 deliberately; a floor the failure mode can satisfy would hide the failure."
+see_also = ["wow_forecaster/reporting/health.py", "scripts/run_healthcheck.bat"]
+
+[[question]]
+id = "m11-q06"
+kind = "mcq"
+prompt = """
+The cloud gap guard trips below 20 distinct captured UTC hours in the trailing 24.
+GitHub's own cron reliably delivers about 11 hours a day for this repo. Why is the
+floor 20 and not, say, 10?
+"""
+answer = """
+Because a floor of 10 would be satisfiable by the exact failure the guard exists to
+detect. If the Worker trigger dies, GitHub cron alone still delivers around 11
+hours, so a floor of 10 would report green through a total loss of the primary
+trigger. The alarm has to be set above the failure mode's own ceiling or it is not
+an alarm.
+
+Note also the choice of metric. The guard counts distinct UTC hours, not objects.
+The Worker fires twice an hour and the fallback fires once more, so a day that
+missed a third of its hours can still hold a healthy-looking object count. Counting
+hours keeps the number meaning "hours are being missed" no matter how many triggers
+fire per hour.
+
+Both decisions are the same idea from two directions: pick the metric and the
+threshold so the failure you care about cannot dress up as success.
+"""
+options = [
+  { text = "A floor of 10 would still be met by GitHub cron alone, so a dead Worker would report green: the threshold must sit above what the failure mode can deliver", correct = true },
+  { text = "20 out of 24 allows a four-hour tolerance budget for Blizzard API downtime and retry jitter", note = "Backwards. The floor is chosen against the failure mode's ceiling, not derived from a tolerance budget. It happens to leave slack, but if the reasoning were tolerance-first you could argue 10 down from the same premises and lose the alarm entirely." },
+  { text = "Counting objects instead of hours would give the same answer, since one capture uploads one object per hour", note = "Not true here. The Worker dispatches at :16 and :46 and the GitHub fallback adds :06, so several objects can land in a single hour. An object count can look healthy on a day that missed a third of its hours, which is why the guard counts distinct UTC hours." },
+  { text = "The floor should really be 24, and 20 is a concession to flakiness that weakens the guard", note = "A floor of 24 would be red on ordinary retry jitter, one dropped dispatch, or a slow runner. An alarm that is red every day is functionally off, which is a different way of losing the signal." },
+]
+source = "wow_forecaster/ingestion/cloud_fetch.py"
+anchor = "GUARD_MIN_HOURS_DEFAULT = 20"
+see_also = ["docs/cloud-capture.md"]
+
+[[question]]
+id = "m11-q07"
+kind = "find"
+prompt = """
+`evaluate_gap_guard` has an escape hatch that returns ok even when coverage is
+below the floor. Find it, say why it exists, and describe the bug that made it fire
+on days that genuinely had gaps.
+"""
+rubric = [
+  "The bootstrap rule: when no listed object is older than 24 hours, low coverage passes",
+  "It exists so the first day of operation, or a resume after a 48h+ outage whose failed runs already alerted, does not report red for an expected condition",
+  "Issue #68: the listing spanned only two day-prefixes, so just after UTC midnight every object older than 24h lived under a prefix that was never listed",
+  "The `older` count then read 0 and the bootstrap rule fired on days with real gaps; the fix lists three day-prefixes (today, yesterday, and the day before)",
+]
+answer = """
+The rule is: if nothing in the listing is older than the 24-hour cutoff, pass.
+That is a reasonable exemption. On the very first day of operation the trailing 24
+hours cannot be full, and after a long outage the failed runs have already raised
+their own alarms, so a red gap guard on the first recovered run adds nothing.
+
+The bug is what "nothing older than 24 hours" was computed from. The listing walked
+day-prefixed keys, and it originally walked only today and yesterday. Just after
+UTC midnight, every object older than 24 hours lives under the day-before-yesterday
+prefix, which was never listed. So `older` counted 0, the bootstrap rule fired, and
+a day with real gaps passed. Issue #68 fixed it by listing three prefixes.
+
+The transferable shape: an exemption clause is a second alarm, and it needs its own
+correctness argument. Here the exemption's input was derived from a listing whose
+window did not reach as far back as the exemption's own reasoning required. Every
+"unless" in a guard is a place where the guard can be talked out of firing, and the
+guards in this repo have been talked out of firing before.
+"""
+source = "wow_forecaster/ingestion/cloud_fetch.py"
+anchor = "Bootstrap rule: when no listed object is"
+
+# ── Wait, do not skip ─────────────────────────────────────────────────────────
+
+[[question]]
+id = "m11-q08"
+kind = "recall"
+prompt = """
+`cloud_sync.hourly_lock` takes the same lock file `run_hourly.bat` takes, with the
+same 180-minute takeover, and deliberately differs in one way. What is the
+difference, and what cost comparison produced it?
+"""
+rubric = [
+  "The bat skips when the lock is fresh; the sync waits, polling, and then fails loudly",
+  "A skipped hourly run costs one sample, which the next hour replaces",
+  "A skipped catch-up run silently leaves a whole night of cloud snapshots unrecovered",
+  "And an exit-0 skip is precisely the pattern that hid the 96-day outage, so failing loudly is the point",
+]
+answer = """
+The bat skips. The sync waits, and if the wait runs out it raises `TimeoutError`
+instead of returning quietly.
+
+The reasoning is a comparison of what each skip costs. An hourly run that skips
+loses one sample of a series that gets another one in an hour. A catch-up run that
+skips loses whatever the cloud bucket was holding, and since `sync-snapshots` runs
+on demand or on a schedule you may not be watching, a quiet skip can leave an
+entire night unrecovered with no trace beyond a log line. The unrecoverable case
+gets the loud behavior.
+
+Both halves matter. Waiting alone would not be enough if the timeout then returned
+0: that would recreate the original defect in a new file. The docstring names it,
+which is a good habit in itself. When you write a guard whose behavior was chosen
+because of a specific past failure, say so in the code, or the next person will
+"simplify" it back.
+
+Also worth noticing why a file lock is used at all rather than trusting SQLite.
+Bulk inserts here run to hundreds of thousands of rows and can exceed the 30-second
+busy timeout, so serialization at the database level is not sufficient. The lock is
+the coarse-grained answer, and reusing the bat's lock file (rather than inventing a
+second one) is what makes the two paths actually mutually exclusive.
+"""
+source = "wow_forecaster/ingestion/cloud_sync.py"
+anchor = "skips when the lock is fresh because a skipped hourly run costs one sample;"
+
+[[question]]
+id = "m11-q09"
+kind = "predict"
+prompt = """
+An hourly run is in progress and created the lock 12 minutes ago. It will keep
+running for another 40 minutes. You start `sync-snapshots` right now, with the
+default `cloud_sync.lock_wait_seconds`.
+
+What happens?
+"""
+answer = """
+It polls, waits 15 minutes (900 seconds is the default), and then raises
+`TimeoutError` with a message naming the lock, the wait, and the lock's age. The
+stage fails, the CLI exits nonzero, and nothing is ingested.
+
+Walk the branches to see why nothing else fires. The exclusive-create fails because
+the lock exists. The age is 12 minutes, well under the 180-minute takeover
+threshold, so it is not treated as leaked. The lock did not vanish, so the retry
+path does not apply. That leaves the deadline, and the deadline is 900 seconds from
+the start of the wait, which expires long before the 180-minute takeover would.
+
+The failure is the intended outcome. The command told you clearly that it could not
+run and why, and the objects it did not ingest were never recorded as ingested, so
+the next run retries them. Compare that with the shape this replaced: a quiet exit
+0 that leaves the operator believing the backlog was drained.
+"""
+options = [
+  { text = "It waits, polling, then raises TimeoutError after 15 minutes; the command exits nonzero and nothing is ingested", correct = true },
+  { text = "It logs SKIPPED and exits 0, matching run_hourly.bat's behavior for a fresh lock", note = "Deliberately not mirrored. A skipped catch-up loses a whole night rather than one sample, and the exit-0 skip is the exact pattern that hid the 96-day outage." },
+  { text = "It takes the lock over, since the takeover path applies to any lock held by another process", note = "Takeover is age-based, not process-based. At 12 minutes the lock is nowhere near the 180-minute threshold, and the 900-second wait deadline expires long before that threshold could be reached." },
+  { text = "It proceeds immediately and relies on SQLite's 30-second busy timeout to serialize the writes", note = "That is exactly what the file lock exists to avoid. Bulk inserts here run to hundreds of thousands of rows and can exceed the busy timeout, so database-level serialization is not enough." },
+]
+source = "wow_forecaster/ingestion/cloud_sync.py"
+anchor = "waits instead, then fails loudly rather than exiting quietly (the exit-0"
+
+# ── The freshness gate ────────────────────────────────────────────────────────
+
+[[question]]
+id = "m11-q10"
+kind = "recall"
+prompt = """
+What does the freshness gate protect against, and at which two seams is it
+enforced? Say why one seam is not enough.
+"""
+rubric = [
+  "It protects against generating forecasts from frozen features when ingestion has stopped",
+  "Seam 1: run_daily.bat runs check-data-health --stale-hours 26 as step 1 and exits non-zero, skipping build-datasets and the forecast",
+  "Seam 2: ForecastStage._execute raises StaleDataError before any inference when the newest normalized observation exceeds config.forecast.max_data_age_hours",
+  "The bat protects the scheduled path and the scheduler's visible exit code; the stage protects every other entry point, including a manual run or a future orchestrator",
+]
+answer = """
+It protects the fourth link in the root cause chain: about 90 days of forecasts
+were generated from features frozen at the last real ingest, and nothing in the
+pipeline objected, because the date spine simply clamps to whatever data exists.
+
+Seam one is `run_daily.bat`. Step 1 of 3 is `check-data-health --stale-hours 26`,
+and a nonzero exit skips both the dataset build and the forecast and propagates the
+code so Task Scheduler records a failure. This is the seam that makes the outage
+visible: it converts a data condition into a red scheduled task.
+
+Seam two is `ForecastStage._execute`, which checks the age of the newest
+non-outlier normalized observation per realm and raises `StaleDataError` before
+loading a single model. Setting `max_data_age_hours` to 0 or below disables it, and
+the check takes an injectable `now` so tests are deterministic.
+
+Two seams because they cover different things. The bat is the only place that can
+stop `build-datasets` from running and can make the scheduler's Last Run Result
+truthful. The stage is the only place that covers `run-daily-forecast` invoked by
+hand, by the scheduler daemon, or by whatever orchestrator replaces the .bat
+layer later. A guard that lives only in a Windows batch file guards only the paths
+that go through that Windows batch file, and PLAN.md's phase 2 explicitly treats
+the .bat hardening as requirements to be carried forward rather than implementation
+details to be discarded.
+
+There is a design point here beyond redundancy: the two seams check different
+things. The bat asks the database when the last row landed. The stage asks how old
+the newest observation is. A pipeline that ingests rows with stale timestamps would
+fail the second check and pass the first.
+"""
+source = "wow_forecaster/pipeline/forecast.py"
+anchor = "of forecasts from stale data before anyone noticed)."
+see_also = ["scripts/run_daily.bat", "PLAN.md"]
+
+[[question]]
+id = "m11-q11"
+kind = "mcq"
+prompt = """
+`run_healthcheck.bat` passes `--stale-hours 4`. `run_daily.bat` passes
+`--stale-hours 26`. Same command, same check, two thresholds. Why?
+"""
+answer = """
+Because one of them blocks the product and the other only notifies, so a false
+positive costs a different amount in each.
+
+The health check is an alarm. Its cost when wrong is one console window and one
+red task, so it can sit tight at 4 hours and catch a stall within a single missed
+run or two. The daily gate is a hard block on the day's forecasts and
+recommendations. Its cost when wrong is a day of missing output, so it is set at 26
+hours: past a full day plus scheduling slack, which means a couple of missed hourly
+runs never cancels a forecast, while a genuinely dead pipeline still fails on the
+second morning.
+
+That is the generalizable rule. Thresholds are not properties of the data, they are
+properties of what happens when they fire. The same measurement gets a different
+threshold at a notify seam and at a block seam, and a system with only one
+threshold for both is either alarming too late or blocking too eagerly.
+"""
+options = [
+  { text = "The 4h check only notifies while the 26h check blocks output, so each is tuned to the cost of firing wrongly", correct = true },
+  { text = "26 mirrors ForecastStage's max_data_age_hours default, so there is really only one threshold and the bat just repeats it", note = "The two do match on purpose, and that consistency is deliberate, but it explains why the two seams agree rather than why the number is 26 and not 4. The health check reads the same field family with a different threshold, which proves the number is a policy choice, not a fixed property." },
+  { text = "check-data-health can only apply one threshold per invocation, so the daily gate reuses the loosest value it can", note = "--stale-hours is a parameter, and run_daily.bat passes 26 explicitly. Nothing forces the choice; it is a decision about what should block a forecast." },
+  { text = "26 hours is chosen to match the 30-hour durable backup staleness threshold used by the health check", note = "Different check and different job. 30h spans a daily 07:30 backup task plus slack; 26h spans a 24-hour forecast cycle plus slack. They are both 'one cycle plus grace' for two different cycles." },
+]
+source = "scripts/run_daily.bat"
+anchor = "check-data-health --stale-hours 26"
+
+[[question]]
+id = "m11-q12"
+kind = "predict"
+prompt = """
+The WoWForecaster-Backup scheduled task is accidentally disabled and stops running.
+Everything else stays healthy: ingestion runs hourly, forecasts run daily.
+
+What goes red, and when?
+"""
+answer = """
+Only the 6-hourly health check, and only once the newest `durable_*.db.gz` passes
+30 hours old. The daily forecast keeps running normally.
+
+The wiring: `collect_health_report` runs the backup check only when a `backup_dir`
+is supplied, and the CLI supplies one only when `--backup-stale-hours` is greater
+than 0. `run_healthcheck.bat` passes 30. `run_daily.bat` passes nothing, so
+`backup_checked` stays False there and the backup fields are inert.
+
+That split is intentional. `backup_is_stale` joins `has_failures`, which is the
+single source for the exit code, so if the daily gate opted into the backup check
+a missed backup would cancel that day's forecasts. A missing backup is a real
+problem and a reason to raise the alert window; it is not a reason to stop
+producing forecasts. Opt-in per caller is how one shared report serves both a notify
+seam and a block seam without the block seam inheriting every future check.
+
+Note the threshold too: 30 hours, not 24. The task runs daily at 07:30, so 24 would
+alarm on ordinary scheduling slack.
+"""
+options = [
+  { text = "The 6-hourly health check exits 1 and raises the alert window once the newest backup passes 30 hours; the daily forecast is unaffected", correct = true },
+  { text = "Both go red, because backup_is_stale feeds has_failures and has_failures drives the exit code everywhere", note = "backup_is_stale does feed has_failures, but it can only become True when a backup_dir was passed, and the CLI passes one only when --backup-stale-hours > 0. run_daily.bat does not pass it, so the field stays False on that path." },
+  { text = "Nothing goes red, because an absent or empty backup directory is treated as 'nothing to check' rather than a failure", note = "Inverted. No backup at all sets backup_is_stale = True on purpose: the whole point is catching a task that silently stopped, so absence is the worst case rather than an exemption. That is the dead-man principle applied to backups." },
+  { text = "The health check goes red at the next firing after the missed 07:30 run, since the backup is then overdue", note = "The threshold is 30 hours, not 24, precisely so a late or slipped run does not alarm. It goes red after a full day is genuinely missed." },
+]
+source = "wow_forecaster/reporting/health.py"
+anchor = "a stale backup can never affect the exit code of a"
+
+[[question]]
+id = "m11-q13"
+kind = "recall"
+prompt = """
+The forecast pipeline ran daily for three months on data that stopped moving, and
+never raised. Explain the mechanism, then state the rule the postmortem draws from
+it.
+"""
+rubric = [
+  "The daily aggregation builds a date spine clamped to the actual data extent",
+  "Dates outside the extent produce rows with obs_count = 0 and None price fields rather than an error",
+  "So training and inference kept operating on the frozen window as a legitimate, if empty, series",
+  "The rule: a pipeline that clamps to the newest data cannot tell fresh from frozen, so freshness must be checked against the clock, not against the data",
+]
+answer = """
+The date spine is generated in Python and clamped to the data extent. Ask for a
+range that reaches past the newest observation and you do not get an error, you get
+rows with `obs_count = 0` and None prices. Lag and rolling features over those rows
+return None rather than fabricating values, which is correct behavior in isolation
+and was verified on day one of the restore. Everything downstream then treated a
+dead series as a sparse one.
+
+This is why the pipeline could not self-diagnose. Every component was doing the
+right thing with the data it was given, and no component was positioned to ask
+whether the data should have been newer. The system's internal consistency was
+intact throughout the outage. Consistency is not liveness.
+
+The rule the postmortem states: a pipeline that clamps to the newest data cannot
+tell fresh from frozen, so freshness has to be checked against the clock, not
+against the data. Any check derived only from the contents of the store will agree
+with a store that stopped growing. Something has to compare a timestamp to now, and
+that comparison has to live somewhere that runs whether or not new data arrived.
+
+The generalizable version, which applies far outside this repo: monitor the arrival
+process, not just the arrived data. Row counts, null rates, and distribution checks
+all look fine on a table nobody is writing to.
+"""
+source = "docs/postmortem-2026-04-lock-outage.md"
+anchor = "Freshness has to be checked against the clock, not the data."
+see_also = ["wow_forecaster/features/daily_agg.py"]
+
+# ── Reading the record critically ─────────────────────────────────────────────
+
+[[question]]
+id = "m11-q14"
+kind = "find"
+prompt = """
+Open the postmortem's timeline and compare its first two rows against the data
+impact section. Something does not reconcile. Find it and say what the document
+does and does not establish.
+"""
+rubric = [
+  "Row one dates the last successful hourly ingest to 2026-04-07; row two dates the lock-leaking crash to 2026-04-15 07:16:01",
+  "The data impact section dates the permanent loss from 2026-04-08, which lines up with row one and not with row two",
+  "The document never explains what happened during those eight days: the root cause chain accounts for the wedge, not for the period before it",
+  "The honest conclusion is to say the wedge explains the 96 days it names and the eight days before are unexplained, rather than back-filling a cause",
+]
+answer = """
+The timeline says the last successful hourly ingest was 2026-04-07 and the crash
+that leaked the lock was 2026-04-15 07:16:01. The data impact section dates the
+permanent loss from 2026-04-08. So by the document's own numbers, ingestion had
+already stopped delivering roughly eight days before the wedge began, and the
+root cause chain does not cover that period. `docs/ROADMAP.md` repeats the same two
+dates without reconciling them either.
+
+There are ordinary explanations available (the machine was off, runs were failing
+for an unrelated reason, or the crashed run of 04-15 was the last of a series). The
+point of the question is that none of them are in the record, so none of them are
+findings. A postmortem's job is to make the chain checkable, and the checkable part
+here is the 96 days from the wedge forward.
+
+Two things to take away. First, read a postmortem the way you read a result: the
+timeline and the impact section are two measurements of the same event, and where
+they disagree you have found the edge of what was actually established. Second, when
+you write one, treat an unexplained interval as a finding of its own rather than
+smoothing it into the narrative. Writing "we do not know what happened between the
+7th and the 15th" costs one line and preserves the reader's ability to trust
+everything else in the document.
+"""
+source = "docs/postmortem-2026-04-lock-outage.md"
+anchor = "Last successful hourly ingest."
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m11-q15"
+kind = "mcq"
+prompt = """
+Replay 2026-04-15 against today's code. The lock leaks at 07:16. Which guard goes
+red first?
+"""
+answer = """
+The scheduled health check. It runs every 6 hours anchored at 00:45, and it passes
+`--stale-hours 4`, so at 12:45 the last ingest is over five hours old, `is_stale`
+is True, `has_failures` is True, the command exits 1, and the bat writes
+`health_alert.json` and raises the red console window. The lock-age sentinel joins
+it: at 180 minutes of lock age the check also reports STALE LOCK, which points at
+the actual cause rather than just the symptom.
+
+The daily gate is second, and later than most people guess. The daily task runs at
+07:00, so at the first firing after the wedge the newest observation is roughly 24.7
+hours old, under the 26-hour threshold. It passes. It fails the following morning at
+around 48 hours. That is the gate working as designed: it is deliberately loose
+enough that a couple of missed hourly runs do not cancel a day's forecasts, which is
+exactly why it is not the primary alarm.
+"""
+options = [
+  { text = "The scheduled health check, at the first 6-hourly firing more than 4 hours after the last ingest", correct = true },
+  { text = "The daily forecast freshness gate, at the next 07:00 run", note = "It passes that morning. The last ingest is about 24.7 hours old and the gate's threshold is 26 hours, so it fails on the second morning, not the first. That looseness is intentional: the gate blocks output, so it is tuned not to fire on ordinary slack." },
+  { text = "The cloud capture gap guard, once the trailing 24 hours drops below 20 distinct captured hours", note = "The cloud guard watches an independent capture stream running on GitHub Actions. A wedged lock on the desktop does not reduce cloud coverage at all, so the guard stays green. It backstops data loss, not desktop wedging, which is precisely why both exist." },
+  { text = "The retention sentinel, once the pruner stops deleting rows past the 30-day window", note = "It does eventually fire, but not on day one. The threshold is a 32-day age on the oldest surviving raw row (retention_days 30 plus 2 days of grace), and at the wedge that row is already about 30 days old because the pruner has been trimming to the boundary every hour. So it crosses the line a little over two days after the wedge, not 32 days later. Correct signal, still too slow for a day-one catch." },
+]
+source = "scripts/setup_tasks.bat"
+anchor = "the 06:45 run finishes before the 07:00 daily task starts."
+see_also = ["scripts/run_healthcheck.bat"]
+
+[[question]]
+id = "m11-q16"
+kind = "recall"
+prompt = """
+When the outage was discovered, the lock was deliberately left in place for over a
+week. Why, and what general rule does the postmortem draw from it?
+"""
+rubric = [
+  "The retention pruner runs as orchestrator step 7 after every successful ingest and deletes raw rows past 30 days",
+  "By discovery, every surviving raw row was past the window, so the first resumed run would have mass-deleted the only in-database history",
+  "The wedged lock was the only thing preventing that, so it was left in place while a restore runbook was written and the hardening landed first",
+  "The rule: before un-wedging a long-stalled pipeline, check what its first resumed run will do to accumulated state",
+]
+answer = """
+The pruner deletes raw observations older than the retention window on every
+successful hourly run, as step 7 of the orchestrator. That is correct behavior and
+required by the API Terms of Service. But by 2026-07-12 the newest surviving raw
+row was three months old, so the very first resumed run would have deleted
+essentially everything that was left, and the retention rule would have been
+enforced against a table that no longer had a replacement source. The outage was
+protecting the data from the cleanup job.
+
+So the sequence became: leave the lock, write a runbook, land the hardening
+(takeover, freshness gate, scheduled health check, sentinels, task registration,
+wake-to-run, cloud capture) between 07-15 and 07-20, then execute the restore with
+evidence captured first.
+
+The rule generalizes past retention. Anything that runs on a schedule and acts on
+age or on accumulated state is loaded while the pipeline is stopped: retention
+jobs, compactions, log rotations, migrations pending on the next start, TTL
+expiries, queue drains. The instinct on finding a stalled pipeline is to restart it
+immediately. The right first move is to enumerate what the first resumed run will
+do, because a stalled system is often in a state its own maintenance jobs were
+never designed to see.
+"""
+source = "docs/postmortem-2026-04-lock-outage.md"
+anchor = "The outage was protecting the data from the cleanup job."
+see_also = ["wow_forecaster/governance/pruner.py"]
+
+# ── Failure semantics in the health layer ────────────────────────────────────
+
+[[question]]
+id = "m11-q17"
+kind = "recall"
+prompt = """
+`HealthReport.has_failures` is a single property that ORs several checks. Describe
+what it feeds, what the formatter does with a failure that is not staleness, and
+why a missing lock file is treated as healthy while an unverifiable suppression
+flag in `run_healthcheck.bat` is treated as a failure.
+"""
+rubric = [
+  "has_failures ORs is_stale, lock_is_stale, retention_violation, and backup_is_stale, and is the single source for the CLI exit code",
+  "The formatter is three-way: [STALE] for stale data, [UNHEALTHY] for a non-staleness failure, [HEALTHY] otherwise",
+  "A missing lock file is the normal between-runs state, so the OSError path passes rather than failing",
+  "An unverifiable suppression flag is different: the failure has already been detected and the only question is whether to alert, so uncertainty resolves toward alerting",
+]
+answer = """
+`has_failures` ORs four conditions and is the single thing the CLI consults before
+exiting 1. That matters more than it looks: every alert surface downstream
+(`run_daily.bat`, `run_healthcheck.bat`, the alert JSON, the console window) keys
+off one exit code, so adding a fifth check means changing one property rather than
+five call sites. The failure they were guarding against is a check that exists and
+does not reach the exit code, which is what "monitoring that is not scheduled is
+documentation" says at the task level.
+
+The formatter is three-way on purpose. `[STALE]` keeps its original meaning of data
+being too old. A wedged lock or a dead pruner with fresh data reports `[UNHEALTHY]`
+instead, so the label does not lie about which check failed while the exit code
+stays the same.
+
+Now the asymmetry, which is the interesting part. In `collect_health_report`, an
+`OSError` while stat'ing the lock file passes silently, because no lock file is the
+normal state between runs. That is not skip-on-uncertainty, it is the correct
+reading of an unambiguous condition: absence of a lock means no run is holding one.
+
+In `run_healthcheck.bat` the suppression flag is different. By the time that code
+runs, a failure has already been detected. The only open question is whether an
+alert window was raised recently enough to suppress this one. An unverifiable flag
+there means "I do not know whether you have been told", and the answer to that is
+to tell you. Worst case is one extra console window.
+
+The rule is not "always fail on uncertainty". It is: work out what the uncertain
+branch costs in each direction, and let the cheap mistake win. The lock check's
+uncertain branch is cheap to pass. The alert check's uncertain branch is cheap to
+raise. Both follow the same reasoning to different conclusions.
+"""
+source = "wow_forecaster/reporting/health.py"
+anchor = "True when any check failed — the single source for the exit code."
+see_also = ["scripts/run_healthcheck.bat", "docs/postmortem-2026-04-lock-outage.md"]
+
+[[question]]
+id = "m11-q18"
+kind = "mcq"
+prompt = """
+`_classify_error_drift(mae_ratio)` maps a ratio to a `DriftLevel`, and its
+docstring says `None → NONE (can't detect)`. What is wrong with that, in the
+vocabulary of this module?
+"""
+answer = """
+It is a floor the failure mode can satisfy. "I cannot compute a ratio" and "the
+model is not drifting" both report `DriftLevel.NONE`, so a drift detector that has
+lost its baseline entirely is indistinguishable from a drift detector that is
+watching a healthy model.
+
+The condition is not hypothetical. `baseline_mae` is averaged over
+`backtest_fold_results` with no `model_name` filter and no staleness check, and
+backtest horizons are 1 and 3 while production forecasts 1, 7 and 28, so the 7d and
+28d ratios can never be computed at all. Those two horizons permanently report "no
+drift" while measuring nothing.
+
+`monitoring/health.py` handles the same condition by returning `unknown`, which is
+right. So the fix is not to invent anything: it is to make drift agree with health.
+The reason to keep it in this module rather than the drift module is that the repo
+already states the principle out loud for the cloud gap guard, keeps the floor at
+20 on purpose so the failure mode cannot satisfy it, and then violates the same
+principle in a different file. A stated principle only holds where somebody
+remembered to apply it, which is an argument for turning principles into shared
+helpers rather than shared prose.
+"""
+options = [
+  { text = "'Cannot compute' and 'no drift' produce the same value, so a detector with no baseline reports healthy: the failure mode satisfies the alarm", correct = true },
+  { text = "None should map to CRITICAL, since an uncomputable ratio means the model has failed", note = "Overcorrecting turns every cold start and every fresh database into a critical alert, and an alarm that is red on day one gets muted. The right value is a third state meaning unknown, which is what monitoring/health.py already returns." },
+  { text = "The real defect is the missing model_name filter on baseline_mae, not the None mapping", note = "The pooled baseline is a genuine defect and it is why the ratio is often meaningless, but it is a separate one. Even with a perfect baseline, mapping an uncomputable ratio to NONE would still hide the case where the baseline goes missing." },
+  { text = "Nothing is wrong: returning NONE is conservative, since reporting drift without evidence would be a false positive", note = "That framing treats 'no alarm' as the safe default, which is the assumption this whole module argues against. The safe default is the state that cannot be reached by the failure you are watching for, and silence is reachable by a dead detector." },
+]
+source = "wow_forecaster/monitoring/drift.py"
+anchor = "None → NONE (can't detect)."
+see_also = ["PLAN.md", "docs/cloud-capture.md"]

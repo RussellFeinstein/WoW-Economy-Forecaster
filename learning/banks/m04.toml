@@ -1,0 +1,794 @@
+# M04: Features and the leakage boundary.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+#
+# This module is the contrast case for M06. Feature leakage is handled carefully
+# here and documented well. Label leakage is not, and neither is one class of
+# feature leakage that nobody wrote down. Both facts belong in the same head.
+
+# ── The three column sets ─────────────────────────────────────────────────────
+
+[[question]]
+id = "m04-q01"
+kind = "recall"
+prompt = """
+The dataset builder writes two Parquet files from one registry. Name the two
+differences between the training file and the inference file, and say why each
+one exists.
+"""
+rubric = [
+  "The inference file drops the target group, so it has three fewer columns",
+  "The inference file keeps only the most recent row per (archetype_id, realm_slug)",
+  "Targets are dropped because they are labels: at prediction time the future price does not exist yet",
+  "Only the latest row is kept because inference asks one question per series: what happens next from current market state",
+]
+answer = """
+Two differences, and they answer two different questions.
+
+Columns: `build_parquet_schema(include_targets=False)` filters out every spec
+with `is_target=True`, which is the three `target_price_*d` columns. Training is
+48 columns, inference is 45. The reason is not tidiness. At inference time the
+label literally does not exist, because it is a price 1, 7, or 28 days in the
+future. A target column in the inference file could only ever be null, and a
+nullable column that is always null invites someone to read it as a signal.
+
+Rows: `write_inference_parquet` keeps only the latest `obs_date` per
+(archetype_id, realm_slug). Training wants every historical row it can get.
+Inference wants one row per series describing the market as it stands now, since
+each prediction is "from today, what happens in h days". So the training file has
+one row per series per date and the inference file has one row per series.
+
+The second difference is the one that couples this layer to the freshness gate.
+"Latest row" means latest row in the dataset, not latest row in reality. If
+ingestion has been dead for a week, the inference file still builds, still has
+one row per series, and still looks structurally perfect. That is exactly what
+the 105-day outage looked like from here, and it is why `ForecastStage` checks
+the age of the newest normalized observation separately rather than trusting that
+a well-formed inference Parquet means fresh data.
+"""
+source = "wow_forecaster/features/dataset_builder.py"
+anchor = "Uses the last available row per (archetype_id, realm_slug) as the"
+see_also = ["wow_forecaster/features/registry.py"]
+
+[[question]]
+id = "m04-q02"
+kind = "mcq"
+prompt = """
+Three different column counts describe this pipeline: 48, 45, and 40. Which one
+is the number of model inputs, and what are the other two?
+"""
+answer = """
+40 is the model. `TRAINING_FEATURE_COLS` in `ml/feature_selector.py` is the list
+actually handed to LightGBM.
+
+48 is the training Parquet: everything in `FEATURE_REGISTRY`, including the three
+identifier columns and the three targets. 45 is the inference Parquet, which is
+the same minus the target group.
+
+The gap between 45 and 40 is where the interesting decisions live. Thirteen
+registry columns never reach the model. Five are dropped outright: `archetype_id`,
+`realm_slug`, `obs_date`, `archetype_sub_tag`, and `is_volume_proxy`. The other
+eight are the raw string or boolean columns that get re-encoded, so their raw form
+is left behind. In their place `encode_row()` creates eight new `_enc` and `_int`
+columns that do not exist in the Parquet at all, so the model's column list is not
+a subset of the file's column list in either direction. 45 minus the 13 dropped
+plus the 8 encoded is 40.
+
+Worth holding: the registry is the contract for the file on disk, and
+`feature_selector.py` is the contract for the model. They are separate documents,
+maintained by hand, with no test asserting that every name in
+`TRAINING_FEATURE_COLS` resolves to something a row actually carries. A typo
+there does not raise. `to_float(row.get(c))` returns NaN for a missing key, and
+LightGBM reads NaN as missing, so a misspelled feature name silently becomes an
+all-missing column.
+"""
+options = [
+  { text = "40 is the model input list; 48 is the training Parquet; 45 is the inference Parquet", correct = true },
+  { text = "45 is the model input list; 48 is the training Parquet; 40 is the subset after dropping nulls", correct = false, note = "Nothing drops columns for nullness. 45 is the inference Parquet, which is the registry minus the three target columns, and the model list is shorter still because identifiers and raw string columns are excluded by hand in feature_selector.py." },
+  { text = "48 is the model input list; 45 is the inference Parquet; 40 is the count after encoding", correct = false, note = "Encoding adds columns rather than removing them: encode_row() produces eight new _enc and _int keys on top of the raw ones. The model list is smaller than the Parquet because of deliberate exclusions, not because of encoding." },
+  { text = "All three are the same set counted at different stages, so the difference is bookkeeping", correct = false, note = "They are genuinely different sets. Eight model input names (event_active_int, archetype_category_enc and friends) appear in no Parquet file, and sixteen registry columns are never model inputs. Neither is a subset of the other." },
+]
+source = "wow_forecaster/ml/feature_selector.py"
+anchor = "CATEGORICAL_FEATURE_COLS: list[str] = ["
+
+[[question]]
+id = "m04-q03"
+kind = "recall"
+prompt = """
+`feature_selector.py` lists six columns it will never pass to the model and gives
+a reason for each. Reconstruct the list and the reasons. Then pick the one
+exclusion that is a modeling judgement rather than a correctness requirement, and
+say what it costs.
+"""
+rubric = [
+  "archetype_id: would memorise TWW archetypes and defeat cold-start transfer",
+  "realm_slug: string identifier, and V1 trains one model per realm anyway",
+  "obs_date: temporal signal is carried by day_of_week and week_of_year instead",
+  "archetype_sub_tag: high cardinality and overlaps archetype_category; target_price_*: labels",
+  "is_volume_proxy is the judgement call, excluded for low independent signal, and it is the one that hides a data-quality flag from the model",
+]
+answer = """
+The list, with the module's own reasoning:
+
+- `archetype_id`: the model would memorise individual TWW archetypes. That is
+  fatal here specifically, because the entire premise is predicting Midnight
+  archetypes the model has never seen. A memorised id is a lookup table, and a
+  lookup table has no row for a new expansion.
+- `realm_slug`: a string identifier, and V1 trains one model per realm, so it
+  would be constant within a model anyway.
+- `obs_date`: the calendar signal is decomposed into `day_of_week`,
+  `day_of_month`, and `week_of_year`. Feeding the raw date to a tree model lets
+  it split on "before or after this specific day", which is memorisation of the
+  training period rather than a learnable pattern.
+- `archetype_sub_tag`: high cardinality, and it nests inside
+  `archetype_category`, which is already encoded.
+- `target_price_*`: labels. Passing a label as a feature is the degenerate case
+  of leakage.
+- `is_volume_proxy`: low independent signal.
+
+The first five are correctness or near-correctness. `is_volume_proxy` is the
+judgement call, and it is arguably the wrong one. It is True when the Blizzard
+response carried no `quantity_listed`, so `obs_count` stood in as the velocity
+proxy. That means `quantity_sum` and `auctions_sum` mean something different on
+those rows, and the flag telling you so is the one column withheld from the
+model. The model sees the degraded measurement and not the degradation marker.
+The quality report tracks `volume_proxy_pct` for a human, which is useful, but it
+is not the same as letting the booster condition on it.
+"""
+source = "wow_forecaster/ml/feature_selector.py"
+anchor = "- archetype_id   : Would memorise TWW archetypes; prevents cold-start transfer."
+
+# ── The lag and rolling boundary ──────────────────────────────────────────────
+
+[[question]]
+id = "m04-q04"
+kind = "recall"
+prompt = """
+State the leakage boundary for a lag or rolling feature in one sentence. Then
+answer the objection: the 7-day rolling mean includes today's price, so is the
+feature not looking at the thing being predicted?
+"""
+rubric = [
+  "A lag or rolling feature may read only obs_date and earlier, never past obs_date",
+  "The boundary sits at the feature date, not before it, so today's own price is allowed",
+  "Because the target is price at obs_date + h, and today's price is known at prediction time",
+  "The boundary that would be violated is reading any date strictly after obs_date, which only the target columns do",
+]
+answer = """
+The rule: a lag or rolling feature may read the series at `obs_date` and earlier,
+and nothing after it.
+
+Note where the boundary sits. It is at the feature date inclusive, not the day
+before. `price_roll_mean_7d` averages `obs_date` and the six days before it, and
+`price_mean` is itself a feature. That is correct, and the objection dissolves
+once you write down the two dates a forecasting row carries. The features are
+stamped at T. The label is `price(T + h)`. At the moment a real forecast is
+produced, T is today and today's price is on the screen. Using it is not
+foresight, it is the current state of the market.
+
+What would break the boundary is reading T + 1 or later. Only the target columns
+do that, deliberately, and the dataset builder keeps them out of the inference
+file.
+
+There is one detail in the loop that reads oddly at first: the window is
+`range(n)`, with `i=0` as the current day, so a 7-day window spans seven calendar
+days ending today rather than the seven days before today. If you assume "past 7
+days" means the seven prior days, every rolling column is off by one and
+`price_roll_mean_7d` correlates with `price_mean` less than you expect it to. The
+inline comment is the authority here, not the registry description.
+"""
+source = "wow_forecaster/features/lag_rolling.py"
+anchor = "Lag and rolling features only access obs_date ≤ current date."
+
+[[question]]
+id = "m04-q05"
+kind = "predict"
+prompt = """
+A series has `price_mean` on 2025-05-01 through 2025-05-10, then nothing until
+2025-05-20, when prices resume. The date spine fills the gap with rows whose
+`price_mean` is None.
+
+For the row at 2025-05-20, what are `price_roll_mean_7d` and `price_roll_std_7d`?
+"""
+answer = """
+Both take only the non-None values in the window, and the window
+[2025-05-14, 2025-05-20] contains exactly one: 2025-05-20 itself.
+
+The code branches on that: zero valid values gives None for both, exactly one
+valid value gives that value as the mean and 0.0 as the std, and two or more runs
+the real computation. So the answer is mean = the 2025-05-20 price, std = 0.0.
+
+The mean is defensible. The std is a lie with a number attached. There is no
+evidence about volatility here at all, and 0.0 says "this market did not move",
+which is the strongest possible claim from the weakest possible evidence. The
+same value would be correct for a genuinely flat week.
+
+It happens not to hurt downstream, for an accidental reason worth knowing.
+`compute_confidence_interval` guards with `rolling_std_7d is not None and
+rolling_std_7d > 0`, so a 0.0 std falls through to the 20 percent default
+half-width, the same path as a missing std. That means a real, measured zero
+volatility is treated as no information too. The guard papers over the bad case
+by also discarding the good one, and neither behaviour is written down as
+intended.
+
+The general rule this illustrates: a computation that cannot distinguish "no
+evidence" from "evidence of zero" should return None and let the caller decide.
+The repo already states this principle in the monitoring layer, where returning
+`unknown` instead of `none` for an uncomputable drift ratio is called out as the
+correct behaviour.
+"""
+options = [
+  { text = "mean = the 2025-05-20 price, std = 0.0", correct = true },
+  { text = "mean = the 2025-05-20 price, std = None", correct = false, note = "None is reserved for a window with zero non-None values. With exactly one, the code takes an explicit branch that sets std to 0.0. Arguably it should do what you said, but it does not." },
+  { text = "mean = None, std = None, because the window is mostly null", correct = false, note = "Nulls are skipped, not counted, matching SQL AVG semantics. One valid value is enough to produce a mean; there is no minimum-coverage rule anywhere in the window logic." },
+  { text = "mean and std are computed over the last 7 dates that have data, so the window reaches back to 2025-05-04", correct = false, note = "The window is calendar days, not observations. It is built by indexing the date lookup at obs_date minus i for i in range(7), so a gap shrinks the sample rather than extending the reach." },
+]
+source = "wow_forecaster/features/lag_rolling.py"
+anchor = "A window with exactly one non-None value produces that value for mean and 0.0 for std."
+
+[[question]]
+id = "m04-q06"
+kind = "mcq"
+prompt = """
+`price_roll_std_7d` is the only volatility input the confidence interval has.
+Which statement about it is true as the code stands?
+"""
+answer = """
+It is computed from the same rolling window that includes `obs_date`, so a series
+with one observation in seven days reports 0.0 rather than None.
+
+The other options each get one plausible-sounding thing wrong, and the reason to
+work through them is that this column travels a long way: it is a model feature,
+it is the sole basis of the heuristic confidence interval in
+`compute_confidence_interval`, and through `ci_quality` it decides which items
+reach the TSM export. A misunderstanding here propagates into the product.
+"""
+options = [
+  { text = "It is computed over a window that includes obs_date, and returns 0.0 rather than None when the window holds a single observation", correct = true },
+  { text = "It is a population standard deviation over the prior 7 days, excluding obs_date", correct = false, note = "It is a population standard deviation, computed as sqrt(E[x squared] minus E[x] squared) with a clamp at zero for float cancellation. But the window includes obs_date: i runs from 0, and i=0 is the current day." },
+  { text = "Nulls in the window are treated as zero prices, which is why a sparse series reports high volatility", correct = false, note = "Nulls are excluded from the window entirely, the same semantics as SQL AVG ignoring NULLs. A sparse series reports low or zero volatility, not high, which is the more dangerous direction." },
+  { text = "When it is 0.0, the confidence interval collapses to a point before the 5 percent floor widens it", correct = false, note = "It never gets that far. compute_confidence_interval tests rolling_std_7d > 0, so 0.0 takes the same branch as None and uses the 20 percent default half-width. The point-collapse is prevented earlier than you would expect." },
+]
+source = "wow_forecaster/features/lag_rolling.py"
+anchor = "i=0 is current day; i=n-1 is n-1 days ago"
+
+[[question]]
+id = "m04-q07"
+kind = "recall"
+prompt = """
+The target columns break the leakage boundary on purpose. State the rule that
+makes that safe, and name every mechanism that keeps a target column from
+reaching the model.
+"""
+rubric = [
+  "A column may look forward if and only if it is a label, never an input",
+  "FeatureSpec.is_target marks them, and build_parquet_schema filters them out of the inference file",
+  "TRAINING_FEATURE_COLS omits them, so they are not in the matrix even when training reads the file that contains them",
+  "lgbm_model.fit drops rows where the target is null rather than imputing, so a missing label removes the row",
+]
+answer = """
+The rule: a column is allowed to read `obs_date + h` if and only if it is the
+thing being predicted, and it must never appear as an input.
+
+Three mechanisms enforce it, at three different layers.
+
+`FeatureSpec.is_target` is the declaration. `build_parquet_schema` filters on it,
+so the inference Parquet physically cannot contain a target column. That handles
+the serving path.
+
+`TRAINING_FEATURE_COLS` handles the training path, where the file on disk does
+contain the targets. `build_feature_matrix` extracts only the named columns, and
+the target names are not among them. The target arrives separately, by name,
+through `target_col`.
+
+The third is quieter and is really about honesty rather than leakage:
+`lgbm_model.fit` filters to rows where `row.get(target_col) is not None` instead
+of imputing a missing label. That matters at the end of every series, where
+`target_price_28d` is null for the last 28 dates because the future has not
+happened yet. Imputing those would fabricate labels; dropping them means the
+28-day model trains on strictly fewer rows than the 1-day model from the same
+file, which is the honest consequence of a longer horizon.
+
+Belt and braces is the right description. Three independent mechanisms is more
+than strictly needed, and the redundancy is defensible for a failure this
+expensive. Compare it against how the label-date split boundary is enforced,
+which is M06's subject: not at all.
+"""
+source = "wow_forecaster/features/lag_rolling.py"
+anchor = "Targets are forward-looking labels — they are allowed to use future prices."
+see_also = ["wow_forecaster/ml/feature_selector.py"]
+
+# ── Events: announced_at and is_known_at ──────────────────────────────────────
+
+[[question]]
+id = "m04-q08"
+kind = "recall"
+prompt = """
+Event features carry the principal leakage risk in this dataset. Describe the
+three layers of defence, and say which one is doing real work today.
+"""
+rubric = [
+  "Layer 1: the SQL loader selects only events WHERE announced_at IS NOT NULL",
+  "Layer 2: a per-row is_known_at(as_of) guard, with as_of set to end of day on obs_date",
+  "Layer 3: a quality heuristic asserting event_days_to_next is never negative",
+  "Layer 2 is the one that filters per row; layer 1 currently removes nothing because every seeded event has an announced_at",
+]
+answer = """
+Layer 1 is the database filter. `load_known_events` selects
+`WHERE announced_at IS NOT NULL`, so an event with no announcement timestamp
+never enters the Python at all. This is a structural guard: it holds regardless
+of how the downstream logic is written.
+
+Layer 2 is the per-row guard, and it is the layer that does the real filtering.
+For each row at date D the module builds
+`as_of = datetime(D, 23, 59, 59, tzinfo=UTC)` and keeps only events where
+`is_known_at(as_of)` is True. This is what makes the same event visible to
+2025-08-20 and invisible to 2025-08-19.
+
+Layer 3 is the quality heuristic in `build_quality_report`, which flags any row
+where `event_days_to_next` is negative and marks the whole report unclean.
+
+Which is doing work right now: layer 2. All 28 seeded TWW events carry an
+`announced_at`, so layer 1's WHERE clause currently removes zero rows. That does
+not make it useless. It is a tripwire for the next hand-added event, and it fails
+in the safe direction, which is the property you want from a guard you are not
+watching. Layer 3 is a regression tripwire too, for a different reason: see the
+next question.
+
+The layering is worth crediting. Three independent checks at three levels, one in
+SQL, one in Python per row, one in the post-build report, is more discipline than
+the label side of this repo ever got.
+"""
+source = "wow_forecaster/features/event_features.py"
+anchor = "Only events with ``announced_at IS NOT NULL`` are loaded from the DB."
+
+[[question]]
+id = "m04-q09"
+kind = "mcq"
+prompt = """
+`is_known_at()` returns False when `announced_at` is None. Why is that the right
+default, and what does it cost?
+"""
+answer = """
+Because the two failure directions are not symmetric. Treating an unknown
+announcement as "known" would let an event that Blizzard had not revealed yet
+influence a feature at a date before anyone could have acted on it. That
+manufactures skill the model does not have, and it does it invisibly, because the
+backtest would simply look better. Treating it as "unknown" loses signal, which
+shows up as a worse number rather than a better one.
+
+The cost is real and worth naming: a genuine event with a missing announcement
+date is erased from the feature set entirely. Every row behaves as if it never
+happened. So the safe default puts a maintenance burden on whoever seeds events,
+because a blank `announced_at` is silent data loss rather than a warning.
+
+This is also the identification backbone for M18's event study, not just a
+convenience. `announced_at` and `start_date` are two different dates answering
+two different questions: when the market could have known, and when the effect
+began. Collapse them into one column and you can no longer separate an
+anticipation effect from an impact effect, which is most of what an interrupted
+time series design is trying to measure.
+"""
+options = [
+  { text = "An unknown announcement treated as known would create look-ahead bias that flatters the backtest, and the opposite error only loses signal", correct = true },
+  { text = "It is a database convention: NULL means the event was never announced publicly, so it genuinely was not known", correct = false, note = "The docstring says None means unknown, not never-announced. The default is a choice about how to handle missing metadata, not a statement of fact about the event, which is why it is described as conservative rather than correct." },
+  { text = "It keeps is_known_at total, since comparing None to a datetime would raise", correct = false, note = "True as far as it goes, and the None check does come first, but a TypeError is not why the behaviour was chosen. There is a related fragility here though: announced_at parsed without a timezone offset would be naive, and comparing it to the tz-aware as_of does raise." },
+  { text = "Events without an announcement date are excluded by the SQL loader anyway, so the branch is unreachable", correct = false, note = "The loader does filter them, so the branch is unreachable through that path. It is still reachable by any caller that builds a WoWEvent directly, and a guard that only holds because of a caller elsewhere is a guard that breaks when a second caller appears." },
+]
+source = "wow_forecaster/models/event.py"
+anchor = "as **unknown** (returns ``False``). This is the safe default"
+see_also = ["wow_forecaster/features/event_features.py"]
+
+[[question]]
+id = "m04-q10"
+kind = "predict"
+prompt = """
+An event is announced at 17:00 UTC on 2025-08-20 and starts on 2025-09-10. You
+are building features for that archetype series.
+
+For the row at `obs_date = 2025-08-20`, is the event visible, and what is
+`event_days_to_next`?
+"""
+answer = """
+Visible, and `event_days_to_next` is 21.0.
+
+The `as_of` used by layer 2 is end of day, `2025-08-20 23:59:59` UTC, not
+midnight. So `announced_at <= as_of` holds for an event announced at 17:00 that
+same day. The docstring says exactly why the boundary was put there: an
+announcement made during the day should be usable by that day's row, because a
+trader reading the announcement at 17:00 really could have acted before the
+auction house closed on that date.
+
+Then `_is_future` puts the event in the future bucket, since its start date is
+after `obs_date`, and `event_days_to_next` is `(2025-09-10 minus 2025-08-20).days
+= 21`.
+
+The choice is defensible for this data and is not free. The feature is stamped on
+a daily row, so it inherits the granularity of a daily bar. A trader at 09:00 on
+2025-08-20 did not know, and the row says the day did. That is a sub-day
+resolution error the daily grain cannot represent, and end-of-day is the choice
+that keeps the announcement date usable rather than shifting every announcement a
+day late. Midnight would be the conservative alternative and would cost a full
+day of anticipation signal on every event in the table.
+"""
+options = [
+  { text = "Visible, and event_days_to_next is 21.0", correct = true },
+  { text = "Not visible, because as_of is midnight at the start of obs_date and 17:00 is later", correct = false, note = "as_of is 23:59:59, deliberately. The module docstring names this: end of day rather than midnight, so an event announced during the day counts for that day." },
+  { text = "Visible, and event_days_to_next is 20.0, since the event starts the day after the count", correct = false, note = "The difference is a plain date subtraction between start_date and obs_date, with no off-by-one adjustment. 2025-09-10 minus 2025-08-20 is 21 days." },
+  { text = "Visible, but event_days_to_next is None because the event is not active yet", correct = false, note = "That is what event_active reports. days_to_next is computed precisely from the not-yet-started bucket: it is the minimum start_date among known future events, minus obs_date." },
+]
+source = "wow_forecaster/features/event_features.py"
+anchor = "an event announced on the same calendar day as an observation is correctly"
+
+[[question]]
+id = "m04-q11"
+kind = "mcq"
+prompt = """
+Layer 3, the quality heuristic, flags any row where `event_days_to_next < 0` and
+marks the dataset unclean. Given how layer 2 partitions events, when can that
+warning actually fire?
+"""
+answer = """
+It cannot fire against the current code. `event_days_to_next` is computed as
+`min(start_date over future_events) - obs_date`, and `_is_future` is defined as
+`start_date > obs_date`, so the minimum difference is 1 day. A negative value is
+arithmetically unreachable.
+
+That does not make the check pointless, but it does change what it is. It is not
+a data check, it is a regression tripwire on the partition logic. If someone
+loosens `_is_future` to `>=`, or reorders the buckets so a past event can land in
+the future list, the heuristic fires. Until then it runs over every row of every
+build and reports nothing, which costs a linear scan and buys a guarantee about
+code rather than about data.
+
+Worth being precise about the difference, because the repo has an explicit
+principle on the other side of it. The cloud capture gap guard keeps its floor at
+20 distinct hours on purpose, because a floor the failure mode can satisfy hides
+the failure. Layer 3 is the inverse case: a check the current failure modes cannot
+trip. It is not dishonest, and it should not be described as validating the data,
+because it validates a function.
+"""
+options = [
+  { text = "Only if the future or past partition logic changes, since future_events requires start_date strictly greater than obs_date and the minimum is therefore 1 day", correct = true },
+  { text = "Whenever an event has no end_date, because the past bucket then falls back to start_date", correct = false, note = "That fallback affects event_days_since_last, not event_days_to_next. days_since_last uses end_date or start_date as a fallback; days_to_next only ever reads start_date from the future bucket." },
+  { text = "When an event is announced after obs_date but starts before it, which the layer 2 filter permits", correct = false, note = "Layer 2 removes that event from the known list entirely, so it lands in no bucket. An unknown event cannot contribute to any feature, including this one." },
+  { text = "On any row where no future event is known, since the subtraction returns a negative sentinel", correct = false, note = "There is no sentinel. The empty case sets days_to_next to None explicitly, and the quality check skips None before comparing, so the no-events case is silent by construction." },
+]
+source = "wow_forecaster/features/quality.py"
+anchor = "- Leakage heuristic warnings (``event_days_to_next < 0`` implies a past event"
+
+[[question]]
+id = "m04-q12"
+kind = "find"
+prompt = """
+`EventSeverity` has five members. `SEVERITY_ENCODING` in `feature_selector.py`
+maps four of them plus None. Find the missing one, say what value it encodes to
+in practice, and say whether any seeded event is affected.
+"""
+rubric = [
+  "negligible is missing from SEVERITY_ENCODING",
+  "SEVERITY_ENCODING.get(..., 0) means it silently encodes to 0",
+  "0 is the same code as None, which means no active event at all",
+  "One seeded TWW event has severity negligible, so the collision is live rather than hypothetical",
+  "event_active_int still separates the two cases, so the damage is limited to that one column",
+]
+answer = """
+`negligible` is absent. `EventSeverity` declares negligible, minor, moderate,
+major, and critical; `SEVERITY_ENCODING` maps None, minor, moderate, major, and
+critical.
+
+The consequence is quiet, because `encode_row` calls
+`SEVERITY_ENCODING.get(row.get("event_severity_max"), 0)`. The default swallows
+it. An active event of negligible severity encodes to 0, which is the exact code
+reserved for "no known event is active on this date". Nothing raises, nothing
+logs, and the column looks well-formed.
+
+It is live, not theoretical: `config/events/tww_events.json` seeds 28 events and
+one of them, the September 2024 Trading Post reset, is negligible. So there is a
+real date range in the training data where `event_severity_enc` claims no event.
+
+The damage is bounded, and being precise about the bound is part of reading a bug
+correctly. `event_active_int` is a separate column and is still 1 on those rows,
+so the model can distinguish the two cases if it finds that split useful.
+`event_severity_enc` is also declared categorical, so LightGBM partitions the
+code set rather than treating it as a magnitude, which means the collision merges
+two categories rather than shifting a number. Small, real, and exactly the class
+of defect the repo's own code standard calls out: every entry in an enum should
+be reachable, and every lookup table over an enum should be total.
+
+While you are in there, notice the design question sitting next to it. Severity is
+ordinal, minor through critical, and it is declared in
+`CATEGORICAL_FEATURE_COLS`, which throws that ordering away in exchange for
+arbitrary set partitions. With five levels and a thin event table, the ordering is
+information you are unlikely to be able to afford to discard.
+"""
+source = "wow_forecaster/ml/feature_selector.py"
+anchor = "SEVERITY_ENCODING: dict[str | None, int] = {"
+see_also = ["wow_forecaster/taxonomy/event_taxonomy.py"]
+
+# ── features_hash ─────────────────────────────────────────────────────────────
+
+[[question]]
+id = "m04-q13"
+kind = "recall"
+prompt = """
+Every archetype-level forecast is stored with a `features_hash`. Describe exactly
+what is hashed, and what question the hash is meant to answer.
+"""
+rubric = [
+  "It is a SHA-256 over a JSON dump of that row's values for TRAINING_FEATURE_COLS, sorted by key",
+  "Truncated to the first 16 hex characters",
+  "It is per forecast row, computed from the encoded row at inference time",
+  "The question it answers: were these two forecasts produced from the identical feature vector",
+]
+answer = """
+`_hash_features` builds `{c: row.get(c) for c in cols}` over
+`TRAINING_FEATURE_COLS`, serialises it with `json.dumps(..., sort_keys=True,
+default=str)`, takes SHA-256, and keeps the first 16 hex characters. It runs once
+per forecast row, on the encoded inference row, and lands in
+`forecast_outputs.features_hash`.
+
+`sort_keys=True` is the load-bearing detail. Without it the digest would depend on
+dict insertion order, and two identical feature vectors could hash differently
+across runs, which would make the column useless for the one comparison it exists
+to support.
+
+The question it answers is narrow and worth stating narrowly: given two forecast
+rows, were they computed from the same feature values? That is enough to answer
+"did today's forecast change because the market changed, or because the model
+changed", which is a real question you cannot otherwise answer from the outputs
+table. If the hash matches and the prediction moved, the model or its artifact
+changed. If the hash moved, the inputs changed.
+
+It is honest partial credit toward reproducibility, and the audit files it that
+way: real provenance pieces exist (`features_hash` per forecast, `config_snapshot`
+per run, a SHA-256 per dataset file in the manifest) with nothing joining them
+into a single answer to "what produced this number".
+"""
+source = "wow_forecaster/ml/predictor.py"
+anchor = "Return a 16-char SHA-256 hex digest of the feature vector."
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m04-q14"
+kind = "mcq"
+prompt = """
+Which of these would `features_hash` fail to detect?
+"""
+answer = """
+A change in how a feature is computed that leaves the values unchanged for the
+rows you compared. The hash is over values, so it detects value drift and nothing
+else. Refactor `price_roll_std_7d` from population to sample standard deviation
+and the hash moves; change the window boundary in a way that happens not to bite
+on a flat series and it does not.
+
+The wrong options are worth reading as a group, because each one is a thing the
+hash does catch, and knowing the boundary of a provenance mechanism is the point
+of having one.
+
+Two limits that are not on the list and matter more in practice. First, coverage:
+item-level forecasts are written by `pipeline/forecast.py` with
+`features_hash=None`, because they come from a trend-ratio calculation rather
+than from the model, and they are the majority of rows in `forecast_outputs`.
+Whole classes of forecast carry no hash at all. Second, direction: the digest is
+one-way and truncated to 16 characters, so it can tell you two rows differ but
+never what differed, and nothing stores the vector it summarises. As a debugging
+tool it can only say "not the same".
+"""
+options = [
+  { text = "A change to how a feature is computed that leaves the resulting values identical", correct = true },
+  { text = "A feature column being added to or removed from TRAINING_FEATURE_COLS", correct = false, note = "This does change the hash. The hashed dict is keyed by column name, so adding or removing a key changes the JSON payload even if every shared value is identical." },
+  { text = "A cold-start blend shifting the prediction while the inputs stay the same", correct = false, note = "This is the case the hash is for, and it detects it by design: the hash stays the same while predicted_price_gold moves, which is precisely the signal that something other than the inputs changed." },
+  { text = "Ingestion stalling so that the same stale row is forecast two days running", correct = false, note = "The hash catches this, and it is one of the few places it earns its keep. Identical hashes on consecutive days mean the market state did not move, which for a live auction house is a data-freshness alarm rather than a coincidence." },
+]
+source = "wow_forecaster/ml/predictor.py"
+anchor = "vec = {c: row.get(c) for c in cols}"
+see_also = ["wow_forecaster/pipeline/forecast.py"]
+
+# ── The leakage nobody wrote down ─────────────────────────────────────────────
+
+[[question]]
+id = "m04-q15"
+kind = "recall"
+prompt = """
+`lag_rolling.py` states that no feature reads past `obs_date`. That claim is true
+of that module and false of the finished dataset. Name the columns that break it
+and explain the mechanism.
+"""
+rubric = [
+  "is_cold_start, item_count_in_archetype, has_transfer_mapping, transfer_confidence, and archetype_category or sub_tag",
+  "They are computed once from present-day database state and stamped identically onto every historical row of the series",
+  "So a row at date T carries an attribute derived from observations made after T",
+  "is_cold_start is the sharpest case: it encodes the series total observation count, which is a fact about the future of that series",
+  "Nothing in the repo flags this; the module docstring justifies the static columns on simplicity grounds only",
+]
+answer = """
+The archetype and transfer group: `is_cold_start`, `item_count_in_archetype`,
+`has_transfer_mapping`, `transfer_confidence`, and the category encodings.
+
+The mechanism is in `compute_archetype_features`. Each value is computed once per
+(archetype, realm) series from current database state, then written onto every
+row in that series. `is_cold_start` compares the series total observation count,
+over all history up to build time, against `cold_start_threshold`.
+`item_count_in_archetype` counts distinct items across the whole rollup.
+`has_transfer_mapping` reflects whether a mapping row exists today.
+
+So a training row at 2025-02-01 carries the answer to "did this series eventually
+accumulate 30 observations", and that answer depends on data from after
+2025-02-01. It is textbook look-ahead: an attribute of the whole sample stamped
+onto every point in it. A series that stays thin is marked cold-start on its very
+first row, and a series that grows fat is marked not-cold-start on its early
+sparse days, which is the exact discrimination a model would love to have and
+cannot legitimately have.
+
+Two things make this worth studying rather than just fixing.
+
+The docstring is not hiding anything, it simply did not ask the question. It
+justifies stamping static columns per row on the grounds that the values do not
+change day to day and it keeps the SQL simple. Both are true. The unasked
+question is whether they do not change day to day *as observed from that day*,
+and the answer is no.
+
+And it sits directly under a module that documents its own leakage boundary
+carefully. `lag_rolling.py`'s note is correct and scoped to `lag_rolling.py`. The
+dataset is built from six modules and no single document states the boundary for
+the assembled row. That is the transferable lesson: a leakage guarantee proved
+per module is not a leakage guarantee for the pipeline, and the join is exactly
+where nobody looks.
+"""
+source = "wow_forecaster/features/archetype_features.py"
+anchor = "These values do not change day-to-day for a given (archetype_id, realm_slug)"
+see_also = ["wow_forecaster/features/lag_rolling.py", "LESSONS.md"]
+
+[[question]]
+id = "m04-q16"
+kind = "find"
+prompt = """
+The registry says `is_cold_start` is True when the archetype belongs to the
+transfer-target expansion AND its observation count is below the threshold. Find
+where that is computed and check whether both conjuncts are actually tested.
+"""
+rubric = [
+  "compute_archetype_features computes is_cold_start = target_obs < cold_start_threshold, a single comparison",
+  "target_obs comes from cold_start_obs_counts.get(archetype_id, 0), and the default is 0",
+  "The expansion filter lives inside the SQL of count_obs_per_archetype_realm, so an archetype missing from the dict is indistinguishable from one with zero observations",
+  "So any archetype with no items in the transfer-target expansion scores 0 and is flagged cold start",
+  "Downstream, is_cold_start drives CI widening in compute_confidence_interval, so a false positive widens the interval by up to 3x",
+]
+answer = """
+Only one conjunct is tested in Python. `compute_archetype_features` does:
+
+    target_obs = cold_start_obs_counts.get(archetype_id, 0)
+    is_cold_start = target_obs < cold_start_threshold
+
+The expansion condition is not lost, exactly. It lives inside the SQL of
+`count_obs_per_archetype_realm`, which filters items to
+`expansion_slug = transfer_target`. But that filter only decides which archetypes
+appear in the returned dict, and the `.get(..., 0)` default then collapses two
+very different situations into one number: "this archetype has few observations in
+the target expansion" and "this archetype has no presence in the target expansion
+at all". Both come out as 0, and 0 is below any positive threshold.
+
+The result is that an archetype with no items in the transfer-target expansion is
+flagged `is_cold_start = True`. Since the active expansion and the transfer target
+are different config values by design, the population of archetypes carrying no
+target-expansion items is not a corner case, and the flag can end up close to
+constant across the dataset. A constant feature carries no information, and the
+quality report's `cold_start_pct` is where that would show up, sitting in the
+manifest, unread.
+
+Follow it downstream before deciding how much it matters.
+`compute_confidence_interval` takes `is_cold_start` and, when there is no transfer
+mapping, multiplies the half-width by 3.0. A false positive on this flag triples
+the confidence interval, which pushes `ci_quality` from "good" toward "wide" or
+"unreliable", and `write_tsm_export` filters on `ci_quality = good`. A single
+missing conjunct in a feature module changes which items reach the export string
+a user pastes into the game.
+
+That chain is the reason to read a feature definition against its consumers rather
+than against its docstring.
+"""
+source = "wow_forecaster/features/archetype_features.py"
+anchor = "is_cold_start = target_obs < cold_start_threshold"
+see_also = ["wow_forecaster/ml/cold_start.py", "wow_forecaster/features/registry.py"]
+
+# ── Contracts that do not hold ────────────────────────────────────────────────
+
+[[question]]
+id = "m04-q17"
+kind = "find"
+prompt = """
+`write_training_parquet` raises a RuntimeError if the schema does not have the
+expected number of columns, and the error text tells you to update a constant
+after intentionally changing the registry. Find `_EXPECTED_TRAINING_COLS` and say
+whether the guard can ever fire. Then find the stale count nearby.
+"""
+rubric = [
+  "_EXPECTED_TRAINING_COLS is defined as len(training_feature_names()), derived from FEATURE_REGISTRY",
+  "build_parquet_schema iterates the same FEATURE_REGISTRY, so both sides always agree and the guard cannot fire",
+  "The error message assumes a hand-maintained constant, which is what it was presumably meant to be",
+  "registry.training_feature_names() has a docstring claiming 45 columns; the real count is 48",
+]
+answer = """
+It cannot fire. `_EXPECTED_TRAINING_COLS = len(training_feature_names())` and
+`training_feature_names()` returns a name for every spec in `FEATURE_REGISTRY`.
+`build_parquet_schema(include_targets=True)` builds one field per spec in the same
+`FEATURE_REGISTRY`. Both sides are the same length by construction, so the
+comparison is a tautology and the RuntimeError is unreachable.
+
+The error message gives the intent away: "Update _EXPECTED_TRAINING_COLS after
+intentionally changing FEATURE_REGISTRY" only makes sense if the constant were a
+literal, hardcoded so that an accidental registry edit would trip it. Somewhere
+between intent and code it was made self-referential, and a guard that derives its
+expectation from the thing it is guarding always passes.
+
+The stale count is in `registry.py` itself: `training_feature_names()` is
+documented as returning 45 columns, and it returns 48. 45 is the inference count.
+The two numbers were correct at some point and the target group grew or the
+docstring was copied from its neighbour. `dataset_builder.py`'s own module
+docstring has it right, 48 training and 45 inference, so the repo disagrees with
+itself in two files.
+
+Both are the same failure in different costumes. The first states a check that is
+not performed; the second states a fact that is not true. Neither shows up in a
+test run, and a reader trusting either one is misled. If you want the guard to
+mean something, the fix is a literal: assert against a written-down number that a
+human has to change on purpose, which is exactly what the error message already
+tells you to do.
+"""
+source = "wow_forecaster/features/dataset_builder.py"
+anchor = "_EXPECTED_TRAINING_COLS: int = len(training_feature_names())"
+see_also = ["wow_forecaster/features/registry.py"]
+
+[[question]]
+id = "m04-q18"
+kind = "predict"
+prompt = """
+Someone edits `config/default.toml`, changing `lag_days = [1, 3, 7, 14, 28]` to
+`lag_days = [1, 2, 7, 14, 28]`. They leave `registry.py` alone. Then they run
+`build-datasets` and `run-daily-forecast`.
+
+What happens?
+"""
+answer = """
+Both commands succeed, and `price_lag_3d` becomes an all-null column.
+
+Follow the two halves. `lag_rolling.py` generates its keys from config:
+`key = f"price_lag_{n}d"` for `n in config.lag_days`. So the rows now carry
+`price_lag_2d` and no longer carry `price_lag_3d`. `registry.py` is a hardcoded
+list and still declares `price_lag_3d`.
+
+`rows_to_parquet_table` iterates the schema, which comes from the registry, and
+pulls values with `r.get(field.name)`. A missing key returns None, and the column
+is nullable, so `price_lag_3d` is written as all nulls with no complaint.
+`price_lag_2d` is never asked for, so it is silently dropped. The column-count
+guard compares the schema against a number derived from the same registry, so it
+sees nothing wrong. Then `to_float(None)` turns every value into NaN, LightGBM
+reads NaN as missing, and the model trains happily on a feature that is missing
+for every row.
+
+Net result: a model with 39 usable features instead of 40, one feature computed
+and thrown away, no error, no warning, and a `validation_mae` that will look
+slightly worse for reasons nobody can trace back to a config edit.
+
+The registry docstring claims the contract is enforced: other feature modules
+produce dicts whose keys must match the names declared here, and
+`dataset_builder` enforces it when constructing the schema. It does not. The
+schema is built from the registry alone and never consults the row keys, so the
+contract is enforced in exactly one direction, which is the direction that cannot
+fail. The check that would catch this is one line: compare the key set of the
+assembled rows against the registry names before writing.
+"""
+options = [
+  { text = "Both succeed; price_lag_3d is written as an all-null column and price_lag_2d is silently discarded", correct = true },
+  { text = "build-datasets raises, because the assembled rows no longer match the declared schema", correct = false, note = "Nothing compares row keys to the schema. rows_to_parquet_table uses r.get(field.name), which returns None for a missing key, and the column is nullable, so the write succeeds." },
+  { text = "The Parquet gains a 49th column, since price_lag_2d is present in the rows and price_lag_3d is still declared", correct = false, note = "Column set is decided entirely by the schema, which comes from the registry. Keys present in the rows but absent from the registry are never read, so the file keeps exactly 48 columns." },
+  { text = "Training raises at fit time, because TRAINING_FEATURE_COLS names a column that is all null", correct = false, note = "All-null is a legitimate state for LightGBM. to_float turns None into NaN, which LightGBM treats as missing rather than invalid, so the feature simply never produces a useful split." },
+]
+source = "config/default.toml"
+anchor = "lag_days = [1, 3, 7, 14, 28]"
+see_also = ["wow_forecaster/features/registry.py", "wow_forecaster/features/lag_rolling.py"]

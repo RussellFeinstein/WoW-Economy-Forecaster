@@ -1,0 +1,761 @@
+# M02: API to rows.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+
+# ── The path: token to row ────────────────────────────────────────────────────
+
+[[question]]
+id = "m02-q01"
+kind = "recall"
+prompt = """
+Trace one live commodity snapshot from the OAuth token request to a row landing
+in market_observations_raw. Name each hop and what it produces.
+"""
+rubric = [
+  "_ensure_token() posts grant_type=client_credentials to {region}.battle.net/oauth/token and caches the token on the client instance",
+  "fetch_commodities() GETs /data/wow/auctions/commodities once for the whole region, and _parse_commodities_response turns each auction dict into a BlizzardAuctionRecord",
+  "IngestStage flattens the records to plain dicts, writes them to a timestamped snapshot JSON, and records an IngestionSnapshot row",
+  "parse_blizzard_records() converts each record to a RawMarketObservation, skipping item_ids absent from the items registry",
+  "insert_raw_batch() writes the survivors with one executemany inside the phase-3 write connection",
+]
+answer = """
+Six hops, and the shape of them is the module.
+
+1. Token. `_ensure_token()` base64-encodes `client_id:client_secret`, posts
+`grant_type=client_credentials`, and stores the access token on the instance. It
+returns immediately if a token is already cached. Blizzard tokens last 24 hours
+and the process lives for one pipeline run, so one token per run is all this ever
+needs.
+
+2. Fetch. `fetch_commodities()` is a single GET for the entire US region, with a
+120-second timeout because the response is 15 to 30 MB. There is no pagination
+and no per-realm loop in live mode: the commodity auction house has been
+region-wide since patch 9.2.7, so one call is the whole market.
+
+3. Parse to records. `_parse_commodities_response()` walks `data["auctions"]` and
+emits one `BlizzardAuctionRecord` per auction listing, dropping any entry with no
+`item.id`. It hard-codes `buyout=0`, `bid=0`, `realm_slug=self.region`, and
+`time_left="VERY_LONG"`, because commodity listings carry none of those.
+`fetched_at` is set here to `datetime.now(UTC)`, which is the client's clock, not
+Blizzard's.
+
+4. Snapshot to disk. `IngestStage._fetch_blizzard_commodities()` flattens each
+record to a dict and calls `save_snapshot()`, which wraps it in a
+`{"_meta": ..., "data": ...}` envelope and returns `(content_hash, record_count)`.
+The file on disk is the replayable artifact: everything after this point can be
+re-derived from it, which is what makes the cloud catch-up path possible at all.
+
+5. Parse to observations. `parse_blizzard_records()` applies the price fallback
+chain, tags `faction="neutral"` and `num_auctions=1`, stores the whole record in
+`raw_json`, and drops any `item_id` not in the pre-loaded registry set.
+
+6. Insert. `insert_raw_batch()` is one `executemany` against
+`market_observations_raw`, followed by a single commit for the whole stage.
+
+The count to hold onto: a healthy snapshot is roughly 314,000 auction records, and
+each one that passes the item guard becomes its own row. This is not one row per
+item per hour.
+"""
+source = "wow_forecaster/pipeline/ingest.py"
+anchor = "# ── Phase 2: Network I/O — no DB connection held ──────────────────"
+
+[[question]]
+id = "m02-q02"
+kind = "recall"
+prompt = """
+State the min_buyout_raw fallback chain in order, and explain why the order is
+not arbitrary. What would break if the two non-null branches were swapped?
+"""
+rubric = [
+  "unit_price > 0 wins first: the commodity per-unit price",
+  "else buyout > 0: a non-commodity listing's buyout for the whole stack",
+  "else None: a bid-only listing has no buyout at all",
+  "unit_price is per unit and buyout is per stack, so swapping the order would mix two different units into one column",
+  "rec.get(\"unit_price\") or 0 normalises both a missing key and an explicit null to 0 before the comparison",
+]
+answer = """
+The chain, in order: `unit_price` if positive, else `buyout` if positive, else
+`None`.
+
+The order encodes a unit conversion, not a preference. `unit_price` is copper per
+single unit. `buyout` is copper for the entire stack. A stack of 200 Bismuth at
+82,000 copper each has `buyout` around 16.4 million, and if that number reached
+`min_buyout_raw` it would be divided by 10,000 in normalization and stored as a
+1,640-gold price for an item worth 8.2 gold. Two hundred times wrong, in a column
+nothing downstream can distinguish from a real price.
+
+Today the swap would be mostly harmless, and that is worth knowing precisely.
+`_parse_commodities_response` hard-codes `buyout=0` on every commodity record, so
+for the live path only one branch can ever fire. The order becomes load-bearing on
+the connected-realm path, where `_parse_realm_response` passes both fields through
+from the API, and it stays load-bearing as a statement of intent for whoever adds
+the next source.
+
+The `or 0` on both `rec.get()` calls is doing two jobs: it covers a key missing
+from an older snapshot and an explicit JSON null, so the `> 0` comparison never
+sees a `None` and never raises. That matters because the same function parses
+snapshots written months ago by the cloud path, not just the response in hand.
+
+The name `min_buyout_raw` is a leftover from the TSM-shaped schema this table was
+designed around. Nothing at this layer takes a minimum of anything.
+"""
+source = "wow_forecaster/pipeline/ingest.py"
+anchor = "- ``unit_price > 0`` (commodity): use ``unit_price`` as ``min_buyout_raw``"
+
+[[question]]
+id = "m02-q03"
+kind = "mcq"
+prompt = """
+After one live commodity snapshot is ingested, what does a single row in
+market_observations_raw actually represent?
+"""
+answer = """
+One individual auction listing. `min_buyout_raw` holds that listing's unit price,
+`quantity_listed` holds that listing's stack size, and `num_auctions` is the
+literal 1 written by the parser.
+
+The consequence is that a heavily traded herb contributes thousands of rows to a
+single snapshot, and the price statistics people expect at ingest time (a minimum,
+a mean, a listing count) do not exist yet. They are computed much later, in the
+daily rollup, where `price_min` is `MIN(CASE WHEN price_gold > 0 THEN
+price_gold END)` and the listing count is `SUM(num_auctions)`. The raw table is
+deliberately dumb: it records what the API said, one line at a time, and defers
+every aggregation decision to a layer that can be changed without refetching.
+
+That design is why the two observation tables dominate the database file, and why
+`durable_backup` excludes both of them.
+"""
+options = [
+  { text = "One auction listing: its unit price, its stack size, and num_auctions hard-coded to 1", correct = true },
+  { text = "One item per snapshot, holding the lowest unit price across all of that item's listings", note = "Nothing takes a minimum at this layer. The parser loops over every entry in data[\"auctions\"] and appends an observation per entry. The MIN only appears later, in the daily rollup SQL." },
+  { text = "One item per realm per snapshot, with num_auctions counting how many listings were seen", note = "num_auctions is set to the constant 1 in parse_blizzard_records, and commodity records all carry realm_slug equal to the region string, so there is no per-realm fan-out to count across." },
+  { text = "One item per snapshot, with quantity_listed summed over that item's listings", note = "quantity_listed is copied straight off the individual record. The summing happens in the rollup, via SUM(mon.quantity_listed) grouped by archetype and date." },
+]
+source = "wow_forecaster/pipeline/ingest.py"
+anchor = "num_auctions=1,"
+see_also = ["wow_forecaster/features/daily_agg.py"]
+
+# ── The connection discipline ─────────────────────────────────────────────────
+
+[[question]]
+id = "m02-q04"
+kind = "recall"
+prompt = """
+IngestStage opens the database twice and holds it open for neither the fetch nor
+the parse. Describe the three phases and name the specific failure the pattern
+prevents.
+"""
+rubric = [
+  "Phase 1: a short read-only connection loads the known item_id set, then closes",
+  "Phase 2: all HTTP happens with no database connection open at all",
+  "Phase 3: a short write connection inserts the snapshot rows and the observation batch, then commits",
+  "The failure prevented: holding SQLite's write lock across a network call that can run to a 120-second timeout",
+  "Anything else touching the database in that window (the health check, the dashboard, an overrunning previous run) would block and then fail on the 30-second busy timeout",
+]
+answer = """
+Phase 1 opens a connection, reads every `item_id` from `items` into a Python set,
+and closes. Phase 2 does the OAuth call, the 15 to 30 MB commodities fetch, the
+parse, and the snapshot write to disk, with nothing open against the database.
+Phase 3 opens a second connection, inserts the `ingestion_snapshots` rows and the
+observation batch, and commits once.
+
+The failure this prevents is a lock held across the network. SQLite allows one
+writer at a time. `fetch_commodities()` has a 120-second timeout, and a slow or
+hanging Blizzard endpoint can sit near that ceiling. The configured
+`busy_timeout_ms` is 30 seconds, so any other process that wants the database
+during that window waits 30 seconds and then raises "database is locked". On this
+machine that is not hypothetical: the health check runs every six hours, the
+dashboard reads the same file, and the hourly task fires on a fixed schedule
+whether or not the previous run has finished.
+
+The pattern costs something. The FK guard set is a snapshot of the registry taken
+before the fetch, so an item added to `items` during the fetch is treated as
+unknown for this run and its observations are skipped. That is the right trade:
+the cost is one hour of data for one item, and the alternative is wedging every
+other process on the box.
+
+The wider habit is worth naming, because it recurs in this repo. Ingest is not the
+only place that had to reason about the write lock. `sync_snapshots` takes the
+same `.hourly.lock` the batch wrapper takes, precisely because its bulk inserts
+exceed that 30-second timeout, and it waits and fails loudly rather than skipping.
+"""
+source = "wow_forecaster/pipeline/ingest.py"
+anchor = "# ── Phase 1: Read-only — load FK guard set (short connection) ──────"
+
+[[question]]
+id = "m02-q05"
+kind = "mcq"
+prompt = """
+The item foreign-key guard is a set of every item_id in the registry, loaded
+before the network call rather than checked at insert time. Why load it first?
+"""
+answer = """
+Because the guard needs a database read, and the whole point of phase 2 is that no
+connection is open during the network call. Loading the set up front is what buys
+the connection-free fetch. It is a consequence of the three-phase pattern, not an
+independent decision.
+
+The guard itself is doing a different job: it turns a foreign-key violation into a
+counted skip. `market_observations_raw.item_id` references `items(item_id)`, so
+inserting an observation for an unregistered item would raise. With the set in
+hand, `parse_blizzard_records` drops those rows before they reach SQL and returns a
+`skipped` count that gets logged as `skipped_missing_items`.
+
+This is genuinely useful in tests, where the registry is empty and the expected
+result is zero inserts rather than an exception. It also has a sharp edge worth
+holding: a run where every single record is skipped looks, from the run status, the
+same as a run where everything landed.
+"""
+options = [
+  { text = "The guard needs a database read, and phase 2 must hold no connection, so the read has to happen before the fetch", correct = true },
+  { text = "So the fetch can be skipped entirely when the registry is empty", note = "Nothing checks the size of the set before fetching. An empty registry still makes the full API call, still writes the snapshot file to disk, and then inserts zero rows." },
+  { text = "Because SQLite cannot serve a read while a write transaction is open", note = "WAL mode is on and readers are not blocked by a writer. The constraint the pattern is built around is the writer lock and the length of the network call, not read availability." },
+  { text = "Because IngestStage writes new items to the registry later in the same run, so it needs the pre-state", note = "IngestStage never writes to items. The registry is seeded once by item_bootstrapper, a separate command run after init-db and before the first refresh." },
+]
+source = "wow_forecaster/db/repositories/item_repo.py"
+anchor = "Used by ingestion to guard against FK violations: observations for"
+
+[[question]]
+id = "m02-q06"
+kind = "predict"
+prompt = """
+You run `init-db` on a fresh machine, put real credentials in .env, and run
+`run-hourly-refresh`. You forgot `bootstrap-items`, so the items table is empty.
+
+The API call succeeds and returns roughly 314,000 auction records. What is the
+state afterwards?
+"""
+answer = """
+The snapshot file is on disk with all 314,000 records. `ingestion_snapshots` has a
+row with `success=1` and `record_count` around 314,000. `market_observations_raw`
+has zero new rows. The stage's `RunMetadata` says `status='success'` with
+`rows_processed=0`, and `run-hourly-refresh` exits 0.
+
+Every one of those is correct behaviour by the code's own definition, and together
+they are a run that looks healthy and captured nothing.
+
+Trace the three separate notions of success. `IngestionSnapshot.success` describes
+the fetch and the file write, and both did work. `PipelineStage.run()` sets
+`status='success'` on any `_execute` that returns without raising, and returning 0
+is not raising. The batch wrapper checks the run status. Nowhere in that chain does
+anything assert that rows landed.
+
+The log line does say it: `inserted=0 | skipped_missing_items=314000`. So the
+evidence exists, in the place nobody reads unless they are already suspicious.
+
+That gap is the same shape as the failure this project actually paid for. The 2026
+lock outage ran for 105 days because a wedged pipeline exited 0, and the fix was a
+health check that reads the database and fails on staleness rather than trusting a
+run status. `check-data-health` would catch this case within a day. The run status
+would never catch it at all.
+"""
+options = [
+  { text = "Snapshot written and recorded success=True, zero observation rows, run status success with rows_processed=0", correct = true },
+  { text = "The insert raises FOREIGN KEY constraint failed and the stage records status=failed", note = "No INSERT is ever attempted for those rows. parse_blizzard_records drops unknown item_ids before building the observation, which is exactly what the pre-fetch registry read is for." },
+  { text = "The snapshot is recorded with success=False because nothing was inserted", note = "IngestionSnapshot.success describes the fetch and the save, which both succeeded. Insert results are tracked separately, and that separation is how a fully green-looking run can land no data." },
+  { text = "The stage raises, so run_hourly.bat exits non-zero and the failure is visible", note = "_execute returns 0, and the base class sets status='success' for any non-raising return. The bat wrapper only exits 1 on a failed status, so nothing surfaces." },
+]
+source = "wow_forecaster/pipeline/ingest.py"
+anchor = "Observations for item IDs not present in ``items`` are silently skipped."
+
+# ── What the columns mean ─────────────────────────────────────────────────────
+
+[[question]]
+id = "m02-q07"
+kind = "recall"
+prompt = """
+Every commodity observation is written with faction "neutral" and realm_slug "us".
+Justify both, and name the downstream bug this convention exposed.
+"""
+rubric = [
+  "The commodity auction house has been region-wide since patch 9.2.7, so one call covers every US realm",
+  "Commodity records are tagged realm_slug = the client's region string, not a realm slug",
+  "faction is hard-coded \"neutral\" in parse_blizzard_records; the commodity AH is not faction-segregated",
+  "config sets realms.defaults = [\"us\"] to match",
+  "The dashboard hard-codes four real realm slugs, none of which has data, so every tab reads \"No data available\"",
+]
+answer = """
+Both values are the same claim: for commodities there is one market, not a market
+per realm per faction. Since 9.2.7 the commodity auction house is region-wide and
+cross-faction, so a per-realm or per-faction key would be manufacturing a
+distinction the data does not have. The parser tags records with
+`realm_slug=self.region`, giving the literal string "us", and
+`parse_blizzard_records` writes `faction="neutral"` unconditionally.
+
+`realm_slug` staying a text column rather than becoming a `region` column is a
+schema compromise. The connected-realm endpoint is still there for non-commodity
+BoE gear and does produce real slugs, so one column carries two kinds of value.
+Anything grouping by `realm_slug` gets the right answer either way, which is why it
+survived, but a reader has to know that "us" is not a realm.
+
+The bug it exposed lives in the dashboard. `_DEFAULT_REALMS` there is
+`["area-52", "illidan", "stormrage", "tichondrius"]`, hard-coded, while
+`config/default.toml` sets `realms.defaults = ["us"]`. Not one of the four
+selectable realms has a single row, so every tab of the demo shows "No data
+available", and the docstring advertises a `--realm` override that is never
+parsed. The audit in PLAN.md lists it under whether the Streamlit app works as a
+demo. Answer: no.
+
+The general form is worth keeping. A value that used to be an entity key and is now
+a constant will keep being treated as a key by code that was written before the
+change, and the failure is silent because empty result sets are legal.
+"""
+source = "wow_forecaster/ingestion/blizzard_client.py"
+anchor = "realm_slug=self.region,  # \"us\" — region-wide"
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m02-q08"
+kind = "predict"
+prompt = """
+A connected-realm snapshot contains a bid-only listing for a registered item:
+unit_price 0, buyout 0, bid 500000, quantity 5.
+
+How far does that record travel, and what does it look like at each stop?
+"""
+answer = """
+It travels all the way through, and it changes meaning on the way.
+
+At ingest, both price branches fail, so `min_buyout_raw` is `None`. The row is
+inserted: the column is nullable on purpose, and only an unknown `item_id` gets a
+record dropped. `quantity_listed=5` and `num_auctions=1` are recorded normally.
+
+At normalization, `NormalizedMarketObservation.price_gold` is a plain `float`, not
+`float | None`. So `_normalize_batch` substitutes `0.0`. The z-score is left `None`
+(the code checks `price_gold is not None` before dividing, using the pre-substitution
+value), and `is_outlier` is False. The nullability is gone from here on: nothing
+reading the normalized table can tell "no buyout was posted" from "this sold for
+zero gold".
+
+At the daily rollup, `price_mean`, `price_min`, and `price_max` all wrap their
+column in `CASE WHEN mon.price_gold > 0`, so the fake zero is excluded from the
+price statistics. That guard is the thing keeping the substitution from poisoning
+every archetype mean.
+
+But `obs_count` is `COUNT(*)` and `quantity_sum` is `SUM(mon.quantity_listed)`,
+neither of which is filtered. So a bid-only listing inflates the observation count
+and the listed volume for its archetype-day while contributing nothing to price.
+Volume feeds the recommendation `volume_score` and the hard `min_volume_units`
+gate, so this is not cosmetic.
+
+The lesson is about where a null gets laundered. `None` meaning "not available"
+became `0.0` meaning "free" at exactly one assignment, and every consumer
+downstream now has to remember a filter that the type system stopped being able to
+enforce.
+"""
+options = [
+  { text = "Raw row with min_buyout_raw NULL, normalized row with price_gold 0.0 and z_score NULL, excluded from the rollup's price stats but still counted in obs_count and quantity_sum", correct = true },
+  { text = "Dropped at parse time, because a record with no buyout carries no price to store", note = "Only unknown item_ids are dropped. min_buyout_raw is explicitly nullable and the docstring names the bid-only case as a legitimate None." },
+  { text = "Raw row with min_buyout_raw NULL, and price_gold NULL in the normalized table", note = "price_gold is typed as a non-optional float on NormalizedMarketObservation, so normalize substitutes 0.0. That is precisely why the rollup has to filter on price_gold > 0." },
+  { text = "Raw row with min_buyout_raw NULL, and a 0.0 price that drags the archetype's daily mean toward zero", note = "price_mean, price_min, and price_max all use CASE WHEN price_gold > 0, so the zero never reaches the price aggregates. It does still land in obs_count and quantity_sum." },
+]
+source = "wow_forecaster/pipeline/normalize.py"
+anchor = "price_gold=price_gold if price_gold is not None else 0.0,"
+see_also = ["wow_forecaster/features/daily_agg.py"]
+
+# ── Provenance, identity, and what is not guaranteed ──────────────────────────
+
+[[question]]
+id = "m02-q09"
+kind = "recall"
+prompt = """
+save_snapshot returns a content_hash, ingestion_snapshots stores it, and both the
+repository docstring and the IngestStage extension notes describe it as being for
+deduplication. Explain what the hash is actually computed over, and why the
+documented use cannot work.
+"""
+rubric = [
+  "The hash is SHA-256 over the full envelope, meaning _meta plus data, not over the payload alone",
+  "_meta carries written_at, stamped from the wall clock at save time",
+  "_meta also carries run_slug, which is a fresh uuid4 per pipeline run",
+  "So two byte-identical payloads saved in different runs always produce different hashes, and a hash comparison can never detect an unchanged payload",
+  "The hash does still work as an integrity check on one file, which is what the catch-up path recomputes to prove a downloaded object was stored verbatim",
+]
+answer = """
+`compute_hash(envelope)` is called on the envelope after `written_at` has been set
+and after the caller's metadata has been merged in. That metadata includes
+`run_slug`, which `PipelineStage.run()` sets to a fresh `uuid4()` on every run. So
+the hash covers two fields that are guaranteed to differ between any two runs.
+
+The result: comparing `content_hash` against
+`get_latest_successful_by_source()` can never return a match, no matter how
+unchanged the underlying market is. The extension point in the IngestStage
+docstring, "Add per-realm deduplication by comparing content_hash", describes
+something the current hashing scheme cannot support. Nothing is broken today,
+because nothing calls it. It is a trap left for whoever tries.
+
+Fixing it is easy and the choice is instructive: hash the payload rather than the
+envelope, and the hash becomes a content identity. Hash the envelope, and it is a
+file checksum. Those are two different tools and the docstrings currently claim
+both from one field.
+
+The file-checksum reading is the one that earns its keep. The catch-up path writes
+downloaded objects to disk as raw bytes rather than re-serializing them
+(`cloud_sync.download_object` hands back the gunzipped bytes untouched), then
+`sync_stage` recomputes `compute_hash(envelope)` to reproduce exactly what
+`cloud_fetch` recorded when it uploaded. That works because it is comparing the same
+envelope to itself across machines, `written_at` and `run_slug` included. Same
+function, opposite guarantee.
+"""
+source = "wow_forecaster/ingestion/snapshot.py"
+anchor = "content_hash = compute_hash(envelope)"
+see_also = ["wow_forecaster/db/repositories/ingestion_repo.py", "wow_forecaster/ingestion/cloud_sync.py", "wow_forecaster/pipeline/sync_stage.py"]
+
+[[question]]
+id = "m02-q10"
+kind = "mcq"
+prompt = """
+What does observed_at on a raw observation actually measure?
+"""
+answer = """
+The client's own wall clock at the moment the response was parsed.
+`_parse_commodities_response` sets `fetched_at=datetime.now(UTC)` on the response
+object, IngestStage passes that through as `observed_at`, and nothing anywhere
+consults a timestamp supplied by Blizzard.
+
+This matters more than it sounds. Blizzard rebuilds the commodities dump on its own
+schedule, roughly hourly, and serves the same dump to every caller until the next
+rebuild. So two clients polling four minutes apart get identical market data
+stamped with two different `observed_at` values. There is no field in the response
+that would let you tell.
+
+That single fact is why the cloud catch-up path needs a dedup rule at all. The
+desktop's own hourly run and the Cloudflare Worker's dispatch both fire near :16,
+both receive the same underlying snapshot, and the two resulting `observed_at`
+values differ by seconds. Nothing else in the system would notice. So
+`select_objects_to_ingest` drops any object whose UTC hour already has local
+observations, and keeps at most one object per hour. The rule is coarse on purpose:
+the hour is the real resolution of the data, and `observed_at` only looks finer
+than that.
+
+Read `observed_at` as "which hourly dump this came from", not as "when this price
+was true".
+"""
+options = [
+  { text = "The client's wall clock when the response was parsed, with no input from any Blizzard-supplied timestamp", correct = true },
+  { text = "The Last-Modified header of the commodities response, so it reflects when Blizzard built the dump", note = "The client never reads response headers. fetch_commodities calls raise_for_status and passes resp.json() straight to the parser, which stamps datetime.now(UTC)." },
+  { text = "When the auction was posted, derived from the listing's time_left bucket", note = "time_left is a four-value bucket and commodity records do not even carry it: the parser hard-codes VERY_LONG. Nothing in the payload dates an individual listing." },
+  { text = "The same value as the ingested_at column, since both are set during the same insert", note = "ingested_at is a separate column with its own SQLite DEFAULT of strftime('now'). observed_at is passed in explicitly from fetched_at, so the two differ by however long the parse and the write took." },
+]
+source = "wow_forecaster/ingestion/cloud_sync.py"
+anchor = "snapshot (``fetched_at`` is client-side wall clock, not the snapshot's own"
+see_also = ["docs/cloud-capture.md"]
+
+[[question]]
+id = "m02-q11"
+kind = "recall"
+prompt = """
+What prevents the same auction snapshot from being counted twice in
+market_observations_raw? Answer at the schema level, at the repository level, and
+at the pipeline level.
+"""
+rubric = [
+  "Schema level: nothing. market_observations_raw has an autoincrement PK and no unique constraint on (item_id, realm_slug, observed_at, source)",
+  "Repository level: nothing. insert_raw_batch is a plain executemany INSERT with no ON CONFLICT clause",
+  "Pipeline level: only cloud_sync's selection rules, which skip hours already covered locally and keep one object per UTC hour",
+  "Those rules guard the cloud catch-up path only, so a locally re-run hourly refresh inserts the whole snapshot again",
+]
+answer = """
+Schema: nothing. The table has `obs_id INTEGER PRIMARY KEY AUTOINCREMENT` and no
+unique constraint over the natural key. Two identical observations are two legal
+rows with different ids.
+
+Repository: nothing. `insert_raw_batch` builds a parameter list and calls
+`executemany` on a bare INSERT. No `ON CONFLICT`, no existence check.
+
+Pipeline: only on the cloud catch-up path. `select_objects_to_ingest` drops objects
+whose UTC hour already has local observations, and then keeps at most one object
+per remaining hour. Both rules exist because the two capture paths fetch the same
+underlying dump and `observed_at` cannot reveal that.
+
+So idempotency here is a property of the schedule, not of the code. It holds
+because the hourly task fires once an hour and takes a lock against overlapping
+runs. Break that assumption (run the refresh by hand after the scheduled one, or
+replay an old snapshot for testing) and you get double-counted hours with nothing
+to stop you and nothing to tell you afterwards.
+
+Whether that is worth fixing is a real question rather than an obvious yes. A
+unique constraint over `(item_id, realm_slug, observed_at, source)` would not
+actually collapse the duplicates, because two runs an hour apart carry different
+`observed_at` values down to the second. The dedup key that would work is the hour,
+which is what `cloud_sync` uses, and enforcing it at the schema level would mean
+storing a truncated hour column that the raw table does not have. The honest
+statement is that the raw table has no identity concept, and the hour rule is the
+only place one exists.
+"""
+source = "wow_forecaster/db/schema.py"
+anchor = "obs_id               INTEGER PRIMARY KEY AUTOINCREMENT,"
+
+[[question]]
+id = "m02-q12"
+kind = "predict"
+prompt = """
+The scheduled hourly task runs at 14:16 and finishes at 14:19. At 14:35 you run
+`wowfc run-hourly-refresh` by hand from a terminal, in live mode.
+
+What is in the database afterwards, and what does it do to that day's numbers?
+"""
+answer = """
+Two snapshot files on disk, two `ingestion_snapshots` rows, and roughly double the
+observation rows for hour 14. Nothing rejects the second batch and nothing flags
+it.
+
+The lock file does not help. `run_hourly.bat` takes `data/db/.hourly.lock` to stop
+overlapping runs; the 14:16 run finished at 14:19 and released it, so the 14:35 run
+takes it cleanly. That is the lock working as designed. It guards concurrency, not
+frequency.
+
+The effect on the day's numbers is a re-weighting, not a corruption. `price_mean`
+is `AVG` over normalized rows for the archetype-date, so hour 14 now contributes
+twice the weight of every other hour to that day's mean. If prices moved during the
+day, the daily mean is now pulled toward whatever hour 14 looked like.
+`quantity_sum` and `auctions_sum` are plain sums, so those are simply inflated for
+the day. `obs_count` doubles for that hour too.
+
+Then it propagates. The rollup feeds `daily_agg`, which feeds the training and
+inference Parquet, which is where `price_mean` becomes both a feature and the basis
+of the target. So a duplicated hour is a small, silent, unrepeatable perturbation of
+one training row and its label. Not a disaster. Also not something any test,
+health check, or drift detector would report.
+
+The practical rule for this repo: treat a manual `run-hourly-refresh` in live mode
+as writing to production data, because it is. `--dry-run` exists on
+`sync-snapshots` for exactly this reason, and the hourly refresh has no equivalent.
+"""
+options = [
+  { text = "Two snapshots and roughly double the rows for hour 14; the day's price_mean is re-weighted toward that hour and quantity_sum is inflated", correct = true },
+  { text = "The second run is skipped, because run_hourly.bat's lock file blocks it", note = "The lock is released when a run finishes. It exists to stop overlapping runs, which is a concurrency guard, not a rate limit. A run 16 minutes after the previous one completed takes the lock normally." },
+  { text = "The duplicate rows are rejected by the unique index on (item_id, realm_slug, observed_at)", note = "There is no such index. The raw table has an autoincrement primary key and no unique constraint, and insert_raw_batch has no ON CONFLICT clause." },
+  { text = "The duplicates are harmless because the rollup takes a minimum price per archetype-day", note = "price_min is one of several aggregates and is not what feeds the model. price_mean is an AVG, and quantity_sum and obs_count are sums, so a duplicated hour moves the day's numbers." },
+]
+source = "wow_forecaster/db/repositories/market_repo.py"
+anchor = "overlapping hour would otherwise be counted twice."
+
+# ── Modes, failures, and the parity with the cloud path ───────────────────────
+
+[[question]]
+id = "m02-q13"
+kind = "find"
+prompt = """
+IngestStage runs in one of two modes. Find the exact condition it branches on,
+then say what happens if BLIZZARD_CLIENT_ID is set but BLIZZARD_CLIENT_SECRET is
+missing or wrong.
+"""
+rubric = [
+  "The condition is `if blizzard_id:` and only BLIZZARD_CLIENT_ID is tested; the secret is never checked before the branch",
+  "Live mode makes one region-wide commodities call; fixture mode loops config.realms.defaults calling get_fixture_response",
+  "With an ID and no secret, BlizzardClient raises RuntimeError inside fetch_commodities; a wrong secret raises HTTPStatusError from the token endpoint",
+  "_fetch_blizzard_commodities catches it and records an IngestionSnapshot with success=False and the error message",
+  "The stage still returns 0 and the run status is still 'success', so the batch wrapper exits 0",
+]
+answer = """
+The branch is `if blizzard_id:` in `_execute`, on the value of
+`os.environ.get("BLIZZARD_CLIENT_ID")`. The secret is read into a variable on the
+next line and then never consulted by the branch.
+
+So a half-configured `.env` takes the live path. `fetch_commodities` opens with its
+own check on both credentials and raises `RuntimeError` with a message naming the
+two variables, which is good. If the secret is present but wrong, you get further:
+`_ensure_token` posts to the token endpoint and `raise_for_status` raises
+`HTTPStatusError` on the 401.
+
+Either way the exception lands in the `except Exception` in
+`_fetch_blizzard_commodities`, which logs it with a traceback and returns an
+`IngestionSnapshot` with `success=False`, `snapshot_path=""`, and the exception text
+in `error_message`. That row is genuinely good provenance: the failure is durable,
+attributable to a run, and queryable after the fact.
+
+What it is not is loud. The stage appends the failed snapshot, inserts zero
+observations, returns 0, and `PipelineStage.run()` stamps `status='success'`. The
+scheduled task exits 0 and Task Scheduler shows a green run.
+
+That is the same failure shape as question 6, reached by a different route, and it
+is the shape this project already paid 105 days for. The countermeasure that works
+is not a better run status: it is `check-data-health`, which reads the database and
+fails on staleness regardless of what any run claimed about itself. Worth internalising
+as a rule: a status reported by the thing that failed is not evidence.
+"""
+source = "wow_forecaster/pipeline/ingest.py"
+anchor = "if blizzard_id:"
+see_also = ["docs/postmortem-2026-04-lock-outage.md"]
+
+[[question]]
+id = "m02-q14"
+kind = "mcq"
+prompt = """
+Each per-source fetch helper wraps its whole body in try/except and returns a
+failed IngestionSnapshot instead of propagating. What does that buy, and what does
+it cost?
+"""
+answer = """
+It buys durable provenance for failures. A fetch that blows up still produces a row
+in `ingestion_snapshots` with the error text, the endpoint, and the run id, so an
+outage is reconstructable months later from the database alone. Most pipelines lose
+that: a failed fetch leaves a log line and nothing queryable.
+
+It costs the run status. Because the exception never reaches `PipelineStage.run()`,
+the base class never sets `status='failed'`, and the stage completes normally with
+zero rows. The base class docstring says "stages never swallow exceptions", and
+strictly the stage does not (`_execute` is not catching anything), but the helper it
+calls does, so the effect is the same from the outside.
+
+The tradeoff is defensible for a multi-source stage, where one dead provider should
+not take down the others. It is much weaker in live mode, where there is exactly one
+commodities call and its failure means the run captured nothing at all.
+
+Worth noticing the width of the catch too. `except Exception` around the entire body
+covers the parse, the path build, and the snapshot write, not just the HTTP call, and
+all of them get recorded as a fetch failure with `endpoint` set to the commodities
+URL. A disk-full error while writing the snapshot would be filed as an API problem.
+"""
+options = [
+  { text = "It records the failure durably in ingestion_snapshots, at the cost of the stage completing with status 'success' and zero rows", correct = true },
+  { text = "It retries the fetch, so a transient Blizzard 503 does not cost the hour", note = "There is no retry anywhere in IngestStage. Retry with backoff exists as cloud_fetch._retry, which the cloud capture and cloud_sync use; the local live path has none." },
+  { text = "It isolates one realm's failure so the other realms in config.realms.defaults still ingest", note = "That is only true of the fixture per-realm loop. Live mode makes exactly one region-wide commodities call, because the commodity AH has been region-wide since 9.2.7, so there is no sibling call to protect." },
+  { text = "It prevents a half-written batch from being committed to the database", note = "Nothing is written to the database during the fetch phase. Inserts and the single commit all happen later, in phase 3, so there is no partial write for the handler to guard against." },
+]
+source = "wow_forecaster/pipeline/ingest.py"
+anchor = "logger.error(\"Blizzard commodities fetch failed: %s\", exc, exc_info=True)"
+
+[[question]]
+id = "m02-q15"
+kind = "find"
+prompt = """
+The same hourly snapshot can arrive from two places: this desktop pipeline, or a
+GitHub Actions job that uploaded it to R2 hours earlier. Find the statement that
+says why the two are interchangeable, and name the pieces both paths share.
+"""
+rubric = [
+  "cloud_fetch's module docstring: it reuses BlizzardClient.fetch_commodities(), build_snapshot_path(), and save_snapshot()",
+  "So a cloud object carries a byte-identical _meta/data envelope to a locally-written snapshot",
+  "cloud_fetch.build_object_key is derived from build_snapshot_path, and cloud_sync.local_path_for_key is its exact inverse",
+  "parse_blizzard_records was lifted to module level in pipeline/ingest.py so the catch-up path parses through the same implementation the live path uses",
+  "cloud_sync writes downloaded bytes verbatim rather than re-serializing, so the cloud _meta survives as provenance",
+]
+answer = """
+`cloud_fetch`'s docstring states it directly: it reuses `fetch_commodities()`,
+`build_snapshot_path()`, and `save_snapshot()` so cloud objects carry the same
+envelope the local pipeline writes. Four separate decisions hold that parity up.
+
+Reuse the client and the writer, so the envelope shape and the content hash are
+produced by the same code in both places. Derive the bucket key from
+`build_snapshot_path` rather than formatting it independently, so the key can never
+drift from the on-disk layout, and make `local_path_for_key` the exact inverse so a
+round trip is lossless. Write downloaded objects to disk as raw gunzipped bytes
+rather than re-serializing them, so the `_meta` the Actions runner stamped survives
+as provenance and the recomputed hash still matches. And lift
+`parse_blizzard_records` out of `IngestStage` to module level so the catch-up path
+runs the identical parse, price fallback and all, instead of a second copy that
+drifts.
+
+That last one is the general lesson. A second ingestion path is a second chance to
+implement the same parsing rules slightly differently, and the difference will show
+up as a discontinuity in the data months later, attributed to the market. The way
+out is not careful duplication. It is one implementation with two callers, which is
+why the method on IngestStage is now a two-line delegate.
+"""
+source = "wow_forecaster/ingestion/cloud_fetch.py"
+anchor = "Reuses ``BlizzardClient.fetch_commodities()``, ``build_snapshot_path()``, and"
+see_also = ["docs/cloud-capture.md", "wow_forecaster/pipeline/sync_stage.py"]
+
+[[question]]
+id = "m02-q16"
+kind = "recall"
+prompt = """
+Every raw observation stores the complete source record again in raw_json. What
+does that buy, what does it cost, and what keeps the cost from growing forever?
+"""
+rubric = [
+  "It buys replayability: any parsing decision can be re-derived from the row without refetching, which the API cannot serve anyway",
+  "It costs size: the two observation tables are far larger than everything else and dominate the database file",
+  "The 30-day retention pruner deletes raw rows by observed_at (and their normalized FK children first), so the cost is capped",
+  "That retention is a Blizzard API ToS requirement, not a storage optimisation",
+  "So raw rows are not the history layer: the daily rollups are, which is why durable_backup excludes both observation tables",
+]
+answer = """
+It buys the ability to change your mind. `raw_json` holds the full auction record,
+compactly re-serialized, so if the price fallback chain turns out to be wrong you
+can recompute every affected observation from rows you already have. That is worth
+more here than in most systems, because Blizzard serves only the current snapshot.
+There is no refetch. Data you did not keep is gone permanently, which the 2026 gap
+demonstrated.
+
+It costs size, and it is the dominant cost in the file. The two observation tables
+are large enough that `durable_backup` excludes both by name and recreates them
+empty, so a backup copies the derived layer and skips the bulk.
+
+The cost is capped by the pruner, which runs as step 7 of every successful hourly
+run and deletes raw rows past `retention_days` by `observed_at`, taking their
+normalized FK children first. That bound exists because Blizzard's API Terms of
+Service section 2.r requires API-derived data to be deleted within 30 days. It is a
+legal constraint that happens to also be a storage policy, which is a nicer position
+than choosing a retention number by feel.
+
+The consequence is the thing to carry into M03 and beyond: the raw table is a
+30-day working set, not an archive. `daily_rollup_archetype` and
+`daily_rollup_item` are the durable record, and they are computed from rows that
+will be deleted. If a rollup is wrong or a day is missed, the window to fix it from
+source data is 30 days wide and then it closes. That is also the hard ceiling on how
+much history any long-horizon evaluation of this system can ever be built on.
+"""
+source = "wow_forecaster/pipeline/ingest.py"
+anchor = "raw_json=json.dumps(rec, separators=(\",\", \":\")),"
+see_also = ["wow_forecaster/governance/pruner.py", "docs/db-backup.md"]
+
+[[question]]
+id = "m02-q17"
+kind = "recall"
+prompt = """
+An interviewer says: "walk me through your ingestion path, and tell me what you
+would fix in it." Give the ninety-second answer.
+"""
+rubric = [
+  "One OAuth token per run, one region-wide commodities call, roughly 314,000 auction records",
+  "Three-phase connection: read the item guard, fetch with no connection held, write in one short transaction, because the fetch can run to 120 seconds against a 30-second busy timeout",
+  "The snapshot file is the durable artifact and is written before any database work, which is what lets a cloud-captured object be replayed identically",
+  "Names at least one real weakness: no dedup identity on the raw table, or a fully-skipped run reporting status success, or content_hash covering run_slug so it cannot dedup",
+  "Says what the fix would be and why it is that fix rather than a bigger one",
+]
+answer = """
+A version that lands:
+
+"One OAuth client-credentials token per run, cached on the client. One GET for the
+whole region, because the commodity auction house has been region-wide since 9.2.7,
+so there is no per-realm loop and no pagination. About 314,000 auction listings come
+back as a 20-odd megabyte payload, and each listing becomes its own row: no
+aggregation at ingest, all of it deferred to a daily rollup so I can change the
+aggregation without refetching, which matters because the API only ever serves the
+current snapshot.
+
+The part I would point at is the connection discipline. The stage opens SQLite
+twice and holds it open across neither the network call nor the parse. It reads the
+item registry into a set first, does all the HTTP with nothing open, then opens a
+short write connection for the inserts and one commit. SQLite has a single writer,
+the fetch timeout is 120 seconds, and the busy timeout is 30, so holding the lock
+across the fetch would take down the health check, the dashboard, and the next
+scheduled run. The item set doubles as a foreign-key guard, so unknown items get
+counted as skips instead of raising.
+
+What I would fix: a run where every record is skipped is indistinguishable from a
+good run by its status. The stage returns zero, the base class stamps success, the
+scheduled task exits zero. That is the same shape as an outage that cost me 105 days
+of data, and the lesson from that one is that the fix is not a better status field.
+It is a check that reads the database and fails on staleness no matter what any run
+claimed about itself. That exists now as check-data-health.
+
+Second thing: the raw table has no identity. No unique constraint, no ON CONFLICT,
+and observed_at is my own wall clock rather than anything Blizzard stamps, so two
+captures of the same hourly dump are indistinguishable rows. The cloud catch-up path
+dedups on the UTC hour, which is the right key, and that rule should exist on the
+local path too."
+
+The finish is what separates a walkthrough from an assessment: naming a defect,
+naming the fix, and saying why it is that fix and not a larger one.
+"""
+source = "wow_forecaster/pipeline/ingest.py"
+anchor = "# ── Phase 3: Write — short connection for all DB inserts ───────────"
+see_also = ["LESSONS.md", "PLAN.md"]

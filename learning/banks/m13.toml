@@ -1,0 +1,788 @@
+# M13: The git history as a design record.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited line forces the question
+# to be updated in the same PR. Run `wowfc learn validate` while authoring.
+#
+# The material here is CHANGELOG.md, CLAUDE.md, and docs/ROADMAP.md. Those three
+# files are the only written record of how this project decided to work on
+# itself, and most of the decisions were made after something went wrong.
+
+# ── The shape of the history ─────────────────────────────────────────────────
+
+[[question]]
+id = "m13-q01"
+kind = "recall"
+prompt = """
+Roughly seventy released versions sit in CHANGELOG.md, spanning 2025-12-01 to
+today. Sketch the eras. You do not need exact version numbers: name the ordered
+phases and what each one added, and say where the two discontinuities are.
+"""
+rubric = [
+  "Scaffold (0.0.x to 0.1.0): taxonomy, Pydantic models, SQLite layer, pipeline stubs, Typer CLI",
+  "Data in (0.2.0 to 0.3.0): ingestion and feature engineering, then evaluation (0.4.0) before the model (0.5.0)",
+  "Operations shell (0.6.0 to 0.8.0): orchestrator, drift, reporting and dashboard, then source governance and the preflight checks",
+  "Events and automation (0.9.0 to 1.0.0), then domain depth (1.1.0 to 1.5.x: normalization, recipes, crafting advisor), then output quality (1.6.0 to 2.2.x: item forecasts, cold-start blending, the retention pruner, risk levels, CI bounds, TSM export, viz and BI)",
+  "Scale (2.3.0 to 2.3.4: rollup tables, connection phases, WAL checkpoint), then restore and govern (2.3.5 to 2.11.0); the two discontinuities both fall at that seam: the three-month calendar gap (2026-04-07 to 2026-07-12, the silent outage) and the change of subject, from adding capability to adding evidence and guard rails",
+]
+answer = """
+Ten phases, and the interesting part is where the seams fall.
+
+1. Scaffold, 0.0.1 to 0.1.0. Repo setup, then taxonomy, frozen Pydantic models,
+the SQLite layer, pipeline stubs, and the Typer CLI. Types and structure before
+any data moved.
+
+2. Data in, 0.2.0 to 0.3.0. The Blizzard client, snapshots, normalization, then
+the feature layer and the dataset builder writing Parquet.
+
+3. Evaluation, 0.4.0. The walk-forward backtest, four baselines, and the metrics
+layer. Before the model existed. Hold onto that: it is the subject of q02.
+
+4. Model and decision, 0.5.0. LightGBM at 1d/7d/28d and the five-component
+recommendation score.
+
+5. Operations shell, 0.6.0 to 0.8.0. The hourly orchestrator with drift detection
+and adaptive CI widening, the reporting commands and the Streamlit dashboard,
+then source governance: three source policies and the three-check preflight.
+
+6. Events and automation, 0.9.0 to 1.0.0. Seed events, the item bootstrapper, the
+scheduler daemon, and the Windows Task Scheduler scripts. This is where the
+project acquired an operational surface it would later fail to watch.
+
+7. Domain depth, 1.1.0 to 1.5.x. Rolling z-score normalization, the 1.3.x
+correctness sweep, the item discount overlay, then recipes and the crafting
+advisor.
+
+8. Output quality, 1.6.0 to 2.2.x. Item-level forecasts, cold-start blending,
+feature importance, the retention pruner (1.9.0, the one ops item in the run),
+risk levels decoupled from action, confidence-interval floor and cap, ROI
+overlays, TSM export, the health check, and the visualization and BI layer with
+CI.
+
+9. Scale, 2.3.0 to 2.3.4, over three days in April. Rollup tables for a 110M-row
+problem, the three-phase connection split, the lock file, and a WAL checkpoint
+after a 4.2 GB write-ahead log wedged the database.
+
+10. Restore and govern, 2.3.5 to 2.11.0, July onward. The roadmap, cloud capture,
+PR-gated merges and stamp commits, health checks and freshness gates, the restore
+runbook, durable backups, catch-up ingestion, then PLAN.md, LESSONS.md, and this
+track.
+
+The two discontinuities: the calendar gap between era 9 and era 10 (2026-04-07 to
+2026-07-12, which is the silent outage), and the change of subject at the same
+seam. Everything before it adds capability. Almost everything after it adds
+evidence, guard rails, or an account of what went wrong.
+"""
+source = "CHANGELOG.md"
+anchor = "- Project scaffold: taxonomy (ArchetypeCategory, ArchetypeTag, EventType), Pydantic v2 domain models, SQLite DB layer, pipeline stubs, Typer CLI"
+
+[[question]]
+id = "m13-q02"
+kind = "mcq"
+prompt = """
+The backtest framework with four baselines shipped in v0.4.0 on 2025-12-20. The
+LightGBM model shipped in v0.5.0 eight days later.
+
+What does that ordering establish, and what does it not?
+"""
+answer = """
+It establishes that the acceptance bar was written before there was a candidate
+to judge, which is the right order and worth defending. Writing baselines first
+means the bar cannot be quietly set to whatever the model happened to produce.
+
+What it does not establish is that the comparison was ever run. It was not.
+BacktestStage calls all_baseline_models() and nothing else, so ever since v0.4.0
+the harness has compared four naive baselines against each other while the
+production model was judged on a single holdout split. The horizons do not even
+line up: backtest.horizons_days is [1, 3] against 1, 7, and 28 in production.
+LESSONS.md records it as its own entry, and PLAN.md's DS-2 gives the file and
+line.
+
+The version history is what makes this legible. Build order and run order are
+different facts, and a changelog only records the first one. Reading a repo's
+history tells you what was built and in what sequence. It cannot tell you what is
+actually wired to what, and treating "the harness exists" as "the harness runs"
+is exactly the mistake the history invites.
+"""
+options = [
+  { text = "That evaluation was designed before the model existed, which is the correct order; it does not establish that the model was ever run through the harness, and it never was", correct = true },
+  { text = "That the model has been measured against the baselines since its first release, since the harness predates it", note = "The harness predates the model and still never received it. BacktestStage calls all_baseline_models() and nothing else, which is the DS-2 finding in PLAN.md and the second entry in LESSONS.md." },
+  { text = "That the sequencing was a mistake: baselines are only meaningful once a candidate exists to compare them against", note = "Backwards. Fixing the bar before you have a candidate is what stops the bar from drifting to meet the result. The defect is downstream of the ordering, not caused by it." },
+  { text = "Nothing, because the CHANGELOG was written retroactively at v2.2.0, so the ordering is reconstructed rather than observed", note = "The retroactive authoring is real and worth knowing (see q11), but it was reconstructed from the commit history, so the version ordering and dates are accurate. What is lost is contemporaneous reasoning, not sequence." },
+]
+source = "CHANGELOG.md"
+anchor = "- Backtesting framework with walk-forward cross-validation"
+see_also = ["LESSONS.md", "PLAN.md"]
+
+# ── Versioning: per-commit bumps to stamp commits ────────────────────────────
+
+[[question]]
+id = "m13-q03"
+kind = "recall"
+prompt = """
+This project used to bump the version on every commit. Since v2.4.4 it stamps
+once per PR. Explain what changed, why the old convention stopped fitting, and
+what a work commit is allowed to touch now.
+"""
+rubric = [
+  "Old: every commit bumped the version file and wrote its own dated CHANGELOG header",
+  "New: work commits log under [Unreleased] and touch no version artifact; one stamp commit at PR-open bumps the version and dates the entries",
+  "The trigger was the branching change: once merges go through PRs, the PR is the unit of change, so one version per PR is the matching granularity",
+  "Both changes landed in the same release (v2.4.4), because the second is a consequence of the first",
+  "The PR title carries the (vX.Y.Z) suffix so the merge commit keeps the log version-scannable",
+]
+answer = """
+Under the old convention every commit was effectively a release, because commits
+went straight to main. If a commit is a release, the only place to put a version
+is the commit, so each one bumped the version file and opened its own dated
+CHANGELOG section. That is why the history contains a v1.3.26 and a v1.5.7, both
+of them folded into a single clause when the changelog was written: patch numbers
+counting keystrokes rather than releases.
+
+v2.4.4 changed the branching model in the same release: merges to main now
+require a pull request, and the head branch is deleted on merge. Once that is
+true, the release boundary is the merge, not the commit. Per-commit bumps stop
+being the only option and start being actively bad, because every branch open at
+the same time edits the same version line and the same changelog header, so
+routine parallel work turns into a merge conflict on metadata.
+
+What replaced it: work commits accumulate their user-visible lines under
+`## [Unreleased]` and touch no version artifact at all. At PR-open, one dedicated
+stamp commit bumps pyproject.toml, moves the Unreleased lines under a dated
+`## [X.Y.Z]` header, and sweeps every other place the old version string appears.
+The PR title carries `(vX.Y.Z)` so the merge commit stays scannable.
+
+The transferable point is that a versioning convention is downstream of a
+branching convention. The two changes shipping in one release is not a
+coincidence, and reading them as two separate improvements misses the causality.
+"""
+source = "CLAUDE.md"
+anchor = "Work commits take no version bump."
+see_also = ["CHANGELOG.md"]
+
+[[question]]
+id = "m13-q04"
+kind = "find"
+prompt = """
+Somewhere in CHANGELOG.md the version ordering and the date ordering disagree,
+and a nearby entry explains why. Find both, and say what the pair tells you about
+the convention that was in force at the time.
+"""
+rubric = [
+  "[2.2.3] is dated 2026-04-06 but sits below [2.3.0] through [2.3.4], which are dated 2026-04-05 to 2026-04-07",
+  "v2.3.3 carries the Fixed line: version regression from v2.3.2 to v2.2.3 corrected, a typo in a previous commit",
+  "Under per-commit bumps the version was hand-typed on every commit, so a typo could move the version backwards",
+  "And correcting it consumed a version number of its own, which is a class of bug the stamp convention makes far rarer",
+]
+answer = """
+[2.2.3] is dated 2026-04-06 and sits in the file below [2.3.0] through [2.3.4],
+which are dated 2026-04-05 through 2026-04-07. The file is ordered by version
+descending, so a version written out of sequence shows up as a date that runs
+backwards against its neighbours.
+
+The explanation is a few entries up the file, in v2.3.3's Fixed block: the
+version regressed from v2.3.2 to v2.2.3 because of a typo in a previous commit.
+Someone hand-typed 2.2.3 where 2.3.3 belonged, and the number went backwards.
+
+That is a per-commit-bump failure mode in its purest form. When every commit
+edits the version by hand, a keystroke error is a release-numbering error, the
+correction consumes a version number of its own, and the artifact of the whole
+episode is a permanent out-of-order section in a file nobody rewrites. Under the
+stamp convention the same mistake is still possible, but it is available once per
+PR instead of once per commit, and the one place it can happen is the one commit
+a reviewer is looking at the version in.
+
+Worth reading the surrounding entries too. That week (2.3.0 through 2.3.4) is the
+last burst of activity before the silence, and it is all firefighting: rollup
+tables for a 110M-row problem, a lock file, connection phases, a 4.2 GB
+write-ahead log. The typo is what rushed work leaves behind.
+"""
+source = "CHANGELOG.md"
+anchor = "- Version regression from v2.3.2 to v2.2.3 corrected (was a typo in previous commit)"
+
+[[question]]
+id = "m13-q05"
+kind = "mcq"
+prompt = """
+Two PRs are open at once. Each opened with a stamp commit setting v2.9.0. The
+first one merges. What happens to the second?
+"""
+answer = """
+The later-to-merge PR re-stamps to the next free number during its rebase. The
+conflict is real and it is deliberately confined to one commit.
+
+This is the payoff for work commits carrying no version. If every commit bumped,
+a collision would mean rewriting the version line in every commit of the branch,
+and the CHANGELOG would conflict in as many places as there were commits. With
+one stamp commit, the whole collision is one commit and one header to redo, and
+the rebase resolves it mechanically.
+
+Notice the shape of the rule: it does not try to prevent collisions by
+coordinating in advance (reserving numbers, locking, a registry). It accepts that
+two branches will sometimes pick the same number and makes that outcome cheap.
+Designing for cheap conflict resolution beats designing for conflict avoidance
+when the conflict is not actually harmful.
+"""
+options = [
+  { text = "It re-stamps to the next free number during its rebase, so the conflict stays confined to the stamp commit", correct = true },
+  { text = "Both keep 2.9.0; the merge commits disambiguate them in the log", note = "Two releases sharing a number destroys the one property the version is for: naming a specific state of the code. The whole stamp convention exists to keep that mapping one-to-one." },
+  { text = "The second PR's work commits are each re-bumped in order during the rebase", note = "Work commits carry no version under this convention. That is precisely why the collision is cheap: there is exactly one commit to redo, not one per commit in the branch." },
+  { text = "The second PR is closed and reopened from a branch cut fresh off the new main", note = "Heavy and unnecessary. The rebase touches one commit and one CHANGELOG header. Throwing away the branch would also discard its review history for a metadata conflict." },
+]
+source = "CLAUDE.md"
+anchor = "If two open PRs stamp the same number, the later-to-merge PR re-stamps to the next free number during rebase."
+
+[[question]]
+id = "m13-q06"
+kind = "predict"
+prompt = """
+You are on `feat/91-realm-flag`. The code is done and you are about to open the
+PR. Under the convention in CLAUDE.md, what does the work commit touch with
+respect to versioning, and what does the stamp commit do?
+"""
+answer = """
+The work commit adds its user-visible line under `## [Unreleased]` in CHANGELOG.md
+and touches no version artifact. pyproject.toml is untouched, and no dated header
+is written.
+
+The stamp commit, made at PR-open, does the whole version sweep in one place: it
+bumps pyproject.toml once, moves the Unreleased lines under a
+`## [X.Y.Z] - YYYY-MM-DD` header, and updates every other occurrence of the old
+version string in the repo. The PR title then carries `(vX.Y.Z)`.
+
+Two details that are easy to get wrong. First, the sweep is one commit on purpose:
+splitting the bump and the changelog move across two commits produces an
+intermediate state where the version file and the changelog disagree, and that
+state is what a bisect or a cherry-pick will eventually land on. Second, a
+single-commit PR still gets its own stamp commit. Uniform shape means no mode
+detection, and nobody has to decide whether this PR is big enough to deserve one.
+"""
+options = [
+  { text = "Work commit: a line under [Unreleased] and nothing else. Stamp commit: bump pyproject.toml, move the entries under a dated header, sweep the old version string, and the PR title gets the (vX.Y.Z) suffix", correct = true },
+  { text = "Work commit: bump the patch version and open its own dated CHANGELOG header. Stamp commit: edit the PR title to match", note = "That is the retired per-commit convention, in force until v2.4.4. It is what produced v1.3.26 and the v2.2.3 version regression, and it conflicts on the version line whenever two branches are open." },
+  { text = "Neither commit touches CHANGELOG.md; the release notes are generated from the commit subjects at merge time", note = "Nothing in this repo generates a changelog. The entries are hand-written for humans, describing the change from the user's side rather than restating the diff, which is the whole reason they are worth reading a year later." },
+  { text = "Work commit: write the dated version header. Stamp commit: bump pyproject.toml to match", note = "This splits the sweep across two commits and leaves an intermediate commit where the changelog claims a version the version file does not carry. The stamp is one commit so that state never exists in history." },
+]
+source = "CLAUDE.md"
+anchor = "A dedicated stamp commit at PR-open bumps pyproject.toml once and moves the [Unreleased] entries under the"
+
+[[question]]
+id = "m13-q07"
+kind = "predict"
+prompt = """
+Two PRs, both real entries in this changelog.
+
+A: adds `check-data-health --backup-stale-hours N` and a new `[backup]` config
+section with four keys.
+
+B: rewrites both rollup UPSERTs to compare `observed_at` as a raw column against
+a half-open range instead of `DATE(observed_at) = ?`, so an existing index serves
+them. Adds query-plan tests and equivalence tests. No output changes.
+
+Which is the minor bump and which is the patch, and what is the rule?
+"""
+answer = """
+A is minor, B is patch. A shipped as v2.9.0 and B as v2.7.9, and you can check
+both against the file.
+
+The rule is not diff size and not effort. It is whether someone using the system
+has to learn something new. A adds a flag you can type and a config section you
+can set: the surface a consumer knows about grows, so the middle number moves. B
+changes how a query is planned. It is a real fix with a measurable consequence for
+scan cost, and it required two new classes of test, and none of that changes a
+single thing a user types or reads. Internal behavior changes, however large, are
+patches.
+
+This is the discipline that keeps a version number informative. If effort drove
+the bump, the number would encode how hard the month was, which is a fact nobody
+consuming the software needs. Encoding "do I need to re-read the docs" is a fact
+they do need. See q15 for the two places in this repo where that discipline was
+not applied to the leftmost digit.
+"""
+options = [
+  { text = "A is minor (v2.9.0), B is patch (v2.7.9): the axis is whether a consumer must learn something new, not how large the change is", correct = true },
+  { text = "Both are minor: B changes runtime behavior on every hourly run, which users experience", note = "Users experience it as the same rollups arriving, just cheaper. The rollup rows are asserted identical to the legacy form on edge timestamps, which is the point of the equivalence tests. Nothing a consumer knows about changed." },
+  { text = "Both are patch: A only adds an opt-in flag that defaults to off, so nothing changes for anyone who ignores it", note = "Default-off is what keeps A from being breaking, not what keeps it from being minor. A new flag and a new config section are new surface a reader has to know exists, and that is the minor trigger." },
+  { text = "A is major (new config section) and B is patch", note = "Major is reserved for a consumer's existing usage breaking: a removed or renamed command or key, or an incompatible schema change. Adding an opt-in flag alongside a new section breaks nothing that already worked." },
+]
+source = "CHANGELOG.md"
+anchor = "- Both rollup UPSERTs now compare observed_at as a raw column against a half-open date range instead of DATE(observed_at) = ?"
+
+# ── Branching: umbrella branch to trunk-based, and enforcement ───────────────
+
+[[question]]
+id = "m13-q08"
+kind = "recall"
+prompt = """
+`feature/portfolio-showcase` was the last long-lived branch in this repo. What
+was it for, what did it span, and why did the model stop being worth it?
+"""
+rubric = [
+  "It was an umbrella branch collecting the whole portfolio push rather than one branch per concern",
+  "It spanned v1.9.0 to v2.4.1, twenty-one changelog entries and about four months",
+  "Merged to main 2026-07-12 under issue #10; the freeze-after-merge convention was retired with #46, and merged branches are now deleted",
+  "Replaced by short-lived type-prefixed branches (feat/, fix/, docs/, chore/ and the rest) cut from main, one issue per branch",
+]
+answer = """
+It was the branch the portfolio work lived on: item-level forecasting, cold-start
+blending, risk levels, TSM export, the visualization and BI layer, the health
+check. v1.9.0 through v2.4.1, twenty-one changelog entries, 2026-03-06 to
+2026-07-12.
+
+Why the model failed, in the terms this repo actually cares about. A branch that
+spans four months has no reviewable unit. There is no point at which a change
+is small enough to look at, so nothing gets looked at, and CI running on the
+branch gates nothing at merge time because by then the merge is not a decision
+anyone can decline. Meanwhile main is not the state of the project, so anything
+reading main (a fresh clone, a CI badge, a reader arriving from a link) sees a
+version of the system that stopped being true months ago.
+
+What replaced it: one short-lived branch per issue, type-prefixed, cut from the
+latest main, merged through a PR, and deleted on merge. The durable history is the
+merge commit and the PR record, not the branch ref. That last part is the piece
+that changed with #46: branches used to be kept frozen after merging, on the
+theory that the ref was worth keeping. It is not. Keeping merged refs around
+hides the branches that are actually live.
+
+The honest reading of the whole episode is that the umbrella branch was solo-work
+convenience. With one person committing, a branch is not coordinating anyone, so
+the cost of a long branch feels like zero until you want the repo to be legible to
+someone else. That is when it stopped being worth it, and that is the same week
+the roadmap and the branch protection ruleset landed.
+"""
+source = "CLAUDE.md"
+anchor = "feature/portfolio-showcase (v1.9.0-v2.4.1) was the last"
+see_also = ["docs/ROADMAP.md", "CHANGELOG.md"]
+
+[[question]]
+id = "m13-q09"
+kind = "mcq"
+prompt = """
+v2.4.4 added a branch protection ruleset that blocks direct pushes, force pushes,
+and deletion of main, with no bypass for admins. The Branch Workflow section of
+CLAUDE.md already described the same discipline in prose.
+
+What does the ruleset buy that the written convention does not?
+"""
+answer = """
+It holds when the only maintainer is tired, in a hurry, or three hours into a
+restore runbook at 02:00. A convention is enforced by the person who is also the
+one under pressure to skip it. A server-side rule is not.
+
+The concrete consequence is that CI becomes a precondition for landing rather
+than a report that arrives afterwards. Under a convention, a direct push to main
+runs CI after the code is already on the default branch, so a red result is now a
+problem to clean up. Under the ruleset, red CI means the merge button does not
+work, which is a different thing entirely.
+
+"No bypass actors" is the load-bearing phrase. A ruleset with an admin bypass is
+a convention with extra steps, because on a solo repo the admin is always the
+person trying to skip it. The same reasoning appears elsewhere in this project:
+the cloud capture gap guard keeps its floor at 20 on purpose, because a floor the
+failure mode can satisfy hides the failure. A guard your own worst case can walk
+around is decoration.
+"""
+options = [
+  { text = "Enforcement independent of the person under pressure, which makes green CI a precondition for landing rather than a report after the fact", correct = true },
+  { text = "Mainly protection from other contributors; on a repo with one maintainer it is ceremony", note = "Every failure in this repo's history was a solo mistake: a leaked lock file, a hand-typed version regression, a badge pointing at a placeholder URL. The rule is aimed at the maintainer, which is exactly why it must not have an admin bypass." },
+  { text = "It replaces the branch naming convention, since the server now decides where work lands", note = "The ruleset governs where commits may land, not what a branch is for. Type prefixes, one issue per branch, and the scope check before the first commit are still conventions, still enforced by attention alone." },
+  { text = "It guarantees a linear history on main", note = "It blocks direct pushes, force pushes, and deletion. Linear history is a separate setting, and this repo merges with merge commits on purpose (gh pr merge --merge), so the merge commit records the PR." },
+]
+source = "CHANGELOG.md"
+anchor = "- Merges to main now require a pull request: a branch protection ruleset blocks direct pushes, force pushes, and deletion, with no bypass for admins (issue #46)"
+see_also = ["CLAUDE.md"]
+
+[[question]]
+id = "m13-q10"
+kind = "mcq"
+prompt = """
+Dependabot PRs in this repo are exempt from both the version stamp and the
+CHANGELOG entry, and they auto-merge on green CI. Why is that not just laziness?
+"""
+answer = """
+Because the pinned dependency is dev-only. Dependabot here is scoped to ruff, a
+linter that never ships in the product, so a bump changes nothing about what the
+software does. Stamping the product version for it would make the version number
+assert something false: that the thing users run is different.
+
+The exemption is safe specifically because CI is a required status check. That is
+the pairing to remember: auto-merge without a gate is reckless, auto-merge behind
+a gate that blocks lint and test failures is just removing a human from a decision
+the human was going to make mechanically anyway. A bump that breaks anything sits
+there and waits.
+
+One more rule attached to the same convention, and it is the non-obvious one: if a
+bump surfaces new drift, the fix is a conformance commit pushed onto the
+Dependabot branch, never a parallel takeover PR. A takeover discards the bot's
+rebase and its compatibility signal, and it does not scale past one repo.
+"""
+options = [
+  { text = "The pinned tool is dev-only, so a bump is not a product change; stamping the product version for it would make the number claim something false", correct = true },
+  { text = "Because bot PRs skip CI, so there is nothing for a stamp to be gated on", note = "Exactly backwards, and this is the detail that makes the whole convention safe. CI is a required status check on these PRs, which is why auto-merge is acceptable: a bump that breaks lint or tests never lands." },
+  { text = "Because a bot cannot edit the version file, so the stamp would have to be added by hand anyway", note = "Nothing technical stops it. The exemption is semantic: the question is whether the change is a product change at all, not who or what is able to type the number." },
+  { text = "Because dependency bumps are always patch-level, and patch bumps are optional under the stamp convention", note = "Patch bumps are not optional here. Every product PR gets exactly one stamp regardless of class. The exemption is about the change not being a product change, not about the bump being small." },
+]
+source = "CLAUDE.md"
+anchor = "Dependabot dependency-bump PRs are exempt from stamping and CHANGELOG."
+see_also = ["CHANGELOG.md"]
+
+# ── Reading the changelog as evidence ────────────────────────────────────────
+
+[[question]]
+id = "m13-q11"
+kind = "find"
+prompt = """
+Find the entry that records when this CHANGELOG was actually written. Say what it
+does to your reading of everything above it, and find one entry that shows the
+effect directly.
+"""
+rubric = [
+  "v2.2.0, dated 2026-03-19: CHANGELOG.md with retroactive history from v0.0.1 to v2.1.0",
+  "So the first twenty-five entries, everything up to v2.1.0, were reconstructed after the fact from the commit history",
+  "The early entries are accurate about what landed but are summaries, not contemporaneous reasoning",
+  "The clearest tell is v1.3.0, which folds v1.3.5 through v1.3.26 into one line, and v1.5.0, which folds v1.5.0 through v1.5.7",
+]
+answer = """
+v2.2.0, on 2026-03-19, lists among its additions: CHANGELOG.md with retroactive
+history from v0.0.1 to v2.1.0. Everything below that point in the file, the first
+twenty-five entries, was written at once and months after the fact, from the
+commit history. Note that twenty-five entries is fewer than the versions they
+cover: under per-commit bumping the numbers ran well ahead of the entries.
+
+This changes how much weight the early entries can carry. They are reliable about
+what landed and in what order, because they were reconstructed from real commits.
+They are not evidence of what anyone was thinking at the time, and they cannot be
+read as a decision record, because the decisions were not written down when they
+were made.
+
+The clearest tell is v1.3.0, whose Changed block ends with "numerous dead-code
+cleanups and documentation sync fixes (v1.3.5 to v1.3.26)". Twenty-two released
+versions compressed into a single clause. v1.5.0 does the same for v1.5.0 through
+v1.5.7. Under per-commit bumping those numbers each named a real commit; from the
+retroactive vantage point they were not worth listing separately, which is its own
+verdict on what the numbers meant.
+
+The practical lesson for anyone starting a project: a changelog written at the end
+of the first year records what happened. A changelog written as you go records why.
+The second is worth much more and costs almost nothing extra at the time.
+"""
+source = "CHANGELOG.md"
+anchor = "- CHANGELOG.md with retroactive history from v0.0.1 to v2.1.0"
+
+[[question]]
+id = "m13-q12"
+kind = "recall"
+prompt = """
+Compare an entry from the 0.x era against one from the 2.7 to 2.11 range. The
+form of the writing changed. Describe the change and say what caused it.
+"""
+rubric = [
+  "Early entries are one-line feature bullets naming what was added",
+  "Late entries are paragraphs carrying the reasoning, the measured numbers, the issue number, and often what was tried first",
+  "The shift tracks work moving from building capability to operating and proving a system, where the reasoning is the deliverable",
+  "For several decisions the changelog entry is the only written record, so a terse entry would have lost the argument",
+]
+answer = """
+Early: "Backtesting framework with walk-forward cross-validation". Nine words,
+purely a statement of what appeared.
+
+Late: the v2.9.1 entry runs to a full paragraph. It names the delivery ceiling it
+measured (about 11 of 24 scheduled firings a day, deterministically), states why
+the previous fix could not work (the cap is on run delivery, not on schedule
+expressions), records that the previous fix was therefore reverted, describes the
+replacement, and explains the deliberate fragility of the fallback schedule as a
+dead-man alarm.
+
+Two things drove the change. The work itself moved from adding capability to
+operating and proving a system, and in that mode the reasoning is the deliverable.
+A rollup UPSERT rewrite is not interesting as "changed a predicate"; it is
+interesting as "the old form defeated the index, here is the measurement, here is
+what pins it". The other driver is that the repo became something other people
+were expected to read.
+
+The consequence is that for several decisions the changelog entry is the only
+written record. There is no design doc for the cron reversal outside
+docs/cloud-capture.md, no ADR directory, no wiki. If v2.9.1 had said "switched
+cloud capture trigger to a Cloudflare Worker", the measurement and the disproof of
+the earlier fix would exist nowhere, and the next person to think "we should just
+densify the cron" would have nothing to stop them. That is the actual argument for
+long changelog entries: not thoroughness, but the fact that a short entry silently
+discards the only copy of the reasoning.
+"""
+source = "CHANGELOG.md"
+anchor = "densifying the cron does not help because the cap is on run delivery, not on schedule expressions"
+
+[[question]]
+id = "m13-q13"
+kind = "mcq"
+prompt = """
+v2.8.0 densified the cloud capture cron to three firings an hour. v2.9.1 reverted
+it, having established that densification could not work. Both entries are still
+in the file, in full.
+
+What is the argument for keeping the entry that describes the wrong fix?
+"""
+answer = """
+The wrong fix carries the evidence. v2.8.0 records the observation that started
+it (11 of 24 firings on the schedule's first day) and the reasoning that led to
+densifying. v2.9.1 records why that reasoning was wrong: the cap is on run
+delivery, not on schedule expressions. Delete the first entry and the second one
+is asserting a negative with nothing behind it.
+
+There is a second reason, specific to reverts. A revert without a record is an
+invitation to repeat the mistake, because the idea that produced it is usually the
+obvious one. "Fire the cron more often" is what anyone would try first. The pair
+of entries is what makes the next person's obvious idea already answered.
+
+Note also that v2.8.0 was not wasted. The same release moved the gap guard from
+counting objects to counting distinct UTC hours covered, which survived the
+revert and is the metric the guard still uses. Reverting a change is not the same
+as reverting a release, and a changelog that squashed the pair would blur that.
+"""
+options = [
+  { text = "The superseded entry carries the evidence and the reasoning that the revert depends on; without it the revert asserts a conclusion with nothing behind it", correct = true },
+  { text = "Keep a Changelog forbids editing published entries, so it stays for format compliance", note = "The convention is about not rewriting released history, but that is a rule of thumb rather than the reason it is worth following here. The reason is that the superseded entry holds evidence the later one references." },
+  { text = "It should not be kept; the correct move was to amend v2.8.0 so the file only describes the current design", note = "That turns the changelog into a description of the present, which is what the source tree already is. Its only unique value is the record of what was tried, and amending away the wrong turns deletes exactly that." },
+  { text = "Keeping it preserves the version number sequence, which would otherwise have a gap", note = "Nothing depends on the sequence being gapless, and versions are not reused anyway. The value in the entry is the measurement and the disproved hypothesis, not the number at the top of it." },
+]
+source = "CHANGELOG.md"
+anchor = "- The cloud snapshot cron now fires three times per hour (:16/:36/:56) because GitHub drops most single hourly firings outright, 11 of 24 on the schedule's first day (issue #67)"
+
+[[question]]
+id = "m13-q14"
+kind = "recall"
+prompt = """
+There is a three-month hole in the changelog dates. Locate it, say what was
+happening in the system during it, and state the general point about what a
+changelog can and cannot tell you.
+"""
+rubric = [
+  "v2.3.4 is dated 2026-04-07 and v2.3.5 is dated 2026-07-12, about 96 days apart",
+  "During that window ingestion was dead: a crashed run leaked the hourly lock on 2026-04-15 and every subsequent run logged SKIPPED and exited 0",
+  "Task Scheduler recorded success 1,933 times in a row, and the daily forecast kept producing output from features frozen at the last ingest",
+  "A changelog records developer attention, so a quiet stretch and a healthy stretch look identical in it",
+  "Detecting this needed a scheduled health check and a freshness gate, which is what the versions after the gap add",
+]
+answer = """
+v2.3.4 is dated 2026-04-07 and v2.3.5 is dated 2026-07-12. Nothing between.
+
+What was happening: a crashed run leaked data/db/.hourly.lock on 2026-04-15. The
+hourly wrapper treated any existing lock as a run in progress, logged SKIPPED, and
+exited 0, so Task Scheduler recorded success 1,933 consecutive times while no data
+arrived. The daily forecast task kept succeeding too, generating forecasts from
+features frozen at the last ingest. The roadmap's opening section states it
+plainly, and docs/postmortem-2026-04-lock-outage.md has the full account.
+
+The general point: a changelog is a record of attention, not of health. The gap
+looks exactly like a well-earned break from the outside. Nothing about a quiet
+period distinguishes "nobody worked on it" from "it has been dead for three
+months", and there is no version number you could have read on 2026-06-01 that
+would have told you.
+
+Which is why the versions immediately after the gap are what they are. Between
+v2.4.9 and v2.7.0 the project added stale-lock takeover, a freshness gate on the
+daily forecast, a scheduled health check that raises a visible window, a
+retention sentinel, and a lock-age check. All of them exist to produce a signal
+during a period when nobody is looking, because the one thing the outage proved is
+that the author not looking is the normal state.
+
+Read the two halves of the file together and the whole shape of the project is
+there: a long run of building the system, and then a run of comparable length
+learning that building it was the easier half.
+"""
+source = "CHANGELOG.md"
+anchor = "## [2.3.4] — 2026-04-07"
+see_also = ["docs/ROADMAP.md", "docs/postmortem-2026-04-lock-outage.md"]
+
+[[question]]
+id = "m13-q15"
+kind = "recall"
+prompt = """
+Two major-version bumps exist in this history: v1.0.0 and v2.0.0. Read what each
+one shipped. Is either a semver major, and what should you conclude?
+"""
+rubric = [
+  "v1.0.0 shipped the automation layer: the scheduler daemon, start-scheduler, and the Task Scheduler batch scripts",
+  "v2.0.0 shipped the export-tsm command and the TSM export pipeline",
+  "Neither entry records a removal, a rename, or an incompatible schema change, so neither is breaking",
+  "Both are milestone markers: the number was used to say this feels significant, not this breaks your usage",
+  "The cost is that the leftmost digit stops carrying the information it claims, which is the same class of drift as the stated-versus-enforced acceptance bar in LESSONS.md",
+]
+answer = """
+Neither is a semver major. v1.0.0 added the automation layer (a stdlib scheduler
+daemon, a CLI command, and Windows batch scripts). v2.0.0 added a single new CLI
+command, export-tsm, and its supporting module. Read the entries: no removal, no
+rename, no incompatible schema or output change. By the bump rule in q07 both are
+minor bumps, and one of them is a fairly ordinary one.
+
+What actually happened is that the major digit was used as a milestone marker: a
+way of saying "this phase feels finished". That is a common and understandable
+habit, and it is worth naming as a defect rather than defending, because it is the
+same failure class the repo already documents elsewhere. A version number is a
+claim about compatibility. If it is sometimes a claim about compatibility and
+sometimes a claim about sentiment, a reader cannot tell which one they are holding,
+so it stops being usable for either.
+
+The mitigating fact: this CLI has one consumer, and there is no published API for a
+major bump to break. The cost is close to zero today. It would not be if anything
+depended on it, and the interesting question for the module is why the discipline
+held for minor and patch (q07 shows it applied cleanly across dozens of releases)
+and slipped only on the digit that gets used least. Rules you exercise daily get
+enforced by habit. Rules you exercise twice do not, which is an argument for
+writing them down before the second occasion rather than after.
+"""
+source = "CHANGELOG.md"
+anchor = "- `export-tsm` CLI command for TradeSkillMaster paste-import string generation"
+see_also = ["LESSONS.md"]
+
+# ── Three tracks, and the order work happens in ──────────────────────────────
+
+[[question]]
+id = "m13-q16"
+kind = "recall"
+prompt = """
+This repo now runs three planning documents in parallel. Name them, say what each
+one owns, and explain the rule governing how they reference each other.
+"""
+rubric = [
+  "docs/ROADMAP.md owns the research arc and the GitHub issue numbering: milestones M0 through M6 plus M0.5",
+  "PLAN.md owns the lifecycle and legibility arc, and records four tool choices as open decisions with reasoning rather than adopting them",
+  "learning/ owns understanding, with labs drawn from the open work in the other two",
+  "The interlock is one-directional on purpose: PLAN.md names roadmap issues, the roadmap does not reference PLAN.md",
+  "So neither goes stale when the other moves, and reconciliation is a deliberate act rather than a side effect",
+]
+answer = """
+docs/ROADMAP.md is the source of truth for the research arc and for issue
+numbering. Milestones M0 through M6, plus M0.5, plus a work order, a dependency
+graph, and a risk register. If a piece of work has an issue number, this file owns
+it.
+
+PLAN.md owns the lifecycle and legibility arc: the 2026-07-24 audit, the three
+methodology defects, the MLOps inventory, six phases, and four open tool decisions
+(orchestrator, experiment tracking, serving target, infrastructure as code) that
+are recorded with reasoning and explicitly not adopted. Writing a recommendation
+plus what would change my mind, and then not implementing it, is a deliberate
+choice: it keeps the decision reviewable instead of burying it in a commit.
+
+learning/ owns understanding. Its labs are the open work from the other two, so
+studying moves the project rather than sitting beside it.
+
+The interlock rule is the part worth stealing. PLAN.md names M1 issue numbers
+where the two overlap, and the roadmap does not reference PLAN.md at all. One
+direction only. The reason is stated in PLAN.md's closing section: if both
+referenced each other, every move in one would create drift in the other, and
+cross-references would need maintaining in two places forever. With a single
+direction, the roadmap can be reorganized freely and only one file needs
+reconciling, deliberately, when someone chooses to.
+
+Compare that against what the repo has actually suffered from: three documents
+disagreeing about the CLI command count (39, 40, and 41, against an actual 40),
+fixed in v2.11.0. Duplicated facts drift. The fix is not more diligence, it is
+fewer places where the same fact lives.
+"""
+source = "PLAN.md"
+anchor = "one-directional on purpose: the roadmap does not reference this document, so"
+see_also = ["docs/ROADMAP.md", "learning/README.md"]
+
+[[question]]
+id = "m13-q17"
+kind = "find"
+prompt = """
+The roadmap has a rule about what order to do work in that overrides the obvious
+one. Find it, state it, and find the companion rule for when the next item is
+blocked. Then find one place where the milestone numbers themselves were changed
+to match.
+"""
+rubric = [
+  "The Work order section: within milestones, follow the issue order given there rather than raw issue numbers",
+  "The sequence is most urgent first: stop permanent data loss, green CI, harden, restore, validate, then build outward",
+  "The companion rule: when the lowest open milestone is waiting on wall clock, advance to the next milestone and circle back",
+  "Milestones were renumbered to match: M7 became M0.5 (v2.3.7), and paper trading moved from M4 to M2 while the warehouse moved from M2 to M3 (v2.3.8)",
+]
+answer = """
+The rule is in the Work order section: milestone numbers match the sequence, and
+within a milestone you follow the order given there rather than raw issue numbers.
+Issue numbers record when something was noticed, which has nothing to do with when
+it should be done. #83 is a later thought than #43 and still precedes it, because
+a catch-up path that drains a bucket with holes in it is worth less than fixing the
+holes.
+
+The sequence itself is stop the permanent loss, green CI, harden, restore,
+validate, then build outward. Note that stopping permanent loss outranks restoring
+the system: every hour the cloud capture was not running was an hour gone for
+good, while the local restore could wait a week without losing anything more.
+Ordering by irreversibility rather than by importance.
+
+The companion rule: when the lowest open milestone's remaining issues are waiting
+on wall clock (#11's verification days, #33's A/B maturation), advance to the next
+milestone and circle back. Blocking on the calendar is not blocking.
+
+Two renumberings show the ordering being taken seriously enough to renumber the
+plan rather than just resequence the tasks. v2.3.7 renamed milestone M7 to M0.5
+and moved it to run right after M0, because the cloud fetcher depends on nothing
+local and stops ongoing loss. v2.3.8 moved paper trading from M4 to M2 and the
+warehouse from M2 to M3, so the A/B test's wall clock starts as early as possible
+and the "does it make gold" answer exists before dashboards are built to display
+it.
+
+The habit worth taking: when the order changes, change the numbers. A milestone
+list whose numbers no longer match the intended order is a document that has to be
+read with a correction applied, and everyone applies it slightly differently.
+"""
+source = "docs/ROADMAP.md"
+anchor = "Most urgent first. Milestone numbers match this sequence; within milestones, follow the issue order given here rather than raw issue numbers."
+see_also = ["CHANGELOG.md"]
+
+[[question]]
+id = "m13-q18"
+kind = "recall"
+prompt = """
+An interviewer says: "your repo shows seventy releases and a change of process
+partway through. Walk me through how the way you work on it changed and why."
+
+Give the ninety-second answer.
+"""
+rubric = [
+  "Name the before state: direct commits to main, a version bump per commit, and one long-lived umbrella branch",
+  "Name the trigger: a 96-day silent outage, and the repo becoming something other people would read",
+  "Name the after state: one short-lived branch per issue, PR-gated merges behind a ruleset with no bypass actors, one version stamp per PR",
+  "Say why the versioning change followed from the branching change rather than being a separate improvement",
+  "Close with the honest part: the process change came after the failure, and the changelog is the only reason the reasoning survives",
+]
+answer = """
+A version that lands:
+
+"For the first sixty releases I committed straight to main, bumped the version on
+every commit, and kept one long-lived branch for the whole portfolio push. That
+worked because I was the only person there, and it kept working right up until it
+didn't. In April a crashed run leaked a lock file. The hourly wrapper read any
+existing lock as a run in progress, logged skipped, and exited zero, so Task
+Scheduler reported success nineteen hundred times in a row while nothing was
+ingested. The daily forecast kept producing output from features frozen in April.
+I found it three months later. The changelog has a three-month hole in it that is
+exactly that period, which is the honest evidence: nothing about a quiet changelog
+distinguishes a break from a dead system.
+
+The process changed in one week in July. Merges to main now require a pull request
+behind a ruleset with no bypass for admins, so CI is a precondition for landing
+rather than a report afterwards. Work goes on one short-lived branch per issue,
+deleted on merge, with the PR record as the durable history. And versioning
+followed from that rather than being its own idea: once the PR is the unit of
+change, one version per PR is the matching granularity, so work commits log under
+Unreleased and a single stamp commit at PR-open does the whole version sweep. The
+old per-commit convention is why there is a v1.3.26 in the history, and why one
+commit typo'd the version backwards and needed its own release to fix.
+
+The part I'd want you to take from it is the ordering. Every one of those changes
+is a response to something that already went wrong, and the reason I can tell you
+about them at all is that the entries after the gap are paragraphs with the
+measurement and the disproved hypothesis in them rather than one-line summaries.
+The reasoning is worth more than the change."
+
+The last paragraph is what separates someone reciting a process from someone who
+knows why each rule is there and what it cost to learn.
+"""
+source = "CHANGELOG.md"
+anchor = "- Versioning moved to stamp commits: work commits log under Unreleased, and a single stamp commit at PR-open sets the version for the whole PR"
+see_also = ["CLAUDE.md", "docs/ROADMAP.md"]

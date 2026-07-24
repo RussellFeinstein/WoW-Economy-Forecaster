@@ -1,0 +1,789 @@
+# M10: Forecasts to decisions.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+
+# ── The formula ──────────────────────────────────────────────────────────────
+
+[[question]]
+id = "m10-q01"
+kind = "recall"
+prompt = """
+Write out the five-component score formula with its weights, and for each
+component say what raw market quantity it is computed from and what it is a
+proxy for.
+"""
+rubric = [
+  "total = 0.35*opportunity + 0.20*liquidity - 0.20*volatility + 0.15*event_boost - 0.10*uncertainty",
+  "opportunity = clamp(roi * 200, 0, 100) where roi = (forecast - current) / current; proxy for expected return",
+  "liquidity = clamp(quantity_sum / 10, 0, 100), falling back to auctions_sum, then to a flat 10; proxy for whether you can actually fill the order",
+  "volatility = clamp(CV * 100) where CV = price_roll_std_7d / price_mean; proxy for execution risk between deciding and trading",
+  "uncertainty = clamp(CI_width / forecast_price * 100); proxy for how much the model itself doubts the number",
+]
+answer = """
+    total = opportunity  * 0.35
+          + liquidity    * 0.20
+          - volatility   * 0.20
+          + event_boost  * 0.15
+          - uncertainty  * 0.10
+
+Two of the five are penalties, subtracted rather than added, and event_boost is
+the only component with a signed range: [-100, 100] rather than [0, 100].
+
+What each one is doing:
+
+**opportunity** is the only component that carries the forecast's direction and
+size. `roi * 200` means a 50 percent predicted gain saturates the scale. Below
+zero it clamps to zero, which matters a great deal and gets a question of its
+own.
+
+**liquidity** is a depth proxy, not a measured fill probability. 1,000 units
+listed maps to 100. If quantity is missing it falls back to auction count at
+one point per auction, and if both are missing it returns 10 rather than 0. That
+last choice says "unknown is not the same as bad", which is defensible, but it
+also means an archetype with no depth data outranks one with 50 units listed.
+
+**volatility** is the coefficient of variation of the daily price, so it is
+scale-free and comparable across archetypes whose gold prices differ by orders
+of magnitude. That is the right choice and it is worth noticing, because the
+drift baseline elsewhere in the repo makes the opposite one (PLAN.md, DS-3:
+pooled absolute gold MAE across archetypes of wildly different price levels).
+
+**event_boost** comes from the event feature columns on the inference row, not
+from anything the model learned.
+
+**uncertainty** is the interval width relative to the point estimate. Note that
+this interval is the heuristic one from `cold_start.py`, with a 5 percent floor
+and a 10x cap, so the component's input is itself a hand-built quantity.
+"""
+source = "wow_forecaster/recommendations/scorer.py"
+anchor = "Score formula (weighted sum, approximate range 0–100)"
+see_also = ["wow_forecaster/pipeline/recommend.py"]
+
+[[question]]
+id = "m10-q02"
+kind = "mcq"
+prompt = """
+Both `scorer.py` and `recommend.py` describe the score's range as roughly 0 to
+100. What is the range the formula can actually produce?
+"""
+answer = """
+About -34 to +62.5.
+
+Start with the naive version, because it is the one most people stop at. The
+three positive terms weigh 0.35 + 0.20 + 0.15 = 0.70 and the two penalties weigh
+0.30, so if every component could reach its declared bound the range would be
+-45 to +70. That is already not 0 to 100: there is no normalization step and
+nothing floors the total at zero.
+
+Then check whether the components can reach their bounds, and one of them
+cannot. `ScoreComponents` validates `event_boost` into [-100, 100], but
+`compute_score` only ever produces it from `_SEVERITY_BOOST`, whose largest live
+entry is `critical` at 50.0. Positive impact gives `base`, so +50 is the real
+maximum and it contributes +7.5. Negative impact gives `-base * 0.5`, so -25 is
+the real minimum and it contributes -3.75. The anticipation branch tops out at
+15.
+
+    ceiling  = 100*0.35 + 100*0.20 +  50*0.15  =  35 + 20 + 7.5  =  62.5
+    floor    =   0*0.35 +   ~0     - 100*0.20 - 25*0.15 - 100*0.10  =  -33.75
+
+The `catastrophic: 70.0` entry in the table is dead: `EventSeverity` has five
+members and catastrophic is not one of them, so that row is unreachable from any
+real inference row.
+
+This is a documentation defect rather than a behavioral one, since a monotone
+rescale would not change any ordering and nothing thresholds on the score. But
+the number is written to `recommendation_outputs.score`, to the recommendation
+CSV and JSON, and to the BI bundle, where it reads as a quantity rather than a
+rank. And it is a clean illustration of the module's theme: a formula whose
+stated properties were never checked, because nothing has ever checked the
+formula at all.
+"""
+options = [
+  { text = "About -34 to +62.5", correct = true },
+  { text = "0 to 100, as documented", note = "Only if something normalized, and nothing does. The positive weights sum to 0.70, so even a component-perfect row cannot reach 100, and the two penalties are subtracted with no floor at zero." },
+  { text = "Roughly -45 to +70", note = "This is what the weights alone say, and it assumes every component reaches its declared bound. event_boost does not: compute_score builds it from _SEVERITY_BOOST, whose largest reachable entry is critical at 50, so the term spans +7.5 to -3.75 rather than +15 to -15." },
+  { text = "0 to 62.5", note = "The ceiling is right and the floor is not. Nothing clamps the total, so an archetype that is volatile, uncertain and hit by a negative event scores below zero." },
+]
+source = "wow_forecaster/pipeline/recommend.py"
+anchor = "total = 0.35 × opportunity  +  0.20 × liquidity"
+
+[[question]]
+id = "m10-q03"
+kind = "recall"
+prompt = """
+`opportunity_score` is `clamp(roi * 200, 0, 100)`, so negative ROI clamps to
+zero. The docstring calls this a buy-only signal and says sell logic lives in
+the action rather than the score. What does that do to the ranking of sell
+recommendations?
+"""
+rubric = [
+  "A forecast of -40 percent and a forecast of 0 percent both produce opportunity_score = 0",
+  "So among sells the ranking is driven entirely by liquidity minus the two penalties",
+  "The bigger the expected drop, the wider the CI usually is, so a strong sell can rank below a weak one",
+  "RecommendStage calls top_n_per_category with no actions filter, so sells compete against buys on a scale that zeroes their main signal",
+  "The fix is not obvious: |roi| would rank sells correctly but would make the score meaningless as a single ordering across mixed actions",
+]
+answer = """
+Every sell lands on opportunity_score = 0, whatever its magnitude. A forecast
+predicting a 40 percent crash and a forecast predicting no movement at all are
+identical on the component that carries 0.35 of the weight.
+
+So a sell's rank is `0.20*liquidity - 0.20*volatility - 0.10*uncertainty`, plus
+whatever the event term contributes. That is close to "which falling archetype
+is the calmest and best-covered", which is not a bad tiebreaker but is a bad
+primary. Worse, the correlation runs the wrong way: a large predicted move
+usually comes with a wide interval, so among sells, conviction is penalised.
+
+`RecommendStage` calls `top_n_per_category(scored, n=n)` and passes no `actions`
+filter, so buys and sells are ranked against each other in one list. A buy at
++15 percent ROI scores 10.5 points of opportunity that a sell at -50 percent
+scores zero for. Sells will therefore only reach the top three of a category
+when the category has nothing to buy.
+
+What makes this hard rather than just wrong: switching to `abs(roi) * 200` would
+rank sells sensibly but would destroy the score's meaning as one ordering, since
+a strong buy and a strong sell would be indistinguishable by number. The honest
+answer is that buy-side and sell-side ranking are two policies, and the repo has
+one. M2's `ScoringPolicy` extraction (#32) is where that becomes expressible.
+"""
+source = "wow_forecaster/recommendations/scorer.py"
+anchor = "50% ROI → score 100. Negative ROI → 0 (buy-only signal; sell logic"
+
+[[question]]
+id = "m10-q04"
+kind = "predict"
+prompt = """
+One forecast, scored by `compute_score` then `determine_action` and
+`determine_risk_level`:
+
+    forecast_price     = 120      current_price = 100
+    quantity_sum       = 3000     auctions_sum  = 400
+    price_roll_std_7d  = 30       price_mean    = 100
+    confidence_lower   = 90       confidence_upper = 150
+    no active event, no upcoming event, not cold start
+
+Give the total score, the action, and the risk level.
+"""
+answer = """
+Score 23.0, action `buy`, risk `medium`.
+
+Components:
+
+    roi          = (120 - 100) / 100 = 0.20
+    opportunity  = clamp(0.20 * 200) = 40
+    liquidity    = clamp(3000 / 10)  = 100   (clamped down from 300)
+    volatility   = clamp(0.30 * 100) = 30    (CV = 30 / 100)
+    event_boost  = 0
+    uncertainty  = clamp((150 - 90) / 120 * 100) = 50
+
+    total = 40*0.35 + 100*0.20 - 30*0.20 + 0 - 50*0.10
+          = 14 + 20 - 6 + 0 - 5
+          = 23.0
+
+Two things to take from the arithmetic. The liquidity clamp fires: 3,000 units
+is treated the same as 1,000, so depth above the saturation point is invisible.
+And the action does not consult the risk level. `uncertainty_pct` is 0.50, which
+is `medium` risk, and the archetype is still a `buy`, because only the 0.95
+`critical` cutoff forces `avoid`. The 0.50 threshold is `>=`, so this row lands
+exactly on the boundary and reports medium rather than low.
+"""
+options = [
+  { text = "23.0, buy, medium", correct = true },
+  { text = "63.0, buy, medium", note = "This is the total if liquidity is not clamped: 3000/10 = 300 would give 60 points on its own. The clamp to [0, 100] caps it at 100, so liquidity contributes 20." },
+  { text = "23.0, hold, medium", note = "Risk does not gate the action. determine_action only forces avoid at uncertainty >= 0.95; below that it reads roi alone, and 0.20 is well past the 0.10 buy threshold." },
+  { text = "23.0, buy, low", note = "The medium threshold is uncertainty_pct >= 0.50 and this row is exactly 0.50, so the inclusive comparison puts it in medium. Off-by-one on an inclusive boundary is the easiest way to misread this function." },
+]
+source = "wow_forecaster/recommendations/scorer.py"
+anchor = "Proxy for AH market depth using quantity_sum (units listed)."
+
+# ── Risk, action, and the gates ──────────────────────────────────────────────
+
+[[question]]
+id = "m10-q05"
+kind = "recall"
+prompt = """
+`determine_risk_level` and `determine_action` are separate functions with
+separate thresholds, and a HIGH-risk archetype still gets a BUY. Argue the
+design, then say what is not backed by anything.
+"""
+rubric = [
+  "Direction and confidence are two axes: what the forecast says versus how much you should believe it",
+  "Collapsing HIGH risk into AVOID destroys the difference between 'bad trade' and 'unreadable trade'",
+  "So risk_level is a separate persisted column and the action stays directional",
+  "CRITICAL is the one place they merge, on the argument that a CI as wide as the price carries no direction",
+  "None of 0.95, 0.80 or 0.50 is calibrated against anything: no coverage measurement, no realized-outcome check",
+]
+answer = """
+The design argument is sound. A forecast has a direction and a confidence, and
+they are independent. Folding them into one label loses information the reader
+needs: "we expect this to fall" and "we cannot see this at all" are different
+statements and should not both render as AVOID. The scorer's own comment says
+so, that profitable signals should not be suppressed by uncertainty, and the
+`risk_level` column exists to carry the second axis on its own (added in
+v1.10.0, migration 0006).
+
+CRITICAL is the deliberate exception. When the interval width reaches 95 percent
+of the point estimate, the interval spans a factor of roughly two, and no
+direction survives that, so the action collapses to AVOID. That is a reasonable
+place to merge the axes.
+
+What is not backed by anything: the numbers. 0.95, 0.80 and 0.50 for risk, plus
+or minus 0.10 for the action, are all source literals with no derivation. They
+are not quantiles of the observed uncertainty distribution, they are not tied to
+a measured cost of being wrong, and no realized outcome has ever been compared
+against them. The interval they threshold is itself a heuristic with a 5 percent
+floor and a 10x cap, so "uncertainty_pct >= 0.95" is a threshold on a
+hand-built quantity, chosen by hand.
+
+Which is exactly the shape of the whole module. The reasoning behind the
+structure is good and the constants inside it are guesses.
+"""
+source = "wow_forecaster/recommendations/scorer.py"
+anchor = "HIGH and MEDIUM risk archetypes still receive BUY/SELL/HOLD actions so that"
+
+[[question]]
+id = "m10-q06"
+kind = "mcq"
+prompt = """
+`determine_action(roi, uncertainty_pct, volatility_cv)` accepts
+`volatility_cv`. What effect does that argument have on the returned action?
+"""
+answer = """
+None. It is accepted and never read.
+
+The body is four lines: avoid at uncertainty >= 0.95, buy at roi >= 0.10, sell
+at roi <= -0.10, hold otherwise. `volatility_cv` appears in the signature, in
+the docstring's argument list, and nowhere else. `build_reasoning` has the same
+shape: it takes `action` and never uses it.
+
+Neither is a bug in the sense of producing a wrong answer, and that is what
+makes them worth pointing at. A parameter that is threaded through a call site,
+documented, and ignored reads to every future maintainer as a live input. It is
+also a plausible-looking place for a change to land and silently do nothing: add
+a volatility rule to the docstring, forget the body, and the tests still pass
+because nothing asserts on that path.
+
+Volatility does reach the decision, just not here. It contributes -0.20 per
+point to the score, and it is one of the two inputs to `determine_risk_level`,
+where a CV at or above 0.80 is enough for HIGH on its own.
+"""
+options = [
+  { text = "None: the parameter is accepted and never read in the function body", correct = true },
+  { text = "A CV at or above 0.80 forces AVOID", note = "That is determine_risk_level's HIGH threshold, and the scorer docstring says explicitly that HIGH no longer forces AVOID. determine_action's only forcing rule is uncertainty_pct >= 0.95." },
+  { text = "It scales the plus/minus 10 percent ROI thresholds so volatile archetypes need a bigger move to trigger", note = "That would be a reasonable design and it is not what the code does. The comparisons are against the literals 0.10 and -0.10, with nothing multiplying them." },
+  { text = "It breaks ties when roi sits exactly on a threshold", note = "There is no tie to break. The rules are evaluated in order and the roi conditions are mutually exclusive, so a value on the boundary resolves by the first matching branch." },
+]
+source = "wow_forecaster/recommendations/scorer.py"
+anchor = "CRITICAL : uncertainty_pct >= 0.95  (forecast is noise; action = avoid)"
+
+[[question]]
+id = "m10-q07"
+kind = "find"
+prompt = """
+There is a cold-start modifier at the end of `compute_score`. Find it, say what
+it changes, and then say what it deliberately or accidentally does not change.
+"""
+rubric = [
+  "uncertainty_penalty is multiplied by 1.5 and re-clamped when is_cold_start and transfer_confidence is None or below 0.3",
+  "It fires after the penalty is computed, so it inflates the stored uncertainty_penalty and therefore the score",
+  "It does NOT touch uncertainty_pct, which is the raw field carried on ScoreComponents",
+  "determine_risk_level and determine_action both read uncertainty_pct, so neither sees the widening",
+  "build_reasoning also reads uncertainty_pct, so the human-readable string does not mention it either",
+]
+answer = """
+`wow_forecaster/recommendations/scorer.py`, the last statement before the return:
+
+    if is_cold_start and (transfer_confidence is None or transfer_confidence < 0.3):
+        uncertainty_penalty = _clamp(uncertainty_penalty * 1.5, 0.0, 100.0)
+
+What it changes: the score, and only weakly. The uncertainty term carries a
+weight of 0.10, so a penalty going from 40 to 60 costs the archetype 2.0 points
+out of a working range of roughly 100 (the achievable range from q02 is about
+-34 to +62.5). A cold-start archetype with a real opportunity will still rank.
+
+What it does not change: anything that reads `uncertainty_pct`. The multiplier
+is applied to the derived penalty, not to the raw ratio, and `ScoreComponents`
+carries both. `ranker.py` then passes `components.uncertainty_pct` to
+`determine_risk_level`, to `determine_action`, and to `build_reasoning`. So a
+cold-start archetype with no transfer mapping is nudged down the ranking, but it
+is not flagged as riskier, its action is unchanged, and the reasoning string
+does not say the interval was widened.
+
+Reading it charitably, that is separation of concerns: the raw fields stay raw
+and only the scoring view is adjusted. Reading it as written, the modifier's own
+justification is that a cold-start archetype without a mapping is less
+trustworthy, and the column whose entire job is to express untrustworthiness is
+the one place the adjustment does not reach. The 1.5 and the 0.3 are, as usual,
+literals with no derivation.
+"""
+source = "wow_forecaster/recommendations/scorer.py"
+anchor = "if is_cold_start and (transfer_confidence is None or transfer_confidence < 0.3):"
+see_also = ["wow_forecaster/recommendations/ranker.py"]
+
+[[question]]
+id = "m10-q08"
+kind = "mcq"
+prompt = """
+Active event with `severity = "major"`. Three cases for the archetype's impact
+record: `"positive"`, `"negative"`, and missing. What does `event_boost` do
+across those three, and what does the pattern encode?
+"""
+answer = """
+Base for `major` is 30.0. So:
+
+    positive  ->  +30.0
+    negative  ->  -15.0    (-base * 0.5, called a soft penalty)
+    unknown   ->   +9.0    (base * 0.3)
+
+The pattern encodes an optimism prior about events. A confirmed harmful event is
+penalised at half the weight of an equally severe helpful one, and an event whose
+direction is unknown for this archetype still contributes positively. Weighted
+at 0.15, the three cases are worth +4.5, -2.25 and +1.35 points respectively.
+
+There is a defensible story: patch events historically raise demand more often
+than they suppress it, and the impact records in `config/events/` are
+hand-authored and incomplete, so treating a missing record as mildly bullish
+matches the base rate. There is also a bad consequence: whether an event
+appears bullish depends on whether someone wrote an impact record, and the
+default for "nobody wrote one" is not neutral. An archetype nobody has thought
+about gets a free +9.
+
+Unknown severity has a similar default: `_SEVERITY_BOOST.get(severity or "",
+10.0)` returns 10.0, which sits between `minor` at 5 and `moderate` at 15. So an
+unrecognised severity string is treated as more impactful than a minor event.
+
+M5's event-impact study is the thing that would replace all of this with
+measured effects. PLAN.md's CEILING names exactly that: measured event effects
+becoming model inputs instead of hand-authored impact records.
+"""
+options = [
+  { text = "+30, -15, +9: negative impacts are penalised at half weight and an unknown impact is still a positive contribution", correct = true },
+  { text = "+30, 0, 0: negative and unknown impacts are floored at zero so events can only help", note = "Negative impacts do go negative. event_boost's range is [-100, 100] on purpose and the ScoreComponents validator enforces it, so a negative boost genuinely subtracts from the total." },
+  { text = "+30, -30, 0: the penalty mirrors the boost and an unknown impact contributes nothing", note = "Both halves are wrong. The negative branch multiplies by 0.5, and the unknown branch multiplies by 0.3 rather than zeroing, which is the asymmetry that makes this question worth asking." },
+  { text = "+45, -15, +9: an active event also collects the upcoming-event anticipation boost", note = "The anticipation branch is an elif on event_active being false. An event that is already running cannot also be counted as upcoming, so the two never stack." },
+]
+source = "wow_forecaster/recommendations/scorer.py"
+anchor = "event_boost = -base * 0.5"
+
+# ── Ranking and selection ────────────────────────────────────────────────────
+
+[[question]]
+id = "m10-q09"
+kind = "predict"
+prompt = """
+Category `consumable` has these scored forecasts, and `top_n_per_category` is
+called with n = 3:
+
+    archetype 42, horizon 1d,  score 18.0
+    archetype 42, horizon 7d,  score 22.5
+    archetype 42, horizon 28d, score 22.5
+    archetype 17, horizon 7d,  score 20.0
+
+What comes back for that category?
+"""
+answer = """
+Two entries: archetype 42 at the 7d horizon (22.5), then archetype 17 (20.0).
+
+Two rules fire in sequence. First de-duplication: each archetype keeps only its
+best-scoring horizon. Archetype 42 ties at 22.5 across 7d and 28d, and the tie
+break prefers the shorter horizon as more immediately actionable, so 7d
+survives and both the 1d and 28d rows are discarded. Then the survivors sort by
+score descending, with archetype_id ascending as the stable secondary key.
+
+n = 3 never binds here, because de-duplication runs first and only two
+archetypes exist. That ordering is the part worth remembering: `n` caps
+archetypes per category, not rows per category, so one archetype can never
+occupy two of the three slots with different horizons. Before the v0.9.1
+cross-horizon de-duplication that was exactly what happened.
+"""
+options = [
+  { text = "archetype 42 at 7d (22.5), then archetype 17 (20.0); the 1d and 28d rows for 42 are dropped", correct = true },
+  { text = "archetype 42 at 28d (22.5), then archetype 17 (20.0)", note = "The tie break runs the other way. On equal scores the shorter horizon wins, on the argument that a 7-day call is more actionable than a 28-day one." },
+  { text = "All three archetype 42 rows plus archetype 17, truncated to the first three by score", note = "De-duplication happens before truncation, so n caps archetypes rather than rows. One archetype cannot hold multiple slots in the same category." },
+  { text = "archetype 17 first, because ties break by archetype_id ascending", note = "archetype_id is only the secondary key, applied when scores are equal. 22.5 beats 20.0 on the primary key, so archetype 42 leads." },
+]
+source = "wow_forecaster/recommendations/ranker.py"
+anchor = "highest score is kept.  When two horizons tie on score the shorter horizon"
+
+[[question]]
+id = "m10-q10"
+kind = "recall"
+prompt = """
+Picking the best-scoring horizon per archetype, then the best-scoring archetypes
+per category, is taking a maximum over noisy estimates. Name the statistical
+consequence, and name the specific structural bias the score formula adds on top
+of it.
+"""
+rubric = [
+  "The winner's curse: an argmax over noisy estimates selects for upward error as well as for genuine quality",
+  "So the expected realized ROI of the selected set sits below its reported score, even with individually unbiased forecasts",
+  "The structural bias: a longer horizon has more room to move, so |roi| grows with the horizon",
+  "Opportunity carries 0.35 with a 200x multiplier while uncertainty carries 0.10 with a 100x multiplier, so ROI is about seven times as influential per percentage point as interval width",
+  "Selection therefore drifts toward the longest, least certain horizon, and nothing measures the gap because there is no realization ledger",
+]
+answer = """
+The general effect is the winner's curse. Every score is a function of a
+forecast, and a forecast is an estimate with error. Taking the maximum over
+several of them selects partly for genuine opportunity and partly for a
+favorable draw of that error. The selected set therefore realizes worse than it
+scored, on average, even if every individual forecast is unbiased. This is the
+same phenomenon as a hyperparameter search's best validation score being an
+optimistic estimate of test performance.
+
+The structural bias on top is arithmetic. Do the units:
+
+    +10 percentage points of ROI       ->  opportunity +20  ->  score +7.0
+    +10 percentage points of CI width  ->  uncertainty +10  ->  score -1.0
+
+A point of ROI is worth about seven points of interval width. A 28-day forecast
+has four weeks for the price to move, so its |roi| is systematically larger than
+a 1-day forecast's, and its interval is systematically wider. The formula pays
+generously for the first and charges almost nothing for the second. So the
+horizon argmax is biased toward 28d, which is also the horizon whose validation
+number is entirely contaminated (M06) and whose interval is the least
+trustworthy.
+
+The uncomfortable part: neither effect is measured. Nothing in the repo compares
+a recommendation to what the price actually did. M1 #13's `forecast_realizations`
+ledger is what would let you quantify the gap between reported score and
+realized ROI, per horizon, which is the number that tells you how much of the
+selection was skill.
+"""
+source = "wow_forecaster/recommendations/ranker.py"
+anchor = "Forecasts are matched to inference rows by (archetype_id, realm_slug)."
+see_also = ["docs/ROADMAP.md", "PLAN.md"]
+
+[[question]]
+id = "m10-q11"
+kind = "recall"
+prompt = """
+`build_recommendation_outputs` writes a `score_components` JSON blob to the
+`recommendation_outputs` table. What does it store, what does it omit, and how
+much of a re-scoring under a different policy is actually recoverable?
+"""
+rubric = [
+  "It stores the five weighted components plus the three raw quantities roi, volatility_cv, uncertainty_pct",
+  "It omits the five weights and every scaling constant that produced those components",
+  "Because the components are stored, any pure re-weighting is recoverable offline: total is a linear combination of stored values",
+  "Because action and risk derive from stored raw fields, re-thresholding is recoverable too",
+  "What is NOT recoverable is a change to a component formula (roi*200, qty/10, the severity table), since only the outputs were kept",
+]
+answer = """
+Stored: `opportunity_score`, `liquidity_score`, `volatility_penalty`,
+`event_boost`, `uncertainty_penalty`, plus the raw `roi`, `volatility_cv` and
+`uncertainty_pct`. Omitted: every constant. There is no record anywhere in the
+row of which weights produced its `score`.
+
+Now the honest accounting, because the naive version of this criticism
+overstates it. `total` is a linear combination of the five stored components, so
+a policy that only changes weights can be replayed exactly over historical rows
+with a SQL expression and no re-run. Similarly, `action` and `risk_level` derive
+from `roi`, `uncertainty_pct` and `volatility_cv`, all stored, so different
+thresholds can be applied retroactively too. That is a genuinely good property
+and it was probably not planned.
+
+What is unrecoverable is a change to how a component is computed. Replace
+`roi * 200` with `roi * 100`, or re-weight the severity table, or make
+`liquidity` a log rather than a linear ramp, and the stored component is the
+output of the old formula with no way back. Nor is there a marker saying which
+version of the formula a given row came from, so a table spanning a code change
+silently mixes two populations.
+
+`ranker.py` names this itself in its planned-improvements block: persist scoring
+parameters alongside recommendations, filed as V2 A/B test support. ROADMAP M2
+turns it into work: #32 extracts a named `ScoringPolicy`, and #33 needs that
+extraction to exist before there are two comparable things to test.
+"""
+source = "wow_forecaster/recommendations/ranker.py"
+anchor = "- V2: A/B test support (persist scoring parameters alongside recommendations)."
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m10-q12"
+kind = "find"
+prompt = """
+Enumerate every hand-chosen constant in `scorer.py`, and then say how many of
+them are reachable from `config/default.toml`.
+"""
+rubric = [
+  "The five weights: 0.35 opportunity, 0.20 liquidity, 0.20 volatility, 0.15 event, 0.10 uncertainty",
+  "The four scalings plus a default: roi*200, quantity/10, auctions*1.0, cv*100, and the flat 10.0 for unknown liquidity",
+  "The event block: severity boosts 5/15/30/50/70, the 10.0 unknown-severity default, the 0.5 negative multiplier, the 0.3 neutral multiplier, the 15.0 anticipation base over a 7-day window",
+  "The gates: risk at 0.95/0.80/0.50, action at plus or minus 0.10, the cold-start multiplier 1.5 with its 0.3 transfer-confidence cutoff",
+  "Zero of them are in config. config/default.toml contributes only top_n_per_category, which controls how many results survive, not how anything is scored",
+]
+answer = """
+Roughly twenty-five literals, in four groups.
+
+Weights: 0.35, 0.20, 0.20, 0.15, 0.10.
+
+Scalings: `roi * 200` (50 percent ROI saturates), `quantity_sum / 10` (1,000
+units saturates), `auctions_sum * 1.0` (100 auctions saturates), `cv * 100`,
+`ci_width / forecast_price * 100`, and the flat `10.0` returned when neither
+depth field is available.
+
+Events: the `_SEVERITY_BOOST` table at 5 / 15 / 30 / 50 / 70, the `10.0` default
+for an unrecognised severity, `-base * 0.5` for a negative impact, `base * 0.3`
+for an unknown one, and `15.0 * (1 - days/7)` for anticipation.
+
+Gates: 0.95 / 0.80 / 0.50 for risk, plus or minus 0.10 for the action, `1.5` and
+`0.3` for the cold-start widening. Plus the display thresholds inside
+`build_reasoning` (0.20, 0.10, 0.05, 0.40, 0.15, 0.60), which shape what a human
+reads even though they do not move a number.
+
+None of it is in config. `config/default.toml` contains exactly one
+recommendation knob, `top_n_per_category = 3`, and it governs how many results
+survive rather than how any of them are scored. The contrast with the crafting
+side is instructive: `[crafting]` exposes `min_volume_units`, both slope
+thresholds, `margin_history_days`, `min_ingredient_coverage` and
+`allowed_expansions`, so that half of the decision layer is at least tunable
+without a code change.
+
+The practical consequence is that changing a weight is a commit, a version
+stamp and a PR, which is fine for a stable formula and hostile to an experiment.
+That asymmetry is precisely why M2 #32 extracts a `ScoringPolicy` before #33
+tries to A/B test one.
+"""
+source = "config/default.toml"
+anchor = "top_n_per_category = 3"
+see_also = ["wow_forecaster/recommendations/scorer.py"]
+
+# ── The crafting side: a second, different decision layer ────────────────────
+
+[[question]]
+id = "m10-q13"
+kind = "recall"
+prompt = """
+The crafting advisor gates output items on `quantity_sum_7d < min_volume_units`
+and excludes them outright rather than penalising them. Volume also appears as a
+multiplier, `volume_score = clamp(qty / 500, 0, 1)`. Why is a hard filter needed
+when a multiplicative penalty already exists?
+"""
+rubric = [
+  "The final score is best_window_margin_pct * volume_score, a product, so volume can only scale the margin down and never veto it",
+  "At the 50-unit floor volume_score is 0.1, so a 300 percent margin scores 0.30 and beats a 20 percent margin at full volume scoring 0.20",
+  "The ranking tie-break is best_window_margin_gold, so a crowd of near-zero-score rows would surface the largest raw margin, which is exactly the wall-listing artifact",
+  "Thin items are also where the margin number is least trustworthy: few observations, wide spreads, vendor and wall prices",
+  "So the gate is a feasibility statement rather than a preference: you cannot fill an order that does not exist",
+]
+answer = """
+Because a multiplicative penalty is too weak to suppress an implausible margin.
+
+Do the arithmetic at the boundary. The gate is 50 units over seven days, and
+`volume_score` saturates at 500, so an item sitting exactly on the floor scores
+`50 / 500 = 0.1`. A recipe showing a 300 percent margin on 50 units scores
+`3.0 * 0.1 = 0.30`. A recipe showing a solid, real 20 percent margin on 5,000
+units scores `0.20 * 1.0 = 0.20`. The thin one wins. Pushing the floor lower
+makes that worse, not better, because a smaller `volume_score` multiplies a
+margin that grows without bound.
+
+There is a second reason, visible in `rank_crafting_opportunities`: the sort key
+is `(opportunity_score, best_window_margin_gold)`. If a pile of items collapsed
+to a score near zero, the tiebreak would order them by raw gold margin, which
+surfaces exactly the pathology the config comment describes: legacy recipes
+dominated by 49,997g auction-house wall listings. `allowed_expansions` exists for
+the same reason.
+
+And the underlying point is not preference, it is feasibility. Margin percent on
+a market with 40 units listed all week is an estimate from almost no data, on a
+market you cannot trade in size anyway. "No market depth = not actionable" is a
+statement about what you can execute, and the right way to express "cannot
+execute" is exclusion, not a discount.
+
+Where it is still weak: `min_volume_units = 50` is one number applied to every
+profession and every price level, and `volume_score` saturating at 500 means a
+500-unit market and a 50,000-unit market are treated as identically deep.
+"""
+source = "wow_forecaster/recommendations/crafting_advisor.py"
+anchor = "Volume gate: output items with ``quantity_sum_7d < min_volume_units`` are"
+see_also = ["config/default.toml"]
+
+[[question]]
+id = "m10-q14"
+kind = "mcq"
+prompt = """
+Two crafting opportunities clear the volume gate:
+
+    A: best_window_margin_pct = 0.25,  quantity_sum_7d = 480
+    B: best_window_margin_pct = 0.20,  quantity_sum_7d = 5000
+
+Which ranks higher, and what does that reveal?
+"""
+answer = """
+A ranks higher, 0.240 against 0.200.
+
+    A: volume_score = 480 / 500 = 0.96   ->  0.25 * 0.96 = 0.240
+    B: volume_score = min(10.0, 1.0) = 1.0  ->  0.20 * 1.00 = 0.200
+
+What it reveals is the saturation point. `volume_score` caps at 1.0 once an item
+reaches 500 units over seven days, so B's ten-fold depth advantage is entirely
+invisible to the ranking. A 500-unit market and a 5,000-unit market are scored as
+equally tradeable, which is false in a way that matters: depth determines how
+large a position you can take without moving the price against yourself, and
+that difference is the whole gap between a hobby craft and a real one.
+
+The formula is optimizing margin per unit while treating capacity as a
+qualifier. A position-sized view would optimize expected gold, roughly margin
+times fillable volume, and would rank B far above A. Which one is right depends
+on how much capital you are deploying, and the code does not ask.
+
+Both numbers, 50 and 500, are the boundaries of the same crude ramp: below 50
+nothing, from 50 to 500 a linear discount, above 500 no distinction at all. Only
+the first of the two is in config.
+"""
+options = [
+  { text = "A, 0.240 against 0.200; volume_score saturates at 500 units so B's extra depth does not count", correct = true },
+  { text = "B, because 5,000 units gives it roughly ten times A's volume_score", note = "volume_score is min(qty / 500, 1.0). The cap fires at 500, so every item at or above that depth gets exactly 1.0 and B's extra 4,500 units earn nothing." },
+  { text = "B, because opportunities are ranked by best_window_margin_gold", note = "That is the secondary key only. The primary key is opportunity_score, which is margin_pct times volume_score; raw gold margin only breaks ties." },
+  { text = "Neither: both fall below min_volume_units and are excluded", note = "The gate is 50 units of quantity_sum over the trailing 7 days. 480 and 5,000 both clear it comfortably." },
+]
+source = "wow_forecaster/recommendations/crafting_advisor.py"
+anchor = "volume_score = min(vol_7d / 500.0, 1.0)"
+
+[[question]]
+id = "m10-q15"
+kind = "find"
+prompt = """
+`_compute_windows` contains a four-level price lookup ladder for future
+horizons. Find it, list the four levels in order, and explain why level 2 exists
+at all when level 3 would already return a number.
+"""
+rubric = [
+  "The forecast_price closure inside _compute_windows in crafting_advisor.py",
+  "1. item-level forecast, 2. trend-ratio scaling, 3. raw archetype forecast, 4. the item's current price",
+  "Level 3 alone would collapse every item in an archetype onto one projected price, destroying intra-archetype price differences",
+  "Trend-ratio applies the archetype's relative move to the item's own level: item_current * (archetype_forecast / archetype_current)",
+  "horizon_days == 0 short-circuits to the current price before the ladder runs at all",
+]
+answer = """
+`wow_forecaster/recommendations/crafting_advisor.py`, the `forecast_price`
+closure inside `_compute_windows`. The ladder:
+
+1. Item-level forecast from `forecast_outputs` where `item_id` is set. Most
+   precise, available for the union of recipe-linked items and any item with at
+   least 14 distinct observation days (v1.12.0).
+2. Trend-ratio scaling: `item_current * (archetype_forecast / archetype_current)`.
+3. The raw archetype forecast.
+4. The item's own current price, meaning assume no change.
+
+Level 3 does return a number, and it is the wrong one. An archetype forecast is
+a single price for a whole group of items. Using it directly says an 80g rare
+herb and a 20g common herb in the same archetype will both be worth the
+archetype mean next week, which is not a forecast, it is an erasure of the price
+level the recipe actually depends on. For a reagent that error flows straight
+into craft cost.
+
+Level 2 separates the two pieces of information: take the archetype forecast's
+relative move, which is what the model actually learned, and apply it to the
+item's own current price, which is what the item is actually worth. The item
+keeps its level, the archetype supplies the trend.
+
+The honest framing, from PLAN.md's CEILING: this is a heuristic stitch across a
+real hierarchy. Items and archetypes are forecast independently, so their
+forecasts are not coherent with each other by construction, and trend-ratio is a
+hand-built way to make them look coherent. Hierarchical forecasting with MinT or
+OLS reconciliation is the principled version.
+"""
+source = "wow_forecaster/recommendations/crafting_advisor.py"
+anchor = "1. Item-level forecast (from forecast_outputs with item_id set) — most precise."
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m10-q16"
+kind = "mcq"
+prompt = """
+In `build_crafting_opportunities`:
+
+    if current_output is not None and current_output < 0.1:
+        slope, pct_rank, status = None, None, "unknown"
+
+What is that guard protecting against?
+"""
+answer = """
+A near-zero denominator making `margin_pct` meaningless.
+
+`margin_pct` is margin over output price. When the output sells for a fraction
+of a gold, the denominator is tiny and the ratio swings wildly on rounding-scale
+price moves. A one-copper change on a five-copper item is a 20 percent swing in
+margin_pct, so the regression slope over 30 days is dominated by noise and would
+report `expanding` or `compressing` with total confidence and no information.
+
+Note what the guard does and does not do. It suppresses only the slope, the
+percentile rank and the status, replacing them with `unknown`. The recipe stays
+in the output: it still gets windows, a best window, a margin, a volume score
+and a ranking position. Only the compression signal is withheld.
+
+That `unknown` is the right pattern, and it is one the repo argues for elsewhere.
+PLAN.md's DS-3 criticises `drift.py` for returning `DriftLevel.NONE` when it
+cannot compute a ratio, because "cannot compute" reporting as "no drift" hides
+the failure, and points at `health.py` returning `unknown` as the correct
+behavior. This guard is on the right side of that line: it says nothing rather
+than saying something false.
+"""
+options = [
+  { text = "A near-zero output price making margin_pct swing wildly, so slope and percentile would be noise reported as signal", correct = true },
+  { text = "A ZeroDivisionError in _compute_margin_status", note = "That function never divides by the output price. It reads margin_pct straight from the snapshot table and its own regression denominator is already guarded by `den > 0`. The guard is about signal quality, not an exception." },
+  { text = "Vendor-priced junk items appearing in the report at all", note = "The recipe is not excluded. It keeps its windows, margin, volume score and rank; only the compression/expansion signal is set to unknown. Exclusion is what the volume gate and allowed_expansions do." },
+  { text = "The 49,997g wall-listing artifact on legacy recipes", note = "That is the opposite end of the price scale and is handled by allowed_expansions restricting recipes to midnight and tww. This guard fires on prices below a tenth of a gold." },
+]
+source = "wow_forecaster/recommendations/crafting_advisor.py"
+anchor = "if current_output is not None and current_output < 0.1:"
+see_also = ["PLAN.md"]
+
+# ── What would make any of this true ─────────────────────────────────────────
+
+[[question]]
+id = "m10-q17"
+kind = "recall"
+prompt = """
+Everything in this module is a hypothesis about how to turn forecasts into
+decisions, and none of it has been tested. Describe what testing it would
+actually require, in order, and say what each step buys.
+"""
+rubric = [
+  "M1 #13, the forecast_realizations ledger: score matured forecasts against rollup actuals, which is the prerequisite for everything else",
+  "M2 #29, a paper-trading simulator that executes recommendations with AH fees and per-horizon exit rules",
+  "M2 #31, baselines: a random portfolio and a buy-everything portfolio, because P&L with no comparison means nothing",
+  "M2 #32, extract a named ScoringPolicy so the weights are data rather than source literals",
+  "M2 #33, a time-sliced A/B between policies with paired significance tests, which needs weeks of wall clock",
+]
+answer = """
+Four steps, and the ordering is forced by dependency rather than preference.
+
+**Realizations first (M1 #13).** Nothing can be evaluated until a forecast is
+compared to what the price actually did. The ledger scores every matured
+forecast against the rollup actuals for MAE, MAPE, directional accuracy and
+interval coverage. Roughly 305,000 already-matured forecasts become scoreable
+the day it lands, which is unusual: the evaluation data already exists and has
+simply never been joined to anything.
+
+**Then P&L (M2 #29).** Forecast accuracy is not the product. The product is a
+ranked list you would trade. A simulator that executes the recommendations with
+auction-house fees and per-horizon exit rules answers the actual question, and it
+answers it about the whole decision layer at once: the weights, the volume gate,
+the top-N truncation, the horizon argmax and the winner's curse in q10 all show
+up in the same number.
+
+**Then baselines (M2 #31).** A P&L figure alone is not evidence. Against a
+random portfolio drawn from the same universe and a buy-everything portfolio,
+it becomes a claim about the ranking rather than about the market. This is the
+same lesson LESSONS.md records for the model: a baseline the candidate is never
+run against is not a baseline, it is a fixture.
+
+**Then policies and the A/B (M2 #32, #33).** Extracting `ScoringPolicy` turns
+twenty-five source literals into named, persisted configuration, which is what
+lets two weightings run side by side. The A/B is time-sliced with paired
+significance tests, and it needs weeks of wall clock, which is why the roadmap
+starts its clock early and lets M3 and M4 proceed alongside.
+
+What to say out loud until then: this formula is a hypothesis with about
+twenty-five free parameters and zero observations. Every component is a
+defensible proxy for something real, the structure separates direction from
+confidence in a way that is genuinely better than most naive versions, and no
+part of it has ever been shown to beat picking archetypes at random.
+"""
+see_also = ["docs/ROADMAP.md", "PLAN.md", "LESSONS.md"]

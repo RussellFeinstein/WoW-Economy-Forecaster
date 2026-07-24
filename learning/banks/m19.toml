@@ -1,0 +1,559 @@
+# M19: The lifecycle gap.
+#
+# What is present and what is absent when this repo is read as a production
+# system. The sharp example: three pieces of code select the active model three
+# different ways, and the authoritative one (model_metadata.is_active) is the one
+# nothing reads.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring. Prose anchors (PLAN.md, docstrings) age better than code lines.
+
+# ── Three ways to pick a model ────────────────────────────────────────────────
+
+[[question]]
+id = "m19-q01"
+kind = "recall"
+prompt = """
+This repo selects "the model to use" in three separate places, and they do not
+share a source of truth. Name all three selection strategies, say where each
+one lives, and say which one is authoritative (should win) and why.
+"""
+rubric = [
+  "Serving path (pipeline/forecast.py -> find_latest_model_artifact): globs the .pkl files and sorts by filesystem st_mtime",
+  "report-feature-importance in cli.py: sorts the glob and takes candidates[-1], relying on the ISO date suffix so lexicographic == chronological",
+  "model_metadata.is_active: a DB flag set by trainer._register_model, and it is the authoritative one",
+  "is_active should win because it is a deliberate registry decision the training step records, whereas mtime and filename ordering are incidental properties of files on disk",
+  "The defect: nothing reads is_active for serving, so the authoritative strategy is the unused one",
+]
+answer = """
+Three strategies, no shared authority:
+
+1. The serving path. ForecastStage calls find_latest_model_artifact(), which
+globs `lgbm_{h}d_{realm}_*.pkl` and sorts by `p.stat().st_mtime`, newest first.
+The chosen model is whichever .pkl was most recently touched on disk.
+
+2. report-feature-importance in cli.py globs the same pattern, sorts the paths,
+and takes `candidates[-1]` with the comment "ISO date suffix -> lexicographic =
+chronological." This ranks by the date embedded in the filename, not by mtime.
+
+3. model_metadata.is_active. trainer._register_model() flips the previous row's
+is_active to 0 and inserts the new row with is_active = 1. That is the registry
+recording an explicit decision about which model is current.
+
+is_active is the one that should win. It is a decision the training step commits
+on purpose, with the artifact_path and validation metrics attached. mtime and
+lexicographic filename order are accidental: a file copy, a restore, a rollback,
+or a clock skew changes them without any intent behind it. The finding of this
+module is that the authoritative strategy is exactly the one nothing reads back.
+The two paths that do run rank files by side effects of the filesystem.
+"""
+source = "wow_forecaster/ml/trainer.py"
+anchor = "artifact_dir.glob(f\"lgbm_{horizon_days}d_{realm_slug}_*.pkl\"),"
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m19-q02"
+kind = "mcq"
+prompt = """
+model_metadata already carries slug, version, hyperparameters, training date
+range, validation MAE and RMSE, artifact_path, and is_active. PLAN.md calls this
+table "Partial and unused." What makes it unused rather than merely partial?
+"""
+answer = """
+The table is written on every training run and never read back on the serving
+path. trainer._register_model() populates every column including is_active, but
+ForecastStage loads its model by globbing the artifact directory and sorting by
+mtime, so the registry's is_active decision is dead weight. It is a registry that
+records the right answer and is never consulted for it.
+
+That is why OD-2 argues an MLflow registry "fixes a live bug rather than adding
+ceremony": wiring stage transitions (or just is_active) into the serving path
+does not add a feature, it connects a decision that is already being recorded to
+the one place that needs it.
+"""
+options = [
+  { text = "Every column including is_active is written on each training run, but the serving path ignores it and globs by mtime instead", correct = true },
+  { text = "The table is missing the columns a registry needs, so serving cannot rely on it", note = "It has the columns: slug, version, hyperparameters, training range, validation MAE/RMSE, artifact_path, is_active. Completeness is not the problem; nothing reading it is." },
+  { text = "is_active is always 1 for every row, so it cannot identify a single active model", note = "_register_model sets prior rows to is_active = 0 before inserting the new one at 1, so it does identify a single active model per horizon+realm. The flag is correct; it is simply never queried by the serving path." },
+  { text = "The table is populated only in tests, never during real training runs", note = "train_models() calls _register_model on every horizon it trains, in production runs. The writes are real. The reads for serving are what is missing." },
+]
+source = "PLAN.md"
+anchor = "Serving ignores it and globs by mtime"
+
+[[question]]
+id = "m19-q03"
+kind = "predict"
+prompt = """
+The artifact directory for realm us, horizon 7d, holds two files:
+
+  lgbm_7d_us_2026-07-20.pkl   (mtime touched last, because it was copied back
+                               during a manual rollback this morning)
+  lgbm_7d_us_2026-07-22.pkl   (trained normally two days ago, untouched since)
+
+ForecastStage serves via find_latest_model_artifact(). report-feature-importance
+in cli.py picks candidates[-1]. Which file does each choose?
+"""
+answer = """
+They disagree, which is the whole point.
+
+find_latest_model_artifact sorts by st_mtime, newest first, so ForecastStage
+serves lgbm_7d_us_2026-07-20.pkl: the rolled-back file whose mtime was refreshed
+by the copy this morning.
+
+report-feature-importance sorts the glob lexicographically and takes the last
+element, so it inspects lgbm_7d_us_2026-07-22.pkl: the filename with the later ISO
+date, regardless of mtime.
+
+So the model you serve forecasts from and the model whose feature importance you
+report are two different boosters. Neither path consults model_metadata.is_active,
+which is where the intended answer actually lives. Ordinarily the two agree
+because a fresh train writes a new-dated file that is also the newest mtime, so
+the disagreement only surfaces under out-of-band file manipulation. That is
+exactly the case a portfolio reviewer would probe.
+"""
+options = [
+  { text = "Serving picks the 07-20 file (newest mtime); the report picks the 07-22 file (lexicographically last)", correct = true },
+  { text = "Both pick the 07-22 file, because it has the later date in its name", note = "Only cli.py ranks by the filename date. find_latest_model_artifact ranks by st_mtime, and the 07-20 file was touched most recently, so serving picks it." },
+  { text = "Both pick the 07-20 file, because the rollback made it current", note = "The rollback changed only the mtime. cli.py ignores mtime and sorts filenames lexicographically, so it still picks the 07-22 file. The two paths use different keys and diverge here." },
+  { text = "Serving raises because two artifacts match the same realm and horizon", note = "Neither path errors on multiple matches; both sort and take one. The design assumes the sort resolves it, which is exactly the unstated coupling to filesystem state this module is about." },
+]
+source = "wow_forecaster/ml/trainer.py"
+anchor = "key=lambda p: p.stat().st_mtime,"
+
+[[question]]
+id = "m19-q04"
+kind = "find"
+prompt = """
+Find where is_active is written and confirm that nothing reads it to select a
+model for serving. Name the writer, name the one column-comment that states its
+intent, and say what the serving path does instead.
+"""
+rubric = [
+  "trainer._register_model() writes it: UPDATE model_metadata SET is_active = 0 ... then INSERT ... is_active = 1",
+  "models/meta.py documents intent: 'is_active: Whether this model is the currently active production model.'",
+  "A grep for is_active shows only writes (trainer, forecast_repo insert) and the schema/model definitions, no SELECT WHERE is_active for serving",
+  "ForecastStage serves via find_latest_model_artifact(), which globs and sorts by st_mtime, so the documented production flag is never consulted",
+]
+answer = """
+The writer is trainer._register_model(). It runs
+`UPDATE model_metadata SET is_active = 0 WHERE slug LIKE ? AND is_active = 1`,
+then inserts the new row with `is_active` = 1 (and ON CONFLICT sets it back to 1).
+forecast_repo also serializes `int(model.is_active)` on insert. Those are the only
+writers.
+
+The intent is stated in models/meta.py: "is_active: Whether this model is the
+currently active production model." That is a promise the serving path does not
+keep. Grep is_active across wow_forecaster/ and you find writes and definitions
+only, never a `SELECT ... WHERE is_active = 1` feeding inference. ForecastStage
+loads its model through find_latest_model_artifact(), an mtime glob. The flag that
+says "this is the production model" is written truthfully and read by nobody who
+serves.
+"""
+source = "wow_forecaster/models/meta.py"
+anchor = "is_active: Whether this model is the currently active production model."
+see_also = ["wow_forecaster/ml/trainer.py", "PLAN.md"]
+
+# ── What is built vs what is missing ──────────────────────────────────────────
+
+[[question]]
+id = "m19-q05"
+kind = "recall"
+prompt = """
+Read as a production system, this repo is a mix of strong, partial, absent, and
+broken lifecycle pieces. Sort these six into the right bucket and give the
+one-word or one-phrase reason PLAN.md attaches to each: pipeline health
+monitoring, model serving, experiment tracking, prediction monitoring, model
+registry, CI/CD.
+"""
+rubric = [
+  "Pipeline health monitoring: present and strong (coverage, gaps, freshness, stale-lock and retention sentinels, dead-man alarm)",
+  "CI/CD: present and decent (ruff + pytest on 3.11/3.12, PR-gated, branch protection, Dependabot automerge); missing coverage/image/publish",
+  "Model serving and experiment tracking: both absent (no API of any kind; no run comparison, no param sweep history)",
+  "Model registry: partial and unused (right columns, serving globs by mtime)",
+  "Prediction monitoring: present but broken (the pooled drift baseline of DS-3)",
+]
+answer = """
+Two strong, two absent, one partial-unused, one broken:
+
+- Pipeline health monitoring: present and strong. Coverage and gap detection, a
+  stale-lock sentinel, a retention sentinel, a scheduled health check with durable
+  alerting, backup staleness, and a cloud gap guard doubling as a dead-man alarm.
+- CI/CD: present and decent. ruff plus pytest on two Python versions, PR-gated,
+  branch protection with no bypass actors, Dependabot automerge on green CI.
+  Missing coverage reporting, image build, artifact publishing.
+- Model serving: absent. No API of any kind.
+- Experiment tracking: absent. No run comparison, no param sweep history.
+- Model registry: partial and unused. The columns are right; serving ignores them.
+- Prediction monitoring: present but broken. The drift baseline pools all four
+  baselines from whatever backtest ran last and returns NONE when it cannot
+  compute, which reads as "no drift" (DS-3).
+
+The habit worth taking from this: "present" is not one bucket. A portfolio audit
+has to separate built-and-working from built-and-unused from built-and-broken,
+because the second and third are the ones a reviewer catches and you did not.
+"""
+source = "PLAN.md"
+anchor = "| Prediction monitoring | **Present but broken.** See DS-3 |"
+
+[[question]]
+id = "m19-q06"
+kind = "mcq"
+prompt = """
+Which lifecycle concern does PLAN.md rate "present and strong," not merely
+"present" or "partial"?
+"""
+answer = """
+Pipeline health monitoring. It is the one operational area PLAN.md credits
+without a caveat: coverage and gap detection, a stale-lock sentinel, a retention
+sentinel, a scheduled health check with a durable alert JSON and a once-per-24h
+window, backup staleness, and the cloud gap guard doubling as a dead-man alarm.
+
+The contrast with prediction monitoring is deliberate. Watching whether the data
+pipeline is alive is strong. Watching whether the model is any good is broken.
+Those are different questions and the repo is good at one and not the other.
+"""
+options = [
+  { text = "Pipeline health monitoring", correct = true },
+  { text = "Model registry", note = "Rated partial and unused: it has the right columns but the serving path ignores is_active and globs by mtime." },
+  { text = "Orchestration and scheduling", note = "Rated partial: a real stage abstraction with provenance, but driven by Windows .bat and Task Scheduler, so an MLOps reader cannot run any of it." },
+  { text = "Prediction monitoring", note = "Rated present but broken: the pooled, unfiltered drift baseline of DS-3 that reports NONE when it cannot compute." },
+]
+source = "PLAN.md"
+anchor = "| Pipeline health monitoring | **Present and strong.**"
+
+[[question]]
+id = "m19-q07"
+kind = "mcq"
+prompt = """
+PLAN.md labels the retraining trigger "Absent as designed." What does the system
+actually do about retraining today?
+"""
+answer = """
+It retrains every model from scratch every day via run-daily-forecast, regardless
+of whether anything drifted, and _register_model promotes the newly trained model
+unconditionally. There is no champion-challenger comparison and no promotion gate:
+the new model becomes active because it is new, not because it is better.
+
+The config flag auto_retrain_on_critical exists and is off, but it is never even
+read (see the config question). "Absent as designed" is the honest label: the
+absence is not an oversight to hide, it is a described state with a named fix
+(Phase 5's promotion gate).
+"""
+options = [
+  { text = "Retrains from scratch daily regardless of need, and promotes the new model unconditionally with no gate", correct = true },
+  { text = "Retrains only when drift is detected, gated by auto_retrain_on_critical", note = "auto_retrain_on_critical is defined but never read, and retraining runs unconditionally every day through run-daily-forecast, not on a drift trigger." },
+  { text = "Retrains daily but keeps the incumbent until a validation comparison passes", note = "There is no comparison. _register_model promotes the new model unconditionally; the incumbent's is_active is flipped to 0 without any check that the new one is better." },
+  { text = "Never retrains automatically; a human runs train-model by hand", note = "run-daily-forecast trains as part of the daily pipeline, so retraining is automatic and daily. What is absent is the trigger logic and the promotion gate, not the training itself." },
+]
+source = "PLAN.md"
+anchor = "Retrains from scratch daily regardless of need"
+
+[[question]]
+id = "m19-q08"
+kind = "predict"
+prompt = """
+An operator sets auto_retrain_on_critical = true in config, expecting that a
+CRITICAL drift reading will now trigger an automatic retrain. Drift then reads
+CRITICAL on the next run. What happens?
+"""
+answer = """
+Nothing new. The flag config.forecast.auto_retrain_on_critical is defined in
+config.py and set in default.toml, but no code path reads it. The adaptive policy
+that could act on drift, evaluate_policy() in monitoring/adaptive.py, is called
+from drift.py as evaluate_policy(overall) with allow_auto_retrain left at its
+default False, and it is never handed the config flag. Even the retrain_recommended
+field it produces is only stored on DriftCheckResult; nothing consumes it to launch
+a training run.
+
+So flipping the flag changes no behavior. The daily unconditional retrain still
+runs as it always did, and the CRITICAL reading widens the CI multiplier and gets
+recorded, but no drift-triggered retrain fires. This is the concrete meaning of
+"the config flag exists and is off": off and unwired are indistinguishable here,
+because the wire was never run.
+"""
+options = [
+  { text = "Nothing changes: no code reads auto_retrain_on_critical, and evaluate_policy is called with allow_auto_retrain defaulting to False", correct = true },
+  { text = "The next run skips the scheduled retrain and instead triggers an on-demand critical retrain", note = "There is no on-demand retrain path wired to this flag. The daily retrain runs regardless, and the flag is never read, so no branch changes." },
+  { text = "evaluate_policy returns retrain_recommended = True and the pipeline retrains immediately", note = "evaluate_policy is called with the default allow_auto_retrain = False, so it will not set auto retrain to True; and even retrain_recommended is only stored on DriftCheckResult, never acted on." },
+  { text = "The forecast run raises because the flag has no handler registered", note = "Unread config is not a runtime error. Pydantic loads it into the model and it simply sits there unconsulted; nothing raises." },
+]
+source = "wow_forecaster/config.py"
+anchor = "auto_retrain_on_critical: bool = False"
+
+[[question]]
+id = "m19-q09"
+kind = "find"
+prompt = """
+Find the two functions that pick "the latest model" by inspecting files on disk.
+For each, name the sort key it uses, and explain why two functions doing the same
+job with different keys is the smell this module is about.
+"""
+rubric = [
+  "find_latest_model_artifact() in ml/trainer.py sorts the .pkl glob by p.stat().st_mtime, reverse=True",
+  "report-feature-importance in cli.py sorts the glob and takes candidates[-1], relying on the ISO date filename suffix (lexicographic = chronological)",
+  "One ranks by filesystem modification time, the other by the date string in the filename: different keys, same intent",
+  "They usually agree by coincidence (a fresh train is both newest mtime and latest date), so the divergence is invisible until a file is touched out of band, and neither consults is_active",
+]
+answer = """
+Two functions, two keys, one job:
+
+find_latest_model_artifact() in ml/trainer.py sorts `artifact_dir.glob(...)` by
+`p.stat().st_mtime` with reverse=True. This is the serving path's selector.
+
+report-feature-importance in cli.py runs `sorted(art_dir.glob(...))` and takes
+`candidates[-1]`, with the comment noting the ISO date suffix makes lexicographic
+order chronological. This ranks by the date baked into the filename.
+
+The smell is that two pieces of the same system independently decided what "the
+latest model" means and picked different definitions, neither of which is the
+registry's is_active. They agree as long as the newest file is also the
+latest-dated file, which is true right after a normal train and false after any
+copy, restore, or clock oddity. A concept as load-bearing as "which model is
+current" implemented three incompatible ways, with the authoritative one unread,
+is the same class of finding as M06's two-splits disagreement: visible in the
+source without running anything.
+"""
+source = "wow_forecaster/cli.py"
+anchor = "artifact_path = candidates[-1]  # ISO date suffix -> lexicographic = chronological"
+see_also = ["wow_forecaster/ml/trainer.py"]
+
+# ── The four open tool decisions ──────────────────────────────────────────────
+
+[[question]]
+id = "m19-q10"
+kind = "recall"
+prompt = """
+PLAN.md opens with four OPEN DECISIONS, each a tool choice with a recommendation
+argued from this codebase specifically. Name all four decisions and the tool each
+one recommends.
+"""
+rubric = [
+  "OD-1 Orchestrator: recommend Dagster",
+  "OD-2 Experiment tracking and model registry: recommend MLflow with a local (SQLite) backend",
+  "OD-3 Serving and deployment target: recommend FastAPI in the pipeline image",
+  "OD-4 Infrastructure as code: recommend Terraform with the Cloudflare and GitHub providers",
+]
+answer = """
+- OD-1 Orchestrator: Dagster. The pipeline is already a well-formed DAG with run
+  tracking; an orchestrator buys retries, backfill, a non-Windows scheduler, and a
+  lineage UI that reads to both the DS and the ops audience at once.
+- OD-2 Experiment tracking and model registry: MLflow, local backend. The repo
+  already runs SQLite so tracking is a file not a service, train_models() already
+  computes what wants logging, and the registry's stage transitions replace the
+  ignored is_active flag, fixing a live bug.
+- OD-3 Serving and deployment target: FastAPI in the pipeline image. A read path
+  over forecast_outputs plus a /predict path against the pickled booster, deployed
+  as the same container image as the pipeline.
+- OD-4 Infrastructure as code: Terraform, Cloudflare and GitHub providers. Scoped
+  to infrastructure that already exists: two R2 buckets, the Worker and its cron,
+  GitHub secrets, and the branch protection ruleset, roughly 100 lines.
+
+The through-line is that every recommendation is argued from what the repo already
+has, not from a generic best-practices list. Each also carries a "what would change
+my mind," which is the tell of a real decision rather than a preference.
+"""
+source = "PLAN.md"
+anchor = "### OD-1: Orchestrator. Recommend Dagster."
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m19-q11"
+kind = "mcq"
+prompt = """
+OD-1 recommends Dagster but names the condition under which Prefect is the better
+call. What is that condition?
+"""
+answer = """
+Pick Prefect if the migration must take days rather than a week or two. Prefect
+decorates existing functions and leaves the stage classes intact, so it is the
+faster port. Dagster's advantage is its software-defined-asset model, which maps
+almost one to one onto the artifacts this pipeline already produces (rollup
+tables, training and inference Parquets, the model pkl, forecasts,
+recommendations), and the asset lineage view that reads well to both audiences.
+That mapping is worth more time; if the time is not there, Prefect wins.
+
+The third option in that decision is neither framework: containerize the existing
+HourlyOrchestrator and let cron inside the image drive it. Operationally sound,
+weaker as a portfolio signal.
+"""
+options = [
+  { text = "When the migration must land in days rather than a week or two, because Prefect decorates existing functions and leaves the stage classes intact", correct = true },
+  { text = "When the pipeline is not yet a DAG, because Prefect can infer structure that Dagster cannot", note = "The pipeline is already a well-formed DAG with declared stage order; that is not the deciding axis. The Prefect case is migration speed, not structure inference." },
+  { text = "When lineage visualization matters most, because Prefect's asset view is stronger", note = "The asset lineage view is Dagster's argument, not Prefect's. It is precisely why OD-1 recommends Dagster in the first place." },
+  { text = "When the box cannot run a long-running daemon, in which case Prefect runs serverless", note = "The no-daemon path in OD-1 is neither framework: containerize HourlyOrchestrator with cron inside the image. That is the recommendation for the daemon constraint, not Prefect." },
+]
+source = "PLAN.md"
+anchor = "Pick Prefect if the migration must take days rather than a week or two. Prefect"
+
+[[question]]
+id = "m19-q12"
+kind = "mcq"
+prompt = """
+OD-2 recommends MLflow with a local backend. Which of these is the strongest
+codebase-specific reason it gives, as opposed to a generic "you should track
+experiments" argument?
+"""
+answer = """
+The registry's stage transitions replace the is_active flag the serving path
+ignores, which fixes a live bug rather than adding ceremony. That is the argument
+that lands, because it ties the tool to a defect this specific repo already has:
+an authoritative model-selection flag that nothing reads. The other supporting
+points (SQLite already present so tracking is a file not a service, train_models()
+already computing what wants logging) lower the cost, but the bug-fix framing is
+what makes it worth doing rather than optional polish.
+
+The stated "what would change my mind": if M1 #18's Optuna study gets dropped, the
+case weakens enough that just wiring is_active into serving is sufficient and costs
+nothing.
+"""
+options = [
+  { text = "Its stage transitions replace the ignored is_active flag, so adopting it fixes a live model-selection bug rather than adding ceremony", correct = true },
+  { text = "MLflow is the industry-standard experiment tracker, so it signals familiarity with common tooling", note = "That is a generic argument that could be pasted into any repo. OD-2 deliberately argues from this codebase: the is_active bug and the SQLite-already-present cost, not from popularity." },
+  { text = "It moves tracking data off-box for durability, which the local-first design needs", note = "The opposite: MLflow is recommended with a local backend precisely to keep data on-box. Moving data off-box is the argument against Weights and Biases, listed under 'what would change my mind.'" },
+  { text = "It replaces the SQLite product database, consolidating storage", note = "MLflow uses its own SQLite backend store; it does not replace the product database, which is copied into durable backups and feeds the M3 warehouse. Consolidation is not the argument." },
+]
+source = "PLAN.md"
+anchor = "stage transitions replace the `is_active` flag the serving path ignores, which"
+
+[[question]]
+id = "m19-q13"
+kind = "recall"
+prompt = """
+OD-3 says a serving layer here has two endpoints with different semantics, and
+that one thing it will NOT offer should be stated plainly rather than faked. What
+are the two endpoints, and what is the honestly-excluded capability and why?
+"""
+rubric = [
+  "A read path serving already-computed forecasts and recommendations out of forecast_outputs",
+  "A /predict path taking a 40-column feature vector directly against the pickled booster, demonstrating the model contract",
+  "Real-time prediction from raw market state is NOT offered",
+  "Because the feature vector comes from a batch-built Parquet and there is no online feature path, so /predict is a feature-vector echo, not live inference",
+]
+answer = """
+Two endpoints:
+
+1. A read path. Serve already-computed forecasts and recommendations straight out
+of forecast_outputs and recommendation_outputs. This is what anyone actually wants.
+
+2. A /predict path. Take a 40-column feature vector and run it against the pickled
+booster. This demonstrates the model contract, and an OpenAPI schema for it is a
+better statement of the feature contract than the prose list.
+
+What is not offered: real-time prediction from raw market state. The feature
+vector /predict consumes is built by the batch dataset builder from a Parquet, and
+there is no online feature store to assemble one on demand. So /predict echoes a
+feature contract; it does not turn "the current auction house" into a forecast.
+PLAN.md says to state that plainly rather than fake it, and the CEILING lists an
+online feature store as what would make /predict genuinely meaningful. Naming the
+boundary is the honest move, and it reads better than a demo that pretends the
+boundary is not there.
+"""
+source = "PLAN.md"
+anchor = "### OD-3: Serving and deployment target. Recommend FastAPI in the pipeline image."
+
+[[question]]
+id = "m19-q14"
+kind = "recall"
+prompt = """
+OD-4 scopes Terraform to "infrastructure that already exists and no further."
+List what is in scope, and state the one detail PLAN.md calls out as the useful
+payoff of declaring it.
+"""
+rubric = [
+  "Two R2 buckets: snapshots with the 30-day lifecycle rule, backups with no expiry",
+  "The Cloudflare Worker in cloud-trigger/ with its cron trigger",
+  "GitHub Actions repo secrets and the branch protection ruleset",
+  "Payoff: the Blizzard API ToS section 2.r retention requirement becomes a declared lifecycle rule rather than a promise in a doc",
+]
+answer = """
+In scope, and nothing invented to have something to describe:
+
+- Two R2 buckets. The snapshots bucket with its 30-day lifecycle rule, the backups
+  bucket with no expiry.
+- The Cloudflare Worker in cloud-trigger/ and its cron trigger.
+- GitHub Actions repo secrets.
+- The branch protection ruleset.
+
+Roughly 100 lines. The payoff PLAN.md singles out: the Blizzard API ToS section
+2.r retention requirement stops being a promise in a doc and becomes a declared
+lifecycle rule that Terraform enforces and can drift-check. That is the difference
+between "we delete raw data after 30 days" as a sentence and as infrastructure
+that would show up in `terraform plan` if it were ever removed.
+
+The "what would change my mind": if the container work becomes the whole
+deployment story, a docker-compose plus a bootstrap script may carry more weight
+than Terraform describing three cloud resources.
+"""
+source = "PLAN.md"
+anchor = "lines. The useful detail is that the Blizzard API ToS section 2.r retention"
+
+# ── The one blocking coupling ─────────────────────────────────────────────────
+
+[[question]]
+id = "m19-q15"
+kind = "recall"
+prompt = """
+The coupling section lists five items but names exactly one as blocking. Which
+one, and why does it gate the whole MLOps story rather than being one problem
+among five?
+"""
+rubric = [
+  "The .bat wrappers and Windows Task Scheduler ARE the orchestration layer",
+  "It gates containers, serving, IaC, and any claim that this runs in production",
+  "Because it is Windows-only, an MLOps reader cannot run any of the pipeline",
+  "The other four (dashboard hardcoding, mtime model selection, cli.py size, non-injectable clocks) are real but not blocking; some are explicitly 'note it, do not schedule it'",
+]
+answer = """
+The blocking item is that .bat and Task Scheduler are the orchestration layer.
+The daily and hourly pipeline runs are driven by Windows batch wrappers and four
+Task Scheduler tasks. That is not a rough edge next to the real orchestrator, it
+is the orchestrator.
+
+It gates everything downstream: containers, serving, infrastructure as code, and
+any claim that this runs in production. And it is Windows-only, so an MLOps
+reviewer cannot execute a single pipeline run without a Windows box, which is why
+Phase 2 (portability) is the unblock that everything after it depends on.
+
+The other four items are real and not blocking. The dashboard hardcodes realms
+and paths (that is the broken-demo bug), model selection globs by mtime, cli.py is
+4,508 lines, and about 20 modules have non-injectable clocks. PLAN.md explicitly
+says of cli.py's size "note it, do not schedule it," and treats the clocks as
+opportunistic, because the stage classes are already importable without Typer.
+Distinguishing the one coupling that blocks from the four that annoy is the point:
+a portfolio triage that treats all coupling as equally urgent never ships the
+unblock.
+"""
+source = "PLAN.md"
+anchor = "blocking coupling. It gates containers, serving, IaC, and any claim that this"
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m19-q16"
+kind = "mcq"
+prompt = """
+cli.py is 4,508 lines and the coupling section lists it. Yet PLAN.md does not
+treat it as blocking. Why not?
+"""
+answer = """
+Because the stage classes are already importable without Typer, so a serving layer
+or an orchestrator can call them directly without touching the CLI. The size is a
+maintainability note, not a structural gate: nothing downstream is blocked on
+splitting cli.py. PLAN.md says exactly this, "note it, do not schedule it."
+
+Contrast the .bat and Task Scheduler coupling, which is blocking because the
+pipeline literally cannot run off Windows without replacing it. The lesson is that
+line count is not the same as coupling. A large file that other code does not have
+to route through is a cleanup, while a small dependency that everything must route
+through (the scheduler) is the thing that gates the roadmap.
+"""
+options = [
+  { text = "The stage classes are already importable without Typer, so serving and orchestration can call them directly; the size is a note, not a gate", correct = true },
+  { text = "It is scheduled for a refactor in an early phase, so it is tracked separately from coupling", note = "The opposite: PLAN.md says 'note it, do not schedule it.' It is deliberately not scheduled, because nothing is blocked on it." },
+  { text = "A 4,508-line file is within normal range for a Typer CLI, so it is not a concern at all", note = "PLAN.md does list it as a coupling item and a concern; the reason it is not blocking is that the logic is reachable without the CLI, not that the size is fine." },
+  { text = "It will be deleted when the FastAPI serving layer replaces the CLI", note = "Serving is additive (a sibling to the dashboard); the CLI stays. The reason it is non-blocking is importability of the stages, not planned deletion." },
+]
+source = "PLAN.md"
+anchor = "importable without Typer, so serving can call them directly. Note it, do not"

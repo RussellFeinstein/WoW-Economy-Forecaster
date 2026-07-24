@@ -130,11 +130,12 @@ class TestBanks:
         with pytest.raises(BankParseError, match="m01-q01"):
             load_bank("m01", tmp_path)
 
-    def test_authored_ids_are_sorted_and_exclude_unwritten_modules(self):
+    def test_authored_ids_are_sorted_and_within_the_curriculum(self):
         authored = authored_module_ids()
         assert "m06" in authored
         assert list(authored) == sorted(authored)
-        assert len(authored) < 20
+        declared = {m.id for m in load_curriculum().modules}
+        assert set(authored) <= declared
 
 
 class TestPaths:
@@ -144,7 +145,8 @@ class TestPaths:
         assert lab_path("lab-01-purge-embargo") is not None
 
     def test_unwritten_lesson_and_lab_return_none(self):
-        assert lesson_path("m20") is None
+        # m99 is not a real module id, so no lesson page can match it.
+        assert lesson_path("m99") is None
         assert lab_path("lab-99-does-not-exist") is None
 
 

@@ -1,0 +1,827 @@
+# M12: Every bug, by failure class.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+#
+# The taxonomy this module uses, and the names the answers stick to:
+#   1. Silent substitution      a default stands in for missing data
+#   2. Config-to-code drift     a config value stops matching what reads it
+#   3. Documentation drift      a count or claim stops matching the thing counted
+#   4. Contention under load    correct small, wrong at production volume
+#   5. Fixture and clock drift  the test's world diverges from production
+
+# ── The taxonomy ─────────────────────────────────────────────────────────────
+
+[[question]]
+id = "m12-q01"
+kind = "recall"
+prompt = """
+Twenty-two fix entries in this CHANGELOG sort into five recurring classes. Name
+the five, and give one concrete instance of each from this repo.
+"""
+rubric = [
+  "Silent substitution: a default, a zero, or a skip stands in for missing data (event-feature zeroing on an empty wow_events table; the exit-0 lock skip; _classify_error_drift(None) returning NONE)",
+  "Config-to-code drift: a config value stops matching what consumes it (\"30d\" versus \"28d\"; backtest.horizons_days versus features.target_horizons_days; the dashboard realm list)",
+  "Documentation drift: a stated count stops matching the thing it counts (37 features against 40; 21 tables against 23; three different command counts in three documents)",
+  "Contention under load: correct at fixture scale, wrong at production volume (the write lock held across the HTTP fetch; a 4.2 GB WAL; DATE(observed_at) forcing table scans)",
+  "Fixture and clock drift: the test's model of the world diverges from production (the hand-rolled ingestion_snapshots fixture; tests pinned to a wall clock that moved past them)",
+]
+answer = """
+Five classes, and the useful thing about them is that they are diagnostic
+categories rather than descriptive ones. Each implies a different place to look.
+
+**Silent substitution.** Something is missing and the code supplies a value
+instead of an error. `wow_events` empty produced eight all-zero event feature
+columns. A leaked lock produced `exit /b 0`. A missing baseline MAE produced
+`DriftLevel.NONE`, which reads as "no drift" rather than "not measured". The
+output is always plausible, which is what makes it expensive.
+
+**Config-to-code drift.** A value written in one place and consumed in another
+stops agreeing. The horizon strings "30d" and "28d". `config.py` defaults
+diverging from `default.toml`. `backtest.horizons_days = [1, 3]` against
+`target_horizons_days = [1, 7, 28]`. The dashboard's hardcoded realm list against
+`realms.defaults = ["us"]`. None of these throws.
+
+**Documentation drift.** A count in prose stops matching what it counts. The
+README's 37 model features against an actual 40, its 21 tables against an actual
+23, and three documents claiming 39, 40, and 41 CLI commands.
+
+**Contention under load.** Code that is correct on a fixture and wrong on the
+real database. Holding the SQLite write lock across a Blizzard HTTP fetch. A
+5-second `busy_timeout` against batch inserts. A 4.2 GB write-ahead log. A
+`DATE(observed_at)` predicate that cannot use an index.
+
+**Fixture and clock drift.** The test asserts against a world that is not
+production. A hand-rolled `ingestion_snapshots` fixture with invented columns let
+a query that crashes on every real database pass its tests for four minor
+versions. Tests pinned to relative dates started failing when the calendar moved,
+and several neighbors had been passing vacuously on empty result sets the whole
+time.
+
+The classes are not disjoint and are not meant to be. Their value is as a search
+strategy: given one instance, go looking for the others in the same class.
+"""
+see_also = ["CHANGELOG.md", "PLAN.md"]
+
+[[question]]
+id = "m12-q02"
+kind = "recall"
+prompt = """
+`build_feature_datasets()` refuses to run when `wow_events` is empty rather than
+building a dataset with zeroed event columns. State the general argument for
+raising over substituting, and say what specifically would have gone wrong here.
+"""
+rubric = [
+  "A zero is a legal value for these columns, so the artifact is indistinguishable from a valid one",
+  "The failure surfaces far downstream (a model with no event signal, then forecasts, then recommendations) with nothing pointing back at the cause",
+  "Raising fails at the one place that knows why, and the message names the fix (run build-events first)",
+  "The cost of raising is a stopped pipeline; the cost of substituting is a plausible wrong answer that ships",
+]
+answer = """
+The argument turns on whether the substituted value is distinguishable from a
+real one. Zero is a legal value for every one of the eight event feature columns:
+no event nearby genuinely means `event_days_to_next` is null and the impact
+columns are zero. So a dataset built with no events seeded is byte-for-byte the
+kind of dataset you would get in a quiet week. Nothing downstream can tell them
+apart, and nothing downstream is even looking.
+
+Follow the blast radius. The Parquet is valid. Training succeeds. The model
+learns that event features carry no signal, which is true of the data it was
+shown and false of the world. Forecasts are produced. `event_boost` contributes
+0.15 of every recommendation score and now contributes nothing. A CSV lands in
+`data/outputs/recommendations/` on schedule. Every step reports success. The
+person reading the CSV has no path back to `build-events` from any of it.
+
+Raising costs one stopped pipeline run and one error message, and the error
+message can name the fix because the code that raises is the code that knows what
+is missing. That asymmetry is the whole rule: the cost of failing loudly is
+bounded and immediate, the cost of substituting is unbounded and deferred.
+
+The same reasoning appears in `cloud_sync.select_objects_to_ingest`, where a run
+capped at `max_objects_per_run` reports the count it dropped rather than
+returning a short list that looks complete. Different subsystem, identical
+principle.
+"""
+source = "wow_forecaster/features/dataset_builder.py"
+anchor = "and silently produce a degraded artifact.  Fail loudly instead."
+see_also = ["CHANGELOG.md"]
+
+[[question]]
+id = "m12-q03"
+kind = "mcq"
+prompt = """
+`_classify_error_drift(None)` returns `DriftLevel.NONE`. `_classify_health(None)`
+returns `"unknown"`. Both are reached when `mae_ratio` could not be computed.
+Which reading is correct, and why does it matter which one an operator sees?
+"""
+answer = """
+`health.py` is right and `drift.py` is wrong, and the two files disagreeing is
+what makes it visible.
+
+`NONE` and `unknown` are different propositions. `NONE` says the check ran and
+found nothing. `unknown` says the check could not run. An operator scanning a
+drift report sees a column of `none` and concludes the model is fine. The actual
+state is that no baseline MAE existed, so nothing was compared.
+
+This is not hypothetical here. `baseline_mae` comes from `AVG(abs_error)` over
+`backtest_fold_results` with no `model_name` filter and no staleness check, so it
+is a pooled blend of four baselines from whichever backtest ran last. And
+`backtest.horizons_days` is `[1, 3]` while forecasts run at 1, 7, and 28, so the
+7d and 28d ratios can never be computed at all. Two of the three production
+horizons permanently report `NONE`, meaning "no drift", when what they mean is
+"never measured".
+
+The repo already states the right principle in another subsystem: the cloud
+capture gap guard keeps its floor at 20 distinct hours on purpose, because a
+floor the failure mode can satisfy would hide the failure. Making `drift.py`
+match `health.py` is applying a rule this project already wrote down.
+"""
+options = [
+  { text = "unknown is correct: NONE conflates \"measured and clean\" with \"could not measure\", and the operator reads the first when the second is true", correct = true },
+  { text = "NONE is correct: with no baseline there is no evidence of drift, and reporting a non-value would be inventing a signal", note = "Absence of evidence is being reported as evidence of absence. \"unknown\" is not a non-value, it is the accurate one: the check has four outcomes (ok, degraded, critical, could-not-run) and collapsing the fourth into the first is what hides the failure." },
+  { text = "Both are defensible: the enum simply has no unknown member, so NONE is the closest available value", note = "The enum shape is the thing to change, not the reason to accept the wrong answer. Reaching for the closest available member when none of them says what you mean is how a type system talks you into a lie." },
+  { text = "It only matters for the 1d horizon, since 7d and 28d have no backtest rows anyway", note = "Backwards. The horizons with no backtest rows are exactly the ones that always take this branch, so they are where the wrong label does all of its damage." },
+]
+source = "wow_forecaster/monitoring/drift.py"
+anchor = "mae_ratio:  live_mae / baseline_mae.  None → NONE (can't detect)."
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m12-q04"
+kind = "predict"
+prompt = """
+It is 00:10 UTC. GitHub dropped every firing before 06:00 yesterday, so the
+bucket's earliest object from yesterday is stamped 06:00Z. Trailing 24 hours:
+14 distinct capture hours. Guard floor: 20.
+
+`list_recent_keys()` lists three day-prefixes and `evaluate_gap_guard()` scores
+the result. What happens, and what would have happened under the two-prefix
+listing this replaced?
+"""
+answer = """
+Today: the guard trips. `(False, "only 14 distinct hours covered in the trailing
+24h ...")`, and `cloud_fetch` exits 3.
+
+Before issue #68 it passed. The guard has a bootstrap escape hatch: if no listed
+object is older than the 24-hour cutoff, low coverage is treated as expected
+(first day of operation, or a resume after a long outage whose failed runs
+already alerted). With only today and yesterday listed at 00:10Z, the cutoff sits
+at yesterday 00:10 and the earliest listed object is yesterday 06:00, so `older`
+counted zero and the bootstrap rule fired on a day that genuinely had gaps. The
+2026-07-22 00:10Z run passed on a day whose two previous runs had failed.
+
+The fix is not in the guard logic at all. It is in the listing: three day-prefixes
+mean objects older than the cutoff are always visible, so `older` is only zero
+when the history is genuinely empty. That is the shape worth remembering. The
+guard's rule was right; it was being fed a window that could not see the evidence
+it depended on. When a check passes for a reason unrelated to the thing it checks,
+look at the input range before you look at the predicate.
+"""
+options = [
+  { text = "It trips: 14 < 20 and the third day-prefix supplies objects older than the cutoff, so the bootstrap rule cannot fire", correct = true },
+  { text = "It passes under the bootstrap rule, which is why #68 widened the listing", note = "That was the old behavior and it is what #68 fixed. With three prefixes the day-before-yesterday objects are all older than the cutoff, so `older` is non-zero and the bootstrap branch is unreachable." },
+  { text = "It passes, because the guard counts objects rather than hours and two triggers an hour clear the floor", note = "The metric changed to distinct UTC hours in v2.8.0 for exactly this reason. Counting objects let a gappy day clear the floor on duplicate captures within the hours it did cover." },
+  { text = "It never gets there: the run already failed the 50,000-record sanity floor", note = "Different check on different data. The sanity floor guards the freshly fetched snapshot's record count against a Blizzard brownout. The gap guard runs after a successful upload and looks at bucket history." },
+]
+source = "wow_forecaster/ingestion/cloud_fetch.py"
+anchor = "count read 0 in that window and the bootstrap rule fired on days"
+
+# ── Config-to-code drift ─────────────────────────────────────────────────────
+
+[[question]]
+id = "m12-q05"
+kind = "recall"
+prompt = """
+Why is a config value that no longer matches the code reading it a correctness
+bug rather than untidiness? Give the argument, then two instances from this repo
+that land in different places.
+"""
+rubric = [
+  "Config is an assertion about what the code does, and a wrong assertion silently misleads every reader including the author",
+  "It produces no error: both sides are individually valid, so nothing throws and no test fails",
+  "\"30d\" against a code path computing 28d is a wrong number in output, not a wrong label",
+  "backtest.horizons_days = [1, 3] against target_horizons_days = [1, 7, 28] made the stated acceptance bar unmeasurable, and the tell sat in config in plain sight",
+]
+answer = """
+Config is a claim about behavior. When the claim is wrong, everyone who reads it
+to decide what the system does (including the person who wrote it, six months
+later) reasons from a false premise, and nothing anywhere raises. Both halves are
+individually well-formed. There is no type error to catch, no exception to log,
+no test that fails. The mismatch lives only in the relationship between two
+files, which is precisely the thing no tool in a default Python project checks.
+
+Two instances that fail in different ways:
+
+The v1.3.0 horizon mismatch, "30d" against a code path computing 28 days, is a
+wrong number reaching output. Anything keyed on that string labels a 28-day
+forecast as a 30-day one, and downstream arithmetic done from the label is off by
+two days.
+
+The horizon-list mismatch is worse because it disables a check rather than
+corrupting a value. `backtest.horizons_days = [1, 3]` and
+`features.target_horizons_days = [1, 7, 28]` share only the value 1. Two of the
+three production horizons had no baseline to be compared against, so the
+acceptance bar stated out loud in `backtest/models.py`, that a model must beat
+every baseline, was unmeasurable from the day both lines were written. No output
+was wrong. A standard simply went unenforced, invisibly, for months.
+
+The habit that catches both: when two files must agree, something has to assert
+it. `cloud_sync.py` does the cheap version, a comment saying `LOCK_STALE_MINUTES`
+must match `STALE_MINUTES` in the bat file. A comment is better than nothing and
+strictly weaker than a test.
+"""
+source = "CHANGELOG.md"
+anchor = "Horizon mismatch (\"30d\" vs \"28d\"), dead Literal entries, stale assertions"
+see_also = ["LESSONS.md", "config/default.toml"]
+
+[[question]]
+id = "m12-q06"
+kind = "mcq"
+prompt = """
+`dashboard/app.py` sets `_DEFAULT_REALMS = ["area-52", "illidan", "stormrage",
+"tichondrius"]` under a comment saying these mirror `config/default.toml`.
+`config/default.toml` sets `defaults = ["us"]`. What is the actual consequence?
+"""
+answer = """
+Every tab shows "No data available", because no row in the database carries any
+of those four realm slugs. The commodity auction house has been region-wide since
+patch 9.2.7, the pipeline ingests under `us`, and the dashboard offers a picker
+containing four realms that will never have data.
+
+Two details make this the sharpest instance of the class in the repo. First, the
+comment is the bug: it says these values mirror `config/default.toml`, and at
+some point they did, which is exactly why nobody re-checked them. A comment
+asserting a relationship is a liability the moment the relationship is not
+enforced. Second, this is the demo. It is a public repo, the dashboard is what a
+reader clicks first, and it has been showing an empty product to anyone who tried
+it.
+
+The fix is not to update the list. It is to read `config.realms.defaults`, so the
+relationship the comment describes becomes one the code enforces.
+"""
+options = [
+  { text = "Every dashboard tab shows \"No data available\", because the pipeline stores observations under the realm slug \"us\" and none of the four hardcoded realms ever has rows", correct = true },
+  { text = "The dashboard falls back to the config value when a selected realm returns nothing, so it works with an extra click", note = "There is no fallback. The realm selection is passed straight into the loaders, and an empty result renders as the empty state. The hardcoded list is the only source of options." },
+  { text = "It only affects per-realm views; the commodity tabs read region-wide data and are unaffected", note = "The commodity data is what is stored under \"us\". Every loader filters by the selected realm slug, so the region-wide data is precisely what the four dead slugs fail to match." },
+  { text = "It is cosmetic: the underlying data is correct, so any reader who edits the list sees the real product", note = "Requiring a reader to edit source before the demo works means the demo does not work. On a public repo whose purpose is to be looked at, an empty first screen is the product." },
+]
+source = "dashboard/app.py"
+anchor = "# These mirror config/default.toml.  Override via the sidebar or"
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m12-q07"
+kind = "find"
+prompt = """
+Find a live documentation drift in this repo without being told where it is.
+Verify it against code rather than against another document, and say what number
+is right and how you established it.
+"""
+rubric = [
+  "Names a specific claim and its location, for example the README's model feature count or its SQLite table count",
+  "Verified against code: len(TRAINING_FEATURE_COLS) in ml/feature_selector.py, or counting CREATE TABLE statements in db/schema.py",
+  "Notes that two documents agreeing is not verification, since both can be stale from the same edit",
+  "States the corrected number and where else the same number appears, since a count usually drifts in more than one file",
+]
+answer = """
+Two that were live when this module was written, and the method matters more than
+the answers.
+
+The README says the model uses 37 input features, in the architecture tree and
+again in the feature-set section. `len(TRAINING_FEATURE_COLS)` in
+`ml/feature_selector.py` is 40. The module itself states no count, which is why
+it never went stale: it holds the list and nothing else, so counting the list is
+the only way to answer and the answer cannot rot.
+
+The README describes the schema as 21 tables in two places. `db/schema.py`
+contains 23 `CREATE TABLE IF NOT EXISTS` statements. `CLAUDE.md` also says 21,
+and that agreement is worth nothing: both numbers were correct before migrations
+0008 and 0009, and both were copied forward without being recounted.
+
+That is the point of "verify against code". The v2.11.0 fix entry reconciled
+three documents that claimed 39, 40, and 41 CLI commands. Three sources, three
+answers, one of which happened to be right, and no amount of cross-reading them
+would have said which. The only authority is the thing being counted.
+
+The durable fix is to stop writing the number by hand. Either derive it (a test
+asserting the README's stated count equals `len(TRAINING_FEATURE_COLS)`) or stop
+stating it. This track's own citation guard is that idea applied to quotations:
+every anchor is checked against the file on every CI run, so a study guide
+describing last month's code turns the build red.
+"""
+source = "wow_forecaster/ml/feature_selector.py"
+anchor = "- target_price_* : Forward-looking labels — must never be model features."
+see_also = ["PLAN.md", "CHANGELOG.md"]
+
+[[question]]
+id = "m12-q08"
+kind = "recall"
+prompt = """
+Documentation drift is the class with the lowest stakes per instance and the
+highest recurrence. Say why it recurs, and name the three general remedies in
+order of strength.
+"""
+rubric = [
+  "It recurs because the number lives in prose that no execution path touches, so nothing contradicts it",
+  "Weakest remedy: discipline (re-read the docs on every commit), which is what a documentation-sync rule already asks for and it still drifted",
+  "Middle: derive the number rather than write it, so there is one source",
+  "Strongest: assert it in a test that fails on drift, which is what this learning track's anchor guard does for quotations",
+]
+answer = """
+It recurs because nothing executes prose. A wrong count in a README has no
+runtime, no type, and no caller. The only mechanism that can contradict it is a
+human recounting by hand, and hand-recounting is exactly the work everyone skips
+when the change was somewhere else.
+
+Three remedies, in increasing strength:
+
+**Discipline.** Re-read every affected document on every commit. This repo
+already mandates that as a blocking rule, and four counts still drifted, so the
+honest reading is that discipline is necessary and insufficient. It fails at
+precisely the moment it is needed: when the commit is about something else.
+
+**Derivation.** Do not write the number. Generate the schema list from
+`sqlite_master`, print `len(TRAINING_FEATURE_COLS)` in the docs build, link to
+the source of truth instead of quoting it. One source, so nothing can disagree.
+
+**Assertion.** Write a test that fails when the document and the code disagree.
+Strongest because it moves the failure from "someone eventually notices" to
+"CI is red on the commit that caused it". The learning track does this for
+quotations rather than counts: every question cites a path plus a verbatim
+single-line anchor, and `check_content()` proves the anchor still exists. Editing
+a cited line turns the build red until the question is updated, which is the
+whole reason a hand-authored bank is worth keeping.
+
+The stakes look low per instance. They are not low in aggregate: on a public
+repo, wrong counts are the first thing a careful reader can check and the
+cheapest possible signal that nothing else has been checked either.
+"""
+source = "learning/README.md"
+anchor = "A line number is wrong the moment a line is inserted above it."
+see_also = ["CHANGELOG.md"]
+
+# ── Contention under load ────────────────────────────────────────────────────
+
+[[question]]
+id = "m12-q09"
+kind = "predict"
+prompt = """
+Rewind to v2.3.2. The write-ahead log has grown to 4.2 GB with no checkpoint
+step anywhere in the pipeline, `busy_timeout_ms` is hardcoded at 5 seconds, and
+`IngestStage` opens one connection and holds it across the Blizzard HTTP fetch.
+
+The hourly run starts. What happens, and which of these three is the root cause?
+"""
+answer = """
+The run fails with `database is locked`, and every concurrent reader (the health
+check, the dashboard, a manual CLI query) fails with it.
+
+All three contribute and none is sufficient alone, which is the general shape of
+contention bugs. The single connection held across the fetch means the write lock
+is held for the duration of a network call, seconds to tens of seconds of pure
+waiting on a socket, while holding a resource nothing else can take. The 5-second
+`busy_timeout` means any other writer gives up well inside that window. And the
+4.2 GB WAL means every operation that needs to walk the log to find current page
+versions pays a cost proportional to a log that nothing has ever truncated, so
+even operations that would have fit inside 5 seconds no longer do.
+
+The fixes landed together in v2.3.3 and v2.3.4 and each targets a different one:
+the three-phase connection pattern (short read, no connection during the fetch,
+short write), `busy_timeout_ms` raised to 30 seconds and made config-driven, and
+a `PRAGMA wal_checkpoint(TRUNCATE)` step in the orchestrator.
+
+The class-level lesson: every one of these was correct on a fixture database. A
+5-second timeout is generous against a table with 100 rows. A WAL never
+checkpointed is invisible until it is gigabytes. Holding a connection across a
+network call is free when the fetch is a stubbed dict. Contention bugs are
+defined by the fact that the test that would catch them is the one nobody writes,
+because writing it means building production-scale state.
+"""
+options = [
+  { text = "SQLite raises \"database is locked\": all three are contributing causes, and the fixes (three-phase connections, a 30-second timeout, a WAL checkpoint step) each address a different one", correct = true },
+  { text = "Only the WAL matters: with a checkpoint step the other two are harmless", note = "A checkpoint bounds the log, it does not release a write lock held across a network fetch. Any concurrent writer would still time out waiting on the ingest connection, checkpoint or not." },
+  { text = "Only the held connection matters: SQLite's WAL mode lets readers proceed during a write, so log size is irrelevant", note = "WAL mode does let readers proceed, which is why this stayed survivable for a while. It does not make an unbounded log free: the fix entry records 4.2 GB causing all DB operations to exceed the lock timeout, readers included." },
+  { text = "Nothing fails: SQLite queues writers and the busy timeout only affects explicit BEGIN IMMEDIATE transactions", note = "There is no queue. A blocked writer retries until busy_timeout expires and then raises OperationalError, and the timeout applies to any statement that needs the lock, not only explicit transactions." },
+]
+source = "CHANGELOG.md"
+anchor = "WAL file growth unbounded (no checkpoint logic existed); 4.2 GB WAL was causing all DB operations to exceed lock timeout"
+
+[[question]]
+id = "m12-q10"
+kind = "mcq"
+prompt = """
+`IngestStage._execute()` is split into three phases: a short read connection for
+the item foreign-key guard, no connection at all during the HTTP fetch, then a
+short write connection for the inserts. What is the load-bearing part of that
+design?
+"""
+answer = """
+Phase 2. The point is not that there are three phases, it is that the middle one
+holds nothing.
+
+Lock hold time is the quantity being minimized, and the fetch is the longest
+single operation in the stage by an order of magnitude. A Blizzard commodities
+call returns roughly 314,000 records over the network; the inserts around it are
+local and fast. Holding the write lock across the network call means the pipeline
+is unavailable to every other process for a duration that depends on someone
+else's server, which is not a duration you control or can bound.
+
+Splitting a connection in two also has a real cost worth naming: the stage is no
+longer one transaction. A crash between phase 1 and phase 3 leaves the run
+metadata written and no observations, which is why `IngestStage` pre-persists
+`RunMetadata` to get a `run_id` and why failed objects are never recorded as
+ingested. Atomicity was traded for availability deliberately, and the trade is
+right here because a re-run is cheap and a wedged database is not.
+"""
+options = [
+  { text = "That no connection is held during the network call, so lock hold time no longer depends on Blizzard's response time", correct = true },
+  { text = "That the read and write connections are separate, so SQLite can grant a shared read lock and an exclusive write lock independently", note = "Separating them is how phase 2 becomes possible, but it is not the win. Two short connections held back to back would hold the lock nearly as long as one; the fetch sitting between them is what changes the duration." },
+  { text = "That the foreign-key guard runs first, so an unknown item id fails the run before any network call is made", note = "The guard set is loaded first for convenience, and unknown items are skipped rather than failing the run. It is not why the phases exist." },
+  { text = "That three short connections each get their own busy_timeout, tripling the effective wait before an OperationalError", note = "Timeouts do not accumulate across connections; each statement waits up to busy_timeout_ms on its own. The fix was raising that value from 5s to 30s, separately from the phase split." },
+]
+source = "wow_forecaster/pipeline/ingest.py"
+anchor = "# ── Phase 2: Network I/O — no DB connection held"
+see_also = ["CHANGELOG.md"]
+
+[[question]]
+id = "m12-q11"
+kind = "predict"
+prompt = """
+Two coverage queries over `market_observations_normalized`, which has an index on
+`(realm_slug, is_outlier, observed_at)`:
+
+  A:  WHERE realm_slug = ? AND is_outlier = 0 AND DATE(observed_at) >= ?
+  B:  WHERE realm_slug = ? AND is_outlier = 0 AND observed_at >= ?
+      -- with the bind value "2026-06-24", a bare date string
+
+Which one can use the index, and do they return the same rows?
+"""
+answer = """
+B uses the index. A cannot. They return the same rows.
+
+An index stores `observed_at` values in sorted order. A range query can be
+answered by seeking to the first qualifying entry and walking forward. Wrapping
+the column in `DATE()` destroys that: the engine has no way to know that
+`DATE(x) >= "2026-06-24"` implies anything about the ordering of `x`, so it
+evaluates the function on every row for that realm. The general term is
+sargability, and the rule is that the indexed column must appear bare on one side
+of the comparison.
+
+The row sets match because `observed_at` is zero-padded ISO-8601 text. The
+10-character date prefix dominates any lexicographic comparison, so the bare
+string `"2026-06-24"` sorts after every timestamp on earlier dates and before
+every timestamp on that date. That equivalence is what makes the rewrite safe,
+and it is worth stating out loud in a comment, because a reader who does not
+believe it will assume the two forms differ at midnight.
+
+The same rewrite appears twice in this repo for the same reason: the health
+check's coverage query (issue #59) and both rollup UPSERT predicates (issue #65).
+The rollup case is the one that shows the class clearly. It was cheap on a
+freshly rebuilt table and would have become the hottest scan in the codebase as
+the table regrew toward its 30-day steady state. Correct at small scale, wrong at
+production volume, and the code did not change in between.
+"""
+options = [
+  { text = "B uses the index, A forces a scan, and both return identical rows because zero-padded ISO-8601 text sorts chronologically", correct = true },
+  { text = "Both use the index: SQLite recognizes DATE() on an indexed column and rewrites the predicate internally", note = "No such rewrite exists. SQLite can use an index for an expression only when a matching expression index was declared, and none is here. Any function wrapping the column makes the predicate non-sargable." },
+  { text = "B uses the index but returns extra rows, because timestamps on the cutoff date sort before the bare date string", note = "Backwards. \"2026-06-24\" is a 10-character prefix of \"2026-06-24T00:00:00\", and a prefix sorts before any longer string sharing it, so every timestamp on that date is included. The row sets are identical." },
+  { text = "Neither uses the index, because the leading columns realm_slug and is_outlier must both be ranges for a composite index to apply", note = "The opposite is true. A composite index is served by equality on the leading columns followed by a range on the last one, which is exactly this shape." },
+]
+source = "wow_forecaster/reporting/health.py"
+anchor = "# The predicate compares the raw column, not DATE(observed_at): a bare"
+see_also = ["CHANGELOG.md"]
+
+# ── Fixture and clock drift ──────────────────────────────────────────────────
+
+[[question]]
+id = "m12-q12"
+kind = "recall"
+prompt = """
+`check-data-health` crashed with `OperationalError` against every real database
+from v2.1.0 to v2.5.0 while its tests passed the whole time. Explain how, and
+name the other two shapes this class takes in the CHANGELOG.
+"""
+rubric = [
+  "The last-ingest query read ingestion_snapshots columns (realm_slug, ingested_at) that the production table never had",
+  "The tests hand-rolled their fixture table with the invented shape, so the query was valid against the fixture and invalid against production",
+  "Fixed by building the fixture with apply_schema(), so the fixture cannot diverge from the real schema again",
+  "Other shapes: tests pinned to the wall clock that broke when the calendar passed their fixed dates, and tests passing vacuously on empty result sets",
+]
+answer = """
+The query named `realm_slug` and `ingested_at` on `ingestion_snapshots`. The
+production table has never had either column. The tests created their own
+`ingestion_snapshots` with hand-written DDL that included both, so the query was
+valid against the fixture and invalid against anything real. Green suite, broken
+command, for four minor versions.
+
+The fix is the interesting part: the fixture now calls `apply_schema()`, the same
+function production uses. That does not make the tests better at finding bugs. It
+removes an entire category of them by construction, because there is no longer a
+second definition of the schema that can drift from the first. Whenever a test
+restates something production defines, the restatement is a fork, and forks
+diverge.
+
+Two other shapes of the same class:
+
+**Clock drift.** Item-forecast tests were written against fixture prices at fixed
+dates and an implicit `today`. They passed until the calendar moved past those
+dates, then eight failed at once. The fix threaded an optional `run_date` anchor
+through `_generate_item_forecasts()` and pinned it in the tests. Same pattern as
+the pruner boundary test that flaked by time of day, and the health coverage test
+that reported a phantom day-zero gap whenever the local date and the UTC date
+disagreed, which is every evening on a US machine and constantly on a CI runner.
+
+**Vacuous passes.** The same v2.4.6 fix note records that several neighboring
+tests "had been passing vacuously on empty query results". Their assertions never
+ran, because the query returned nothing and the loop containing the assertion had
+no iterations. A test that asserts nothing is worse than a missing test: it
+occupies the slot where a real one would go and reports success.
+
+The catch for all three: a test failing when you deliberately break the code is
+the only evidence it tests anything. That is the same argument the purge lab
+makes in M06, where an assertion on `obs_date` passes today and would greenlight
+the exact bug being fixed.
+"""
+source = "tests/test_reporting/test_health.py"
+anchor = "invented an ingestion_snapshots shape (realm_slug + ingested_at columns)"
+see_also = ["CHANGELOG.md"]
+
+[[question]]
+id = "m12-q13"
+kind = "mcq"
+prompt = """
+Generalize the hand-rolled-fixture bug. Which rule would have caught it, and
+would keep catching its relatives?
+"""
+answer = """
+Build fixtures from the production definition. Anything a test restates about
+production is a second source of truth, and second sources drift.
+
+Here the drift was a table shape, and it hid a query that could never have run.
+The same rule covers a fixture Parquet whose columns were typed by hand instead
+of coming from the feature registry, a stub client whose response shape was
+copied from a doc rather than a recorded payload, and a config dict assembled in
+a test instead of loaded through `load_config()`. In every case the test proves
+the code works against the test's beliefs, which is not the claim anyone wanted.
+
+Note what the rule does not say. It does not say use production data, and it does
+not say avoid fixtures. Small hand-built fixture rows are fine and this repo uses
+them everywhere. The line is between the data (invent freely) and the schema,
+contract, or config that data lives inside (take from production, always).
+"""
+options = [
+  { text = "Fixtures must be built from the production definition (apply_schema(), the real config loader, the real registry), so a test's model of the schema cannot fork from the real one", correct = true },
+  { text = "Health checks should be integration-tested against a real database file rather than an in-memory one", note = "It would have caught this specific bug and it buys much less than it costs: slower tests, fixture files to maintain, and no protection at all for the next place a test restates production. apply_schema() into :memory: gets the real shape at in-memory speed." },
+  { text = "Any query naming a column should be paired with a test asserting that column exists", note = "This is the same restatement problem one level down: now the column list is written by hand in a third place. Deriving the fixture from the schema makes such an assertion unnecessary." },
+  { text = "The bug was that the tests did not use foreign keys, which would have rejected the invented table", note = "Foreign keys constrain values between tables, not column names within one. The fixture's invented columns are legal DDL; nothing about referential integrity would object. The fixture in question turns foreign keys off on purpose so helpers can insert minimal rows." },
+]
+source = "wow_forecaster/reporting/health.py"
+anchor = "# (ingestion_snapshots has neither a realm_slug nor an ingested_at column;"
+
+# ── Where the classes meet ───────────────────────────────────────────────────
+
+[[question]]
+id = "m12-q14"
+kind = "find"
+prompt = """
+Somewhere in this repo a Python constant is documented as needing to match a
+value defined in a Windows batch file. Find it, say what breaks if they drift,
+and say what would catch the drift.
+"""
+rubric = [
+  "LOCK_STALE_MINUTES in wow_forecaster/ingestion/cloud_sync.py must match STALE_MINUTES in scripts/run_hourly.bat (both 180)",
+  "Both decide when data/db/.hourly.lock counts as leaked and can be taken over",
+  "If the Python value is lower, a catch-up run can take over a lock a live hourly run still holds; if higher, a leaked lock blocks catch-up for longer than the hourly path tolerates",
+  "Nothing enforces it today: the coupling is a comment, and the cheap fix is a test that reads the constant out of the bat file and asserts equality",
+]
+answer = """
+`LOCK_STALE_MINUTES = 180` in `cloud_sync.py`, carrying a comment that it must
+match `STALE_MINUTES` in `scripts/run_hourly.bat`. Both govern the same file,
+`data/db/.hourly.lock`, and both answer the same question: how old does this lock
+have to be before we conclude the process holding it is dead.
+
+Drift in either direction is a real failure. Set the Python value lower and a
+`sync-snapshots` run can take over a lock that a live hourly run still holds,
+producing two concurrent writers on a database whose busy timeout is 30 seconds
+against bulk inserts that exceed it. Set it higher and a genuinely leaked lock
+blocks catch-up for longer than the hourly path already tolerates, on the exact
+recovery path that exists because hours were missed.
+
+Note that the two paths deliberately behave differently once the lock is fresh:
+the bat skips with exit 0 (a skipped hourly run costs one sample), while
+`sync_stage` waits and then fails loudly (a skipped catch-up silently loses a
+whole night, and exit-0 skips are what hid the 96-day outage). Same threshold,
+opposite responses, both correct for their cost structure. The threshold is the
+part that must not drift; the response is the part that must not be copied.
+
+Nothing enforces the match today. A test that reads `STALE_MINUTES` out of the
+bat file with a regex and asserts it equals `LOCK_STALE_MINUTES` is a handful of
+lines and turns a comment into a constraint. `tests/test_scripts/` already runs
+the bat files on Windows, so the machinery exists.
+"""
+source = "wow_forecaster/ingestion/cloud_sync.py"
+anchor = "# Must match STALE_MINUTES in scripts/run_hourly.bat. A lock older than this is"
+
+[[question]]
+id = "m12-q15"
+kind = "recall"
+prompt = """
+`run_hourly.bat` biases toward taking over a lock whenever the age check does not
+prove it fresh, including when the PowerShell age check itself fails. Argue for
+that bias, then name the general rule about which way an uncertain guard should
+fall.
+"""
+rubric = [
+  "The two outcomes are not symmetric: a wrong takeover costs a rare double run, a wrong skip costs unbounded silent downtime",
+  "The double-run failure is already covered (SQLite busy timeout at 30 seconds)",
+  "The skip failure has no coverage: a skip that exits 0 is invisible at every level anyone monitors, which is how one crashed run became 96 days",
+  "General rule: a guard that cannot determine its condition should fail toward the recoverable outcome, and toward the loud one",
+]
+answer = """
+The two errors have wildly different costs and only one of them has a backstop.
+
+A wrong takeover means two pipeline processes write concurrently. SQLite's busy
+timeout, raised to 30 seconds for exactly this class of contention, absorbs it.
+Worst case a run is slow or one errors and the next hour recovers, because the
+job is idempotent hourly capture.
+
+A wrong skip means the pipeline does nothing and reports success. There is no
+backstop, because the failure mode is the absence of an event, and nothing was
+watching for absence. That is not a hypothetical trade: a leaked lock on
+2026-04-15 produced 1,933 consecutive green scheduled-task results while
+ingestion was dead, and three months of hourly market data is permanently
+unrecoverable because Blizzard's commodities endpoint serves only the current
+snapshot.
+
+The rule: a guard that cannot establish its own precondition should fail toward
+the recoverable outcome, and toward the loud one. "I could not read the lock's
+age" is not evidence the lock is live, and treating it as evidence is
+skip-on-uncertainty, which is what turned one crash into a season.
+
+The same bias, applied consistently, appears three more times in this repo:
+`run_healthcheck.bat` raises its alert window when the once-per-24h suppression
+flag cannot be verified, `sync_stage` fails loudly rather than skipping when the
+lock stays held, and the cloud gap guard keeps a floor the failure mode cannot
+satisfy. Recognizing it as one rule rather than four hardening tweaks is the
+transferable part.
+"""
+source = "scripts/run_hourly.bat"
+anchor = "already caused a 96-day silent outage; a rare double run is"
+see_also = ["docs/postmortem-2026-04-lock-outage.md"]
+
+[[question]]
+id = "m12-q16"
+kind = "mcq"
+prompt = """
+Issue #61: the hourly rollup step anchored on the machine's local date instead of
+the UTC date, while every observation carries a UTC timestamp. An evening run
+wrote 237,983 UTC-stamped rows and zero rollup rows. Which class is it?
+"""
+answer = """
+It is a silent substitution, with the substituted value being the wrong calendar.
+The local date is a legal, well-formed date. It just is not the date the data is
+stamped in, so the UPSERT matched nothing and wrote nothing, and the run reported
+success.
+
+That last part is what places it. Nothing failed. The rollup step ran, executed
+its statement, affected zero rows, and returned. The tell was only visible by
+comparing two numbers nobody was comparing: rows ingested against rollup rows
+written.
+
+Two things make the diagnosis worth practicing. First, a timezone bug is usually
+filed as an off-by-one, and off-by-one is a description, not a class: it says
+what the wrong value was, not why the wrongness survived to production. The class
+is the survival mechanism. Second, this one also has fixture-drift in it. Tests
+passed because they ran where the local date and the UTC date agreed, and the fix
+made the orchestrator's clock injectable so the incident can be pinned in any
+timezone. The v2.4.8 health-coverage fix and the #68 gap-guard blind spot are the
+same story at different seams.
+
+Classes are a search strategy, not a partition. When an instance sits in two, it
+usually means two remedies apply, and here both did.
+"""
+options = [
+  { text = "Silent substitution: a legal but wrong value (the local calendar date) stood in for the right one, the UPSERT matched nothing, and the run reported success", correct = true },
+  { text = "Config-to-code drift: the timezone the pipeline assumes is a configuration choice that stopped matching the data", note = "There is no config key for it. Nothing declares the anchor timezone anywhere, which is part of the problem, but a mismatch between two declared values is not what happened. The wrong value came from calling date.today()." },
+  { text = "Contention under load: it only appeared on evening runs, when the local date and the UTC date diverge", note = "Time of day is not load. Nothing about concurrency, volume, or resource pressure is involved: the same run at 22:43 fails on an empty database exactly as it does on a full one." },
+  { text = "Documentation drift: CLAUDE.md described the rollup step as UTC-anchored while the code used the local date", note = "Appealing, but backwards in time. The UTC-anchor description was written as part of the v2.7.5 fix. Before it, no document claimed the behavior the code failed to have." },
+]
+source = "CHANGELOG.md"
+anchor = "found during the #1 restore when a 22:43 EDT run wrote 237,983 UTC-stamped rows but zero rollup rows"
+see_also = ["docs/postmortem-2026-04-lock-outage.md"]
+
+[[question]]
+id = "m12-q17"
+kind = "recall"
+prompt = """
+One property unites every instance in all five classes. Name it, then say which
+of the five have an automated guard in this repo today and which do not.
+"""
+rubric = [
+  "The property: each failure produces a plausible output instead of an error, so no signal is generated at the moment of failure",
+  "Guarded today: contention (query-plan tests pin index seek terms, equivalence tests pin rollup rows) and parts of fixture drift (apply_schema fixtures, injectable clocks)",
+  "Unguarded today: config-to-code agreement across files, which is enforced only by comments",
+  "Unguarded today: documentation counts, apart from the learning track's anchor guard on quotations",
+  "Silent substitution is guarded case by case (the build-datasets preflight, the gap guard floor) with no general mechanism, and drift.py still returns NONE for could-not-measure",
+]
+answer = """
+Every one of them produces a plausible output rather than an error. That is the
+whole family resemblance. A zeroed event column is a valid column. A leaked lock
+skip is a successful exit. A stale README count is readable prose. A five-second
+timeout is a working default until the table grows. A hand-rolled fixture is a
+passing test. Nothing in any of these generates a signal at the moment it goes
+wrong, which is why they are found by audit rather than by alert, sometimes
+months later.
+
+The corollary is the practical one: these bugs are found by comparing two things
+that should agree, not by reading one thing carefully. Config against code. Doc
+against code. Test fixture against production schema. Drift's None-handling
+against health's. Rows ingested against rollup rows written. Every entry in this
+module was found that way.
+
+Where the repo stands:
+
+**Guarded.** Contention has real coverage now: `tests/test_db/test_migration_0009.py`
+pins `EXPLAIN QUERY PLAN` seek terms so a rewritten predicate that silently loses
+its index fails CI, and the rollup rewrite carries equivalence tests against the
+legacy form on edge timestamps. Fixture drift is partly guarded, by the
+`apply_schema()` convention and by injectable clocks in the modules that were
+bitten.
+
+**Not guarded.** Config-to-code agreement across files has no mechanism at all.
+`LOCK_STALE_MINUTES` matches `STALE_MINUTES` because a comment says so, and
+`backtest.horizons_days` still disagrees with `features.target_horizons_days` on
+purpose until the M06 lab lands. Documentation counts have no mechanism either,
+apart from this track's anchor guard, which covers quotations rather than counts.
+
+**Partly guarded.** Silent substitution is handled case by case where it has
+already burned someone: the `build-datasets` preflight, the gap guard's floor,
+the loud catch-up failure. There is no general rule, and the clearest outstanding
+instance is still live: `_classify_error_drift(None)` returns `NONE` where
+`health.py` returns `unknown`.
+
+That distribution is itself a finding. Every guard in the list was written after
+the corresponding failure, never before it.
+"""
+source = "docs/postmortem-2026-04-lock-outage.md"
+anchor = "Loud beats correct-but-quiet."
+see_also = ["PLAN.md", "LESSONS.md"]
+
+[[question]]
+id = "m12-q18"
+kind = "recall"
+prompt = """
+You have one hour with an unfamiliar repo and you want the highest-yield sweep
+for these five classes. What do you actually run and read, in order, and what
+does each step turn up?
+"""
+rubric = [
+  "Diff config against the code that consumes it: every key read at least once, and any two keys that must agree checked against each other",
+  "Recount every number stated in the docs against the code that defines it, never against another document",
+  "Search for the substitution sites: functions returning a default on a None or empty input, and any exit-0 skip path",
+  "Read the test fixtures for hand-written schemas, contracts, or config, and check whether any assertion can run on an empty result",
+  "Look for the two things that should agree but are only linked by a comment, and for any acceptance bar stated in prose that nothing evaluates",
+]
+answer = """
+The order is by yield per minute, and none of it needs the code to run.
+
+**Config first.** It is the smallest file with the highest density. Grep every
+key for its consumer: a key nothing reads is dead, a key read with a different
+name is a bug. Then look for keys that must agree with each other. In this repo
+that sweep alone finds `backtest.horizons_days = [1, 3]` against
+`target_horizons_days = [1, 7, 28]`, which is the tell that the stated acceptance
+bar was never measured.
+
+**Then the counts.** Every number in the README and the project instructions,
+checked against the code that defines it. Not against another document: three
+documents claimed 39, 40, and 41 CLI commands here, and cross-reading them would
+have told you only that someone was wrong. This step is fast, it is objective,
+and its real value is as a proxy: a repo whose stated counts are right is a repo
+where someone has been checking.
+
+**Then the substitution sites.** Grep for the shape rather than the words:
+functions that take an optional and return a default on None, `except` blocks
+whose handler assigns a fallback, and every early return with a success code. In
+a scheduled pipeline, `exit 0` on a skip path is the single highest-value string
+to search for. That one line is what turned a crashed run into 96 days.
+
+**Then the fixtures.** Any test that writes its own DDL, its own config dict, or
+its own response payload is a fork of production, and forks drift. Also look for
+assertions inside a loop over query results, which pass by doing nothing when the
+query returns empty.
+
+**Then the comments that carry load.** "Must match", "mirrors", "keep in sync"
+are all admissions that a constraint exists and nothing enforces it. Each one is
+either a test worth writing or a duplication worth deleting.
+
+The cross-cutting question underneath all five: for each claim this repo makes
+about itself, what would fail if the claim stopped being true? Where the answer
+is "nothing", you have found the next bug's hiding place. That is exactly how
+`backtest/models.py` came to state an acceptance bar that nothing evaluated.
+"""
+source = "LESSONS.md"
+anchor = "not a baseline, it is a fixture. When a docstring states an acceptance bar, wire"
+see_also = ["PLAN.md", "CHANGELOG.md"]

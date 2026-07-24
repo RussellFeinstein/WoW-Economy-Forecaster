@@ -1,0 +1,570 @@
+# M17: Does it make gold?
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+#
+# This module is mostly forward-looking. The scorer that produces
+# recommendations exists (recommendations/scorer.py); the paper-trading loop
+# that would score those recommendations for profit does not yet (M2, ROADMAP
+# issues #29-#33). The teaching is the gap between accuracy and profit, and the
+# machinery that measures the second once it is built.
+
+# ── Accuracy is not profit ────────────────────────────────────────────────────
+
+[[question]]
+id = "m17-q01"
+kind = "recall"
+prompt = """
+Forecast accuracy and profit are different questions, and a model can win the
+first while losing the second. Give three distinct reasons the two can diverge,
+grounded in how this repo turns a forecast into a trade.
+"""
+rubric = [
+  "Accuracy weights every archetype and every day equally; profit only counts the trades the policy actually takes, sized by position",
+  "The scorer acts on a directional threshold (roi >= 0.10 -> buy), so being closer on average does not help if the sign or the threshold crossing is wrong on the traded rows",
+  "A more accurate model that predicts smaller moves can clear fewer trades past the auction-house cut, so it books less profit",
+  "MAE is symmetric; a profit metric is asymmetric because a wrong buy costs real gold while a missed buy costs only opportunity",
+]
+answer = """
+MAE and profit measure different things over different populations.
+
+MAE averages error across every archetype on every day. Profit is decided only
+by the rows the policy actually trades, and each of those is weighted by how much
+gold you put into it. A model can shave average error across 400 archetypes and
+still be wrong on the handful it recommended a buy on, which is the only set that
+touches the P&L.
+
+The decision layer is a threshold, not a regression score. determine_action buys
+when roi >= 0.10 and sells when roi <= -0.10. What matters for profit is whether
+the model gets the sign right and clears the threshold on the traded rows, not
+whether it is two percent closer on the mean. A model that is more accurate in
+aggregate but flips the sign on a high-conviction trade loses money that a
+cruder, better-directed model keeps.
+
+And profit has to clear the auction-house cut. A model that is accurate but
+predicts small moves generates trades whose expected gain does not survive the
+fee, so it books nothing. The scorer does not model that fee at all: its 10 percent
+ROI threshold is a hand-set proxy for "big enough to be worth acting on", and the
+real fee is one of the things the paper-trading simulator adds.
+"""
+source = "wow_forecaster/recommendations/scorer.py"
+anchor = "    if roi >= 0.10:"
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m17-q02"
+kind = "mcq"
+prompt = """
+Two models forecast the same 400 archetypes for 28 days. Model A has lower MAE
+across all rows. Model B has higher MAE but is run through the scorer and turns a
+larger simulated profit. Which single fact best explains that outcome?
+"""
+answer = """
+Profit is decided by the traded rows, not the full population. Model B can be
+worse on average and still be right where it counts: the archetypes it flagged as
+buys and sized into.
+
+MAE pools every archetype and every day with equal weight. The scorer only ever
+acts on rows that clear roi >= 0.10, and profit weights those by position size and
+by whether the move cleared the fee. A model that is calibrated exactly where it
+places bets beats a model that is smoother everywhere but noisier on the specific
+rows that became trades.
+"""
+options = [
+  { text = "Model B is more accurate on the specific rows that became trades, and those are the only rows that touch the P&L", correct = true },
+  { text = "Lower MAE always means lower profit, because minimizing squared-style error over-smooths", note = "There is no such law. Lower MAE is usually helpful; the point is that it is measured over a different population than profit, so the two can disagree in either direction, not that they are inversely linked." },
+  { text = "Model A's MAE must have been computed on a leaked validation split, so it is not a real accuracy advantage", note = "That is the M06 defect and it is real, but it is not what this question turns on. Even with two honestly measured MAEs, the accuracy-versus-profit gap exists because profit only counts traded, position-weighted rows." },
+  { text = "The scorer ignores forecast accuracy entirely and trades on liquidity and events", note = "False. opportunity_score is 0.35 of the total and is derived directly from forecast ROI. Accuracy feeds the decision; it just is not the same thing as the decision's profit." },
+]
+source = "wow_forecaster/recommendations/scorer.py"
+anchor = "        opportunity_score    * 0.35   # buy-side ROI potential"
+
+[[question]]
+id = "m17-q03"
+kind = "recall"
+prompt = """
+The paper-trading design reports P&L against two comparator portfolios:
+random-portfolio and buy-everything. State what each one controls for, and why
+both are needed rather than either alone.
+"""
+rubric = [
+  "buy-everything holds every eligible archetype, so it captures pure market beta with no selection",
+  "Beating buy-everything shows the ranking adds value over just being in the market",
+  "random-portfolio holds the same number of positions chosen at random, so it fixes exposure and position count",
+  "Beating random-portfolio shows the specific picks carry skill, not just that holding N positions in a rising market pays",
+]
+answer = """
+They bracket the two ways a positive return can be unearned.
+
+buy-everything buys every eligible archetype. It is the market itself: if prices
+rose broadly over the window, buy-everything captures that rise with zero
+selection skill. A policy that does not beat buy-everything has not shown that its
+ranking does anything. It just rode the market, and you did not need a forecaster
+for that.
+
+random-portfolio holds the same number of positions as the policy, drawn at
+random. It fixes exposure and position count, so it isolates selection. Beating
+random-portfolio shows the specific archetypes the policy chose did better than an
+equal-sized arbitrary basket. That is the skill claim.
+
+You need both because they fail differently. A policy can beat random-portfolio
+(good picks) yet trail buy-everything (too concentrated, sat out a rally), or beat
+buy-everything (timed the market) while matching random-portfolio (any small
+basket would have done as well). Only clearing both at once is evidence the
+ranking is worth running.
+"""
+source = "docs/ROADMAP.md"
+anchor = "P&L and equity curves report against random-portfolio and buy-everything baselines."
+
+[[question]]
+id = "m17-q04"
+kind = "mcq"
+prompt = """
+A ranking policy returns +18% over the backfill window. buy-everything returns
++19% over the same window; random-portfolio of the same size returns +6%. What is
+the honest read?
+"""
+answer = """
+The market carried it. The policy beat a same-size random basket by a lot (+18 vs
++6), so its picks were not arbitrary, but it did not beat simply holding
+everything (+18 vs +19). A broad rally lifted the whole market and the policy's
+selection did not add net return over just being fully invested.
+
+That is exactly why both comparators exist. Random-portfolio alone would have
+called this a win. buy-everything catches that the win was market beta, not
+timing. The policy is not worthless (it beat random handily, so the ranking has
+signal), but "makes gold" is not yet demonstrated: an investor could have matched
+it by buying the whole board and gone to lunch.
+"""
+options = [
+  { text = "The ranking has selection signal (beats random) but has not beaten the market (trails buy-everything), so make-gold is not shown", correct = true },
+  { text = "The policy is clearly profitable and validated, because +18% is a large positive return", note = "A large absolute return means nothing without the comparators. buy-everything returned more over the same window, so the +18% is market beta the policy slightly underperformed, not demonstrated skill." },
+  { text = "The policy failed, because it did not beat buy-everything", note = "Too harsh. Beating random-portfolio by 12 points is real evidence the picks are non-arbitrary. It failed the market-beta test, not every test; the correct read is nuanced, not a flat fail." },
+  { text = "random-portfolio is the wrong comparator here; only buy-everything matters in a rising market", note = "Both matter always. Dropping random-portfolio would hide whether the picks beat an arbitrary basket, which is the selection question. Each comparator answers a different question and neither substitutes for the other." },
+]
+source = "docs/ROADMAP.md"
+anchor = "P&L and equity curves report against random-portfolio and buy-everything baselines."
+
+# ── The equity curve ──────────────────────────────────────────────────────────
+
+[[question]]
+id = "m17-q05"
+kind = "recall"
+prompt = """
+The design reports an equity curve, not just a total return. What does the curve
+show that the single total-return number cannot, and why does that matter for a
+trading policy?
+"""
+rubric = [
+  "The path: the sequence of portfolio value over time, not just the endpoint",
+  "Maximum drawdown, the worst peak-to-trough decline, which the endpoint hides entirely",
+  "Whether the return came from steady accumulation or one or two lucky trades",
+  "Volatility of the path, which bears on whether the policy is tolerable to actually hold",
+]
+answer = """
+Total return is one scalar: where you ended relative to where you started. The
+equity curve is the whole path there, and the path carries information the
+endpoint destroys.
+
+Maximum drawdown is the clearest example. Two policies can both finish +30% while
+one climbed smoothly and the other dropped 40% in the middle before recovering. On
+the endpoint they are identical; in practice nobody holds through the second one,
+and a real account might have been forced out at the bottom. The curve shows the
+drawdown; the total return cannot.
+
+The curve also reveals concentration in time. A +30% that is one enormous trade
+plus flat noise is a different, more fragile result than a +30% built from many
+small consistent gains, even though the totals match. And the curve shows path
+volatility, which is what determines whether the policy is something a person
+would actually run rather than a number that looks good in hindsight. A total
+return answers "did it end up", the equity curve answers "would you have survived
+the middle".
+"""
+source = "docs/ROADMAP.md"
+anchor = "P&L and equity curves report against random-portfolio and buy-everything baselines."
+
+[[question]]
+id = "m17-q06"
+kind = "predict"
+prompt = """
+Policy X and policy Y are both backfilled over the same window and both finish at
+exactly +25% total return. X's equity curve rises steadily; Y's spikes to +60%
+midway, then gives most of it back to land at +25%. On the total-return table they
+tie. What should you conclude?
+"""
+answer = """
+They tie on the metric and differ on everything the metric drops. Y took a far
+larger drawdown (from +60% back to +25% is a roughly 22% peak-to-trough fall) and
+its result leans on the timing of a single move that then reversed. X compounded
+steadily.
+
+A total-return tie is not a tie in any sense you would trade on. Y is the riskier
+policy and the more fragile one: shift the window a few days and Y might have
+exited at the top or ridden it all the way down, while X's outcome is stable to
+that kind of jitter. This is the whole reason the design reports the curve and not
+just the endpoint.
+"""
+options = [
+  { text = "They are not equivalent: Y took a much larger drawdown and depends on one reversing move, so X is the better-behaved policy despite the identical total", correct = true },
+  { text = "They are equivalent, since both returned +25% over the same window and period", note = "Equal endpoints with different paths are not equal policies. The whole point of the equity curve is that drawdown and path-dependence are invisible in the total, and here they differ sharply." },
+  { text = "Y is strictly better, because it reached +60% and therefore has higher upside", note = "Touching +60% intramonth and giving it back is not realized upside; both ended at +25%. The transient peak is a risk signal (large drawdown, reversal-dependent), not a benefit." },
+  { text = "X is better only if you assume risk aversion, which the repo never states", note = "Drawdown and path-dependence are not merely preferences. A policy that surrenders 22 points is more likely to have been stopped out or to flip sign under a small window shift, which is a stability fact, not only a taste for lower variance." },
+]
+source = "docs/ROADMAP.md"
+anchor = "P&L and equity curves report against random-portfolio and buy-everything baselines."
+
+# ── Live A/B versus offline replay ────────────────────────────────────────────
+
+[[question]]
+id = "m17-q07"
+kind = "recall"
+prompt = """
+The A/B test between ranking policies has a live mode and an offline replay mode,
+and the design is explicit that replay must be labeled as such. Explain why the
+live test needs wall clock, and state one thing replay can claim and one thing it
+cannot.
+"""
+rubric = [
+  "A live A/B assigns forward forecast cycles to policy A or B and must wait for those forecasts to mature before P&L exists",
+  "The 7d and 28d horizons mean maturity is weeks away, which is why #33's clock is started early and runs while M3/M4 proceed",
+  "Replay can rank policies over the historical window where actuals already exist, quickly and repeatably",
+  "Replay cannot claim the live distribution matches the past window (regime shift), and repeated tuning on one window risks overfitting it",
+]
+answer = """
+A live A/B splits real going-forward forecast cycles between two policies and then
+waits. A 28-day forecast issued today is not scoreable for 28 days, so the P&L that
+decides the test does not exist until the forecasts mature. That is unavoidable
+wall clock, and it is why the roadmap starts #33's clock early and lets it run in
+the background while the warehouse and dashboards (M3, M4) are built. You cannot
+compress it; you can only start it sooner.
+
+Offline replay re-runs both policies over the Feb-Apr window where actuals are
+already on disk, so it produces a ranking in minutes and can be repeated. What it
+can claim: over that specific historical window, policy A beat policy B by this
+much. What it cannot claim: that the same ordering holds live. The market moves
+through regimes, so a past window is not a sample from today's distribution, and
+every extra pass you make tuning against that one window quietly overfits it. That
+is why the mode has to be labeled: a replay result reads like a live result unless
+you say otherwise, and the two support different conclusions.
+"""
+source = "docs/ROADMAP.md"
+anchor = "a time-sliced A/B test (with an offline replay mode, labeled as such)"
+
+[[question]]
+id = "m17-q08"
+kind = "mcq"
+prompt = """
+An offline replay over the Feb-Apr window ranks policy A above policy B. Which
+conclusion is legitimate to draw from that replay result alone?
+"""
+answer = """
+The only clean claim is retrospective: on the Feb-Apr window, with the actuals
+that exist there, policy A produced the higher simulated P&L. Everything stronger
+requires an assumption replay does not supply.
+
+Replay cannot tell you A will win live, because the live period is a different
+market regime and the past window is not a draw from it. It cannot tell you the
+margin is significant without a paired test across enough independent periods, and
+one window is one observation. And repeated replays while tuning weights bake the
+window's quirks into the policy. The forward-looking claim is exactly what the
+live A/B and its wall clock are there to earn.
+"""
+options = [
+  { text = "On the Feb-Apr window specifically, policy A booked more simulated profit than B", correct = true },
+  { text = "Policy A will outperform policy B going forward, so it should be deployed as the default", note = "Replay is retrospective. The forward claim needs the live A/B, because the future window is a different regime and the past is not a sample from it. This is precisely the claim replay cannot make." },
+  { text = "Policy A is significantly better than B, since it won the replay", note = "Winning one window is one observation, not a significance result. A paired test across many independent folds or periods is what supports a significance claim; a single replay margin can be noise." },
+  { text = "The scoring weights in A are correct and can be frozen", note = "A replay ranking of two policies says nothing about whether either policy's absolute weights are right, and tuning weights against the same window you evaluate on overfits it. Replay ranks; it does not certify weights." },
+]
+source = "docs/ROADMAP.md"
+anchor = "the live A/B (#33) needs weeks of wall clock to mature"
+
+# ── The scorer: the artifact paper trading executes ───────────────────────────
+
+[[question]]
+id = "m17-q09"
+kind = "recall"
+prompt = """
+Every weight in the scorer's total formula was chosen by hand. List the five
+components and their weights, and explain what "scoring weights become named
+policies" (the #32 work) buys that the current single hard-coded formula cannot.
+"""
+rubric = [
+  "0.35 opportunity, 0.20 liquidity, minus 0.20 volatility, 0.15 event_boost, minus 0.10 uncertainty",
+  "Today there is exactly one implicit policy, hard-coded in ScoreComponents.total, with no name and no alternative",
+  "Naming policies makes the weights a parameter you can swap, so two policies can be run side by side",
+  "That is the precondition for an A/B test: you cannot compare ranking policies until more than one exists as a nameable object",
+]
+answer = """
+The total is opportunity * 0.35 + liquidity * 0.20 - volatility * 0.20 +
+event_boost * 0.15 - uncertainty * 0.10. Five weights, all hand-set, living in
+one property on ScoreComponents.
+
+Right now that is the whole recommendation policy, and it has no name and no
+sibling. There is exactly one way the system ranks, baked into a method. You
+cannot A/B test a constant against itself.
+
+Extracting a ScoringPolicy (issue #32) turns those five numbers into a named,
+swappable object. The moment a second policy exists as a thing you can construct
+and label, you can run both over the same forecasts and compare their P&L. That is
+why #32 sits before the A/B in the work order: the test needs at least two
+policies to be nameable, and today there is one anonymous one. The weights being
+arbitrary is not the immediate problem; the weights being un-swappable is, because
+it makes the comparison that would tell you whether they are any good impossible
+to run.
+"""
+source = "wow_forecaster/recommendations/scorer.py"
+anchor = "            self.opportunity_score    * 0.35"
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m17-q10"
+kind = "predict"
+prompt = """
+determine_action is called with these rows (uncertainty and volatility all low,
+so no AVOID). Give the action for each:
+  roi = 0.09
+  roi = 0.10
+  roi = -0.10
+  roi = -0.05
+"""
+answer = """
+0.09 -> hold, 0.10 -> buy, -0.10 -> sell, -0.05 -> hold.
+
+The thresholds are inclusive at 0.10 and -0.10 and there is a dead band between
+them. roi = 0.09 does not clear the buy threshold, so it is a hold, not a buy: a
+forecast of a nine-percent gain is deliberately not acted on. roi = 0.10 is exactly
+at the boundary and the test is >=, so it buys. -0.10 hits <= and sells; -0.05 sits
+in the dead band and holds.
+
+That dead band is the profit logic showing through the decision layer. A predicted
+move under ten percent is treated as not worth a trade, which is a crude stand-in
+for "will not clear the auction-house cut and the execution risk". It is crude
+because it is a flat threshold on ROI with no fee model and no per-archetype
+adjustment, and replacing that guess with a fee-aware rule is part of what the
+paper-trading simulator is for.
+"""
+options = [
+  { text = "hold, buy, sell, hold", correct = true },
+  { text = "buy, buy, sell, sell", note = "roi = 0.09 does not reach the 0.10 buy threshold (the test is roi >= 0.10), and roi = -0.05 does not reach the -0.10 sell threshold, so both are holds. The dead band between -0.10 and 0.10 is deliberate." },
+  { text = "hold, hold, sell, hold", note = "roi = 0.10 buys: the buy test is >= 0.10, so the boundary value crosses. Reading it as a hold treats the threshold as strictly greater-than, which the code does not." },
+  { text = "hold, buy, hold, sell", note = "roi = -0.10 sells (the sell test is roi <= -0.10, boundary included), and roi = -0.05 holds. This option swaps the two negative rows." },
+]
+source = "wow_forecaster/recommendations/scorer.py"
+anchor = "    if roi >= 0.10:"
+
+[[question]]
+id = "m17-q11"
+kind = "recall"
+prompt = """
+The opportunity component is buy-only: negative ROI scores zero and sell logic is
+pushed into the action, not the score. Explain how opportunity_score is computed
+from ROI, and why this asymmetry matters when you go to measure profit.
+"""
+rubric = [
+  "roi = (forecast_price - current) / current, then opportunity_score = clamp(roi * 200, 0, 100)",
+  "50% ROI saturates the score at 100; any negative ROI floors it at 0",
+  "So the score rewards only predicted upside; downside is represented as an action (sell), not as score magnitude",
+  "Profit measurement must handle the sell side separately, and the score alone cannot rank how bad a bad position is",
+]
+answer = """
+opportunity_score is clamp(roi * 200, 0, 100), where roi = (forecast - current) /
+current. The linear map means a predicted 50 percent gain saturates the score at
+100, and any predicted loss floors it at 0. The component only ever encodes
+upside.
+
+The docstring is explicit that this is deliberate: sell logic lives in the action
+decision, not in the score magnitude. So a forecast of a catastrophic 40 percent
+drop and a forecast of a mild 2 percent drop produce the same opportunity_score of
+zero. The score cannot tell them apart; only determine_action, via the -0.10 sell
+threshold, distinguishes a sell from a hold.
+
+For profit measurement this matters twice. First, the P&L of a short or a sell has
+to be computed outside the score, because the score threw that information away.
+Second, when you rank opportunities by score you are ranking only long ideas, so a
+paper-trading loop built purely on score magnitude would be a long-only strategy by
+construction unless the action layer is wired in explicitly. The score answers
+"how good is the best buy", not "what is the expected P&L of acting here", and
+those come apart on the sell side.
+"""
+source = "wow_forecaster/recommendations/scorer.py"
+anchor = "    50% ROI → score 100. Negative ROI → 0 (buy-only signal; sell logic"
+
+# ── The state of things: never measured for profit ────────────────────────────
+
+[[question]]
+id = "m17-q12"
+kind = "find"
+prompt = """
+The roadmap states plainly that the profit side of this system has never been
+measured. Find the sentence, quote the claim, and say how many forecasts sit
+un-scored behind it and where that count comes from.
+"""
+rubric = [
+  "The line: 300K+ forecasts have been issued and none compared to what prices actually did; recommendations have never been scored for profit",
+  "It is in the 'Why this roadmap' section, the second of the two driving findings",
+  "The ~305K matured-forecast count appears in the M1 work-order item (#13 realization ledger)",
+  "M1 scores forecasts for accuracy; M2 is the one that scores recommendations for profit, so the profit number does not exist until M2 lands",
+]
+answer = """
+The sentence is in the "Why this roadmap" section: "300K+ forecasts have been
+issued and none compared to what prices actually did. Recommendations have never
+been scored for profit." It is the second of the two findings that drove the whole
+roadmap.
+
+The count surfaces again in the work order, where landing the #13 realization
+ledger makes "roughly 305K matured forecasts" scoreable in one shot. That ledger
+is the accuracy loop (M1): forecast versus actual. Profit is a separate loop (M2):
+recommendation versus P&L, with fees and exit rules. So even after M1 closes, the
+make-gold question is still open until the paper-trading simulator in #29 runs.
+
+The thing to sit with: a system can issue three hundred thousand forecasts and
+produce daily buy/sell recommendations for months and still have zero evidence it
+makes gold, because issuing a recommendation and scoring it are separate pieces of
+work and only the first was ever built.
+"""
+source = "docs/ROADMAP.md"
+anchor = "Recommendations have never been scored for profit."
+
+[[question]]
+id = "m17-q13"
+kind = "recall"
+prompt = """
+The simulator design specifies per-horizon exit rules and backfills over the
+Feb-Apr window. Explain what a per-horizon exit rule is and why the backfill is
+restricted to that window.
+"""
+rubric = [
+  "A buy driven by an h-day forecast is closed h days later, so the holding period matches the horizon the signal was made on",
+  "Without a defined exit, a P&L is undefined: you cannot book profit until you say when you sell",
+  "Backfill needs actual realized prices to mark trades to, and those only exist where rollup history survives",
+  "Feb-Apr is the window where actuals exist; the 30-day raw retention wall and the outage bound how much history there is",
+]
+answer = """
+A per-horizon exit rule ties the holding period to the horizon that generated the
+signal. A buy made on the strength of a 7-day forecast is closed out 7 days later;
+a 28-day signal is held 28 days. That is what makes the trade well-defined: a
+recommendation without an exit has no P&L, because profit is a round trip and you
+have to say when the round trip closes. Matching the hold to the horizon also keeps
+the test honest, since the forecast only claimed to know the price at that horizon,
+not at some other arbitrary sell date.
+
+The backfill is restricted to Feb-Apr because a paper trade can only be marked to
+prices that actually happened, and those live in the rollup history. That history
+is bounded: raw observations are capped at 30 days by the Terms of Service, the
+durable rollups reach further back, and the April lock outage cut the series off.
+Feb-Apr is the stretch where enough real prices exist to open a trade and see it
+mature. You cannot backfill a P&L over a period whose actuals were never captured,
+which is the same retention wall that limits every long-horizon evaluation in this
+repo.
+"""
+source = "docs/ROADMAP.md"
+anchor = "Does it make gold? A paper-trading simulator executes recommendations with auction-house fees"
+
+[[question]]
+id = "m17-q14"
+kind = "mcq"
+prompt = """
+The roadmap runs M2 (paper trading) directly after M1 and before M3 (the
+warehouse). It gives two reasons. Which pair is correct?
+"""
+answer = """
+Two reasons, both stated in the M2 description. The live A/B needs weeks of wall
+clock to mature, so starting it early lets its clock run in the background during
+M3 and M4 instead of being a serial blocker at the end. And the make-gold answer
+should exist before the infrastructure and dashboards that would showcase it are
+built, so you are not spending weeks on a warehouse and a Power BI report to
+display a result you have not yet produced.
+"""
+options = [
+  { text = "The A/B needs wall clock so its clock should start early; and the make-gold answer should exist before infra and dashboards are built to showcase it", correct = true },
+  { text = "Paper trading is cheaper than the warehouse; and M3 depends on M2's database schema", note = "Neither is the stated reason. The roadmap argues from A/B maturation time and from having the answer before building the showcase, not from cost or a schema dependency. M3 actually notes trades landing in the marts in one pass, but that is a benefit of the order, not the reason given in M2." },
+  { text = "M1 must fully close before M2 can start; and the warehouse cannot hold trade facts", note = "The warehouse explicitly can and will hold paper-trade facts (M3 lists them among the marts). And M2 does not wait for all of M1: #13's ledger is the dependency, after which the A/B clock starts early in parallel." },
+  { text = "The dashboards need the A/B result first; and paper trading validates the warehouse ETL", note = "Backwards. The point of ordering M2 first is that dashboards should not be built before the result exists, not that dashboards need it as an input to start. Paper trading does not validate ETL; that is M3's dual-apply verification." },
+]
+source = "docs/ROADMAP.md"
+anchor = "the make-gold answer should exist before infrastructure and dashboards are built to showcase it"
+
+# ── Where the two questions meet ──────────────────────────────────────────────
+
+[[question]]
+id = "m17-q15"
+kind = "recall"
+prompt = """
+An interviewer says: "your model has a decent MAE. Does it make money?" Give the
+ninety-second answer, including what you would build to find out and what would
+count as a real yes.
+"""
+rubric = [
+  "MAE and profit are different questions over different populations, and I do not currently know the profit answer",
+  "A paper-trading simulator executes the recommendations with auction-house fees and per-horizon exit rules over the window where actuals exist",
+  "It reports an equity curve and P&L against random-portfolio and buy-everything, not just a total return",
+  "A real yes is beating both comparators, and the live A/B (which needs weeks of wall clock) confirming it forward, not just in replay",
+]
+answer = """
+A version that lands:
+
+"Honestly, I do not know yet, and that gap is the point. MAE tells me the forecast
+is close on average across every archetype. Profit is a different question: it only
+counts the archetypes I actually trade, sized by position, and it has to clear the
+auction-house cut. A model can win on MAE and lose on gold if it is calibrated
+everywhere except the rows it bets on.
+
+To answer it I would run a paper-trading simulator: take the daily recommendations,
+execute them with fees and a per-horizon exit rule (a 7-day signal is held 7 days),
+and backfill over the Feb-through-April window where real prices exist to mark the
+trades against. I would report the equity curve, not just the total return, because
+the total hides drawdown and whether the return was one lucky trade or steady
+accumulation.
+
+A positive number alone would not convince me. I would compare against two
+baselines: buy-everything, which is pure market beta with no selection, and a
+random portfolio of the same size, which fixes exposure and isolates whether my
+specific picks carry skill. Beating both is the bar. And because the 28-day
+forecasts take weeks to mature, the live A/B has to run on wall clock, so I would
+start its clock early and treat the fast offline replay as suggestive, not as the
+verdict."
+
+That last distinction, between a replay that ranks policies over a past window and
+a live test that earns a forward claim, is what separates someone who understands
+evaluation from someone who ran a backtest once and believed it.
+"""
+source = "docs/ROADMAP.md"
+anchor = "P&L and equity curves report against random-portfolio and buy-everything baselines."
+see_also = ["wow_forecaster/recommendations/scorer.py"]
+
+[[question]]
+id = "m17-q16"
+kind = "find"
+prompt = """
+Go into recommendations/scorer.py and locate every hand-chosen constant in the
+score total (not the components' internals, just the five terms of the weighted
+sum). List them, and say what the #32 ScoringPolicy work would do to them.
+"""
+rubric = [
+  "The five weights: 0.35, 0.20, 0.20, 0.15, 0.10, in ScoreComponents.total",
+  "They are literals in the property body, not read from config",
+  "#32 would extract them into a named ScoringPolicy object so they become swappable parameters",
+  "That makes more than one policy exist at once, which is the precondition for the A/B test",
+]
+answer = """
+The five weights live in the total property on ScoreComponents: opportunity 0.35,
+liquidity 0.20, volatility 0.20 (subtracted), event_boost 0.15, uncertainty 0.10
+(subtracted). They are bare float literals in the method body, not read from config
+and not named anywhere. The module docstring restates the same formula at the top,
+so the numbers actually appear twice, which is its own small drift risk.
+
+The #32 ScoringPolicy extraction would lift those five numbers into a named object
+that the scorer takes as an argument. The mechanical change is small; the
+consequence is not. Today the ranking policy is a constant with no name, so there
+is nothing to compare it against. Turning it into a parameter means a second policy
+can exist as a distinct, labeled thing, and two policies over the same forecasts is
+the minimum the A/B test needs. The arbitrariness of the specific weights is a
+real critique, but the blocking problem is that they are frozen into a method where
+no alternative can be expressed.
+"""
+source = "wow_forecaster/recommendations/scorer.py"
+anchor = "            - self.uncertainty_penalty* 0.10"
+see_also = ["docs/ROADMAP.md"]

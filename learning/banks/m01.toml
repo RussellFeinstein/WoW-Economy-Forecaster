@@ -1,0 +1,709 @@
+# M01: The market and the problem.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code or doc forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+
+# ── What is actually being forecast ───────────────────────────────────────────
+
+[[question]]
+id = "m01-q01"
+kind = "recall"
+prompt = """
+The model's label is one column, in one table, at one grain. Name the grain,
+name the column, say how the value for horizon h is produced, and say what the
+label is not.
+"""
+rubric = [
+  "The grain is (archetype_id, realm_slug, obs_date): one row per archetype per realm per calendar day",
+  "The label column is target_price_{h}d, produced by looking up price_mean h calendar days forward on the same series",
+  "price_mean is the mean non-outlier min-buyout price in gold for that archetype on that day",
+  "It is not an item's price, and it is a price level rather than a return",
+]
+answer = """
+The grain is the daily archetype series. `daily_agg.py` collapses every
+normalized observation into one row per (archetype_id, realm_slug,
+calendar_date), and `price_mean` on that row is the mean min-buyout price in
+gold across every non-outlier observation of every item in that archetype on
+that day.
+
+The label is `target_price_1d`, `target_price_7d`, or `target_price_28d`. Each
+one is built in `lag_rolling.py` by taking the row's own date, adding h calendar
+days, and looking that date up in the same price series. No interpolation, no
+forward fill: if the future date has no price, the label is None.
+
+Two consequences fall straight out of that definition and are worth carrying
+into the rest of the track.
+
+First, `price_mean` is both an input feature and the basis of the target. A
+model that learns nothing except "tomorrow looks like today" will post a
+respectable MAE, and that is exactly the `last_value` baseline. This is why M05
+and M06 keep insisting the comparison against baselines is the load-bearing
+measurement rather than the reported validation number.
+
+Second, the target is a level in gold, not a percentage change. Archetypes
+differ in price by orders of magnitude, so an absolute error pooled across them
+is dominated by the expensive ones and moves when the archetype mix changes.
+That defect shows up again in the drift baseline, and PLAN.md names it there.
+"""
+source = "wow_forecaster/features/lag_rolling.py"
+anchor = "out[f\"target_price_{h}d\"] = price_lookup.get(target_date)"
+see_also = ["wow_forecaster/features/daily_agg.py"]
+
+[[question]]
+id = "m01-q02"
+kind = "mcq"
+prompt = """
+`forecast_outputs` contains rows keyed by `item_id` as well as rows keyed by
+`archetype_id`. Where do the item-level numbers come from?
+"""
+answer = """
+They are the archetype forecast rescaled by the item's own current price. The
+formula in `_generate_item_forecasts` is
+`item_forecast = item_current x (archetype_forecast / archetype_current)`, so
+the item keeps its own price level and inherits the archetype's direction
+wholesale.
+
+That is a reasonable heuristic and it is honest about what it is, but know what
+it means: there is no item-level model. Every item under one archetype moves by
+the same proportion on the same day. If an individual item diverges from its
+archetype (a nerfed reagent, a new recipe that consumes only one of the five
+items in the group), nothing in the system can express that.
+
+Coverage is the union of recipe-linked items and any item with at least 14
+distinct observation days, which is a history threshold rather than a modeling
+decision. Items with no current price or no archetype mapping are skipped
+entirely, so they never reach a forecast at all.
+
+PLAN.md's ceiling names the principled version: item, archetype and category
+form a genuine hierarchy, and MinT or OLS reconciliation would make the levels
+coherent by construction instead of by a ratio.
+"""
+options = [
+  { text = "The archetype forecast rescaled by the item's current price ratio, so direction comes entirely from the archetype model", correct = true },
+  { text = "A separate LightGBM model trained per item on daily_rollup_item", note = "No per-item model exists anywhere in ml/. _generate_item_forecasts takes the archetype ForecastOutputs that were just written and derives from them; it never fits anything." },
+  { text = "A fourth target column in the training Parquet, at item grain", note = "The registry declares exactly three target columns, all of them price_mean forward at archetype grain. The training Parquet has no item-keyed row at all." },
+  { text = "The mean of the item's own observations, so item and archetype forecasts agree by construction", note = "They do not agree by construction. The trend ratio deliberately preserves each item's own price level, which is the point: items inside an archetype differ in price by a lot even when they move together." },
+]
+source = "wow_forecaster/pipeline/forecast.py"
+anchor = "Uses trend-ratio scaling: item_forecast = item_current × (archetype_forecast"
+see_also = ["PLAN.md"]
+
+# ── Why transfer is category-level ────────────────────────────────────────────
+
+[[question]]
+id = "m01-q03"
+kind = "recall"
+prompt = """
+The premise of the whole project is that patterns learned on one expansion apply
+to the next. Say why that transfer is defined over archetypes and not over item
+IDs, and give the two separate reasons item-to-item cannot work.
+"""
+rubric = [
+  "Before the target expansion ships, its item IDs do not exist, so an item-to-item map cannot be authored at all",
+  "After it ships, a new item has no price history, so an item-keyed model has nothing to fit on day one",
+  "Economic behavior repeats across expansions even though item identity does not: the stat flask is a new item with the same demand cycle",
+  "The archetype is the unit that has both history in the source expansion and a stated analogue in the target",
+]
+answer = """
+Two failures, and they bite at different times.
+
+Before the target expansion ships, there is no list of its item IDs to map to.
+An item-to-item table cannot be written in advance, so the "Day 1 forecast"
+claim would be vacuous.
+
+After it ships, the IDs exist but the series do not. A model keyed on item 12345
+has zero rows for that item, and no amount of clever feature engineering
+recovers history that was never observed.
+
+What does survive an expansion boundary is behavior. A stat flask in the new
+expansion is a different item with the same economics: crafted by alchemy,
+consumed on raid nights, price spiking before the race to world first, crashing
+at season end. `EconomicArchetype` is the model of that claim, and
+`ArchetypeMapping` formalizes one source archetype to one target archetype with
+a `confidence_score` and a required rationale.
+
+Be precise about the epistemic status. The mapping is a prior asserted by a
+human, not a measured relationship. `transfer_confidence` documents how strong
+the analogy is believed to be (1.0 for a near-identical role, 0.0 for none), and
+`is_transferable` marks archetypes with no parallel at all. Nothing in the repo
+currently checks a mapping against realized prices after the fact, which is the
+same gap the realization ledger closes for forecasts in M15.
+"""
+source = "wow_forecaster/models/archetype.py"
+anchor = "Rather than mapping TWW item IDs to Midnight item IDs (impossible before"
+see_also = ["README.md", "wow_forecaster/taxonomy/archetype_taxonomy.py"]
+
+[[question]]
+id = "m01-q04"
+kind = "mcq"
+prompt = """
+`ArchetypeMapping` refuses to be constructed without a `mapping_rationale`
+string. What does making that field required actually buy?
+"""
+answer = """
+It buys an audit trail for the failure case. The docstring says so directly: the
+required field forces the researcher to state why the mapping is valid, so when
+transfer produces bad forecasts there is a written claim to go back and falsify.
+
+This is the same instinct as `mapping_rationale`'s neighbors elsewhere in the
+repo. `config_snapshot` on every run and `features_hash` on every forecast exist
+so a past result can be explained rather than re-derived. A confidence score on
+its own is a number with no argument attached, and a number with no argument
+cannot be reviewed.
+
+The cost is that it is prose, so nothing can validate it. Pydantic checks that
+the string exists and is non-empty. It cannot check that the reasoning is any
+good. That is a fair trade for a field whose whole job is to make a human
+commitment legible.
+"""
+options = [
+  { text = "A written, reviewable claim about why the analogy holds, so a failed transfer can be traced back to the assertion that failed", correct = true },
+  { text = "An input feature: the rationale text is embedded and fed to the model", note = "Nothing embeds it. The two transfer features in the registry are has_transfer_mapping and the max confidence_score of any mapping for the archetype. The prose never reaches the model." },
+  { text = "Compliance with the Blizzard API Terms of Service, which requires documented derivation", note = "The ToS requirement this repo tracks is section 2.r, a 30-day deletion window on raw API data. It says nothing about documenting how derived models were built." },
+  { text = "Validation against the taxonomy's category-prefix rule, so a mapping cannot cross categories", note = "The prefix rule governs ArchetypeTag slugs inside CATEGORY_TAG_MAP. It is never applied to mappings, and a cross-category mapping is legal (it would just deserve a very good rationale)." },
+]
+source = "wow_forecaster/models/archetype.py"
+anchor = "is intentional: it forces the researcher to reason explicitly about *why*"
+
+# ── The structural constraints ────────────────────────────────────────────────
+
+[[question]]
+id = "m01-q05"
+kind = "recall"
+prompt = """
+PLAN.md names four constraints that make this problem genuinely hard, and notes
+that all four are documented in module docstrings and absent from the README.
+Name them, and give one concrete consequence of each.
+"""
+rubric = [
+  "Cold start across expansions: the target expansion has no history, so day-one forecasts must come from a transferred prior rather than from data",
+  "The 30-day ToS retention wall on raw API data, which caps how much per-observation history any evaluation can ever see",
+  "Thin per-archetype series: prices are sparse, the date spine is mostly fill, and a 28-day label is missing wherever the future date has no observation",
+  "Event shocks: prices move on discrete scheduled events (launches, seasons, races, patches) rather than on smooth trends",
+]
+answer = """
+Cold start. A new expansion ships with items that have never been listed. The
+whole archetype apparatus exists to answer "what is this worth on day one" from
+a mapped source archetype, and `cold_start.blend_cold_start_prediction` is where
+that borrowed prior is mixed with the model output.
+
+The retention wall. Blizzard's API terms require raw data obtained through the
+API to be deleted within 30 days, and `SnapshotPruner` enforces it on both the
+JSON files and the database rows. Long-horizon evaluation over raw observations
+is structurally capped no matter how good the engineering is.
+
+Thin series. Listings are sparse. `daily_agg` builds a full calendar spine in
+Python and fills missing days with nulls precisely because an archetype does not
+trade every day, and a 28-day label is a dict lookup that returns None whenever
+that future date is empty. Per-series history is measured in dozens of rows, not
+thousands, which is a large part of the argument for a single pooled
+cross-archetype model in M07.
+
+Event shocks. The event taxonomy has 28 types across expansion, patch, season,
+competitive, recurring, structured content, supply, infrastructure and external
+groups. Prices step
+on discrete dates, and a model with no notion of those dates is trying to fit
+steps with a smooth function.
+
+Add a fifth that PLAN.md folds into its framing rather than listing: the
+commodity auction house is region-wide, so there is exactly one cross-sectional
+unit per archetype. That is q08 and q10.
+"""
+source = "PLAN.md"
+anchor = "cold start across expansions, the 30-day ToS retention wall capping evaluation history, thin per-archetype series, event shocks"
+see_also = ["README.md"]
+
+[[question]]
+id = "m01-q06"
+kind = "mcq"
+prompt = """
+Blizzard's API terms require deletion of API data within 30 days, and this repo
+enforces that in `governance/pruner.py`. Exactly what is deleted, and what
+survives?
+"""
+answer = """
+Raw per-observation data is deleted: the JSON snapshot files on disk and the
+`market_observations_raw` rows, with `market_observations_normalized` deleted
+first because those rows are foreign-key children. Derived artifacts are kept:
+the daily rollup tables, the Parquet feature datasets and the model weights.
+The pruner docstring states that split explicitly and calls the derived layer
+the one that survives the 30-day window.
+
+That split is what makes the system viable at all. If rollups aged out too,
+there would be no history to train on beyond a month. Instead, history
+accumulates in derived form, and only forward in wall-clock time from the day
+capture started.
+
+Hold on to the second half of that sentence, because it is the sharpest
+constraint in the project. The commodities endpoint serves only the current
+snapshot. There is no historical endpoint. So an hour that was never captured
+cannot be recovered later at any price, and the April to July 2026 outage is a
+permanent hole in the local rollups rather than a backfill task.
+
+PLAN.md's ceiling is honest that the current split is defensible rather than
+settled: the principled version is a derived-aggregate archive designed from the
+start to be clean under the terms and to outlive the raw window, plus an
+independent historical source for backfill.
+"""
+options = [
+  { text = "Raw snapshot files and raw observation rows go (normalized children first, for the FK); rollups, Parquet features and model weights stay", correct = true },
+  { text = "Everything derived from API data goes, rollups included, since the rollups are also API-derived", note = "The pruner docstring rules this out in as many words: derived artifacts are not pruned and are the layer that survives the window. If it were true, no model could ever be trained on more than 30 days." },
+  { text = "Only the JSON files on disk; the database rows are the system of record and are kept", note = "Backwards. The pruner deletes rows in both observation tables as well as the files, and it deletes the normalized rows first so the foreign key onto raw is satisfied." },
+  { text = "Raw is kept 30 days and can be re-fetched from the API afterwards if it is needed again", note = "There is nothing to re-fetch. The commodities endpoint returns only the current snapshot, which is why cloud capture exists and why a missed hour is gone for good." },
+]
+source = "wow_forecaster/governance/pruner.py"
+anchor = "artefacts (daily rollup tables, Parquet features, model weights) are NOT"
+see_also = ["config/default.toml"]
+
+[[question]]
+id = "m01-q07"
+kind = "predict"
+prompt = """
+Ingestion on this machine was dead from 2026-04-08 to 2026-07-20. It has since
+been restored, cloud capture into R2 has been live since 2026-07-20, and
+`sync-snapshots` is implemented and working.
+
+What can be recovered for the missing 105 days?
+"""
+answer = """
+Nothing. Those dates stay empty in the local rollups permanently.
+
+Three separate facts have to line up before you can recover a past hour, and for
+that window none of them do. The API serves only the current snapshot, so there
+is no historical endpoint to ask. The cloud bucket only started receiving
+objects on 2026-07-20, so there is no stored copy of anything earlier.
+`sync-snapshots` refuses to read past the retention window anyway, since those
+rows would be deleted by the next pruner run.
+
+The right conclusion is not "add a backfill feature". It is that capture is the
+only moment recovery is possible, and every guard added after the outage
+(the lock takeover, the freshness gate, the health alert, the cloud capture, the
+gap guard) exists because that moment does not come back. M11 and M14 are the
+full version of this argument.
+
+A practical consequence for evaluation: any long-horizon backtest has to work
+around a hole in the middle of its date range, and the 30-day retention window
+means raw observations from before the hole are gone as well.
+"""
+options = [
+  { text = "Nothing: the API has no historical endpoint, the bucket has no objects from before 2026-07-20, and sync-snapshots will not read past retention anyway", correct = true },
+  { text = "Run sync-snapshots --since 2026-04-08 to drain the bucket for the missing window", note = "The command would run and find nothing. Cloud capture started 2026-07-20; --since widens the listing window, it does not create objects that were never written." },
+  { text = "Raise retention.raw_snapshot_days above 30 and re-ingest the window", note = "Two problems. It would break the 30-day ToS requirement the pruner exists to enforce, and there is still no source to re-ingest from." },
+  { text = "The rollups self-heal, because the rollup step upserts both the previous and the current UTC date on every run", note = "That previous-date upsert completes the tail of a day that has observations. It cannot invent observations for a day where none were ever written." },
+]
+source = "README.md"
+anchor = "hour missed while this machine slept is unrecoverable from the API; draining the"
+see_also = ["docs/cloud-capture.md"]
+
+# ── Region-wide commodities and realm handling ────────────────────────────────
+
+[[question]]
+id = "m01-q08"
+kind = "recall"
+prompt = """
+The commodity auction house has been region-wide since patch 9.2.7. Work out
+what that implies for every place a realm or a faction appears in this system.
+"""
+rubric = [
+  "realms.defaults is [\"us\"], and \"us\" is a region standing in for the region-wide commodity AH, not a realm slug",
+  "Every parsed record is tagged faction = \"neutral\", because commodity listings are not faction-segregated",
+  "There is one price series per archetype rather than one per realm, so realm_slug is effectively a constant column",
+  "Per-realm slugs are reserved for future per-connected-realm BoE auctions, which are the genuinely realm-scoped market",
+]
+answer = """
+One API call covers the whole region. `_fetch_blizzard_commodities` fetches
+once, tags every record with `realm_slug = blizzard.region` (which is the string
+"us") and `faction = "neutral"`, and that is the entire market.
+
+So the realm dimension that runs through the schema, the rollups, the drift
+detector and the CLI options is real in shape and degenerate in content. Every
+`(archetype, realm)` series is an `(archetype, "us")` series. Keeping the column
+is the right call, because non-commodity BoE auctions genuinely are per
+connected realm and the config comment reserves per-realm slugs for exactly
+that. But do not read the column as evidence that cross-realm variation is being
+modeled today.
+
+Faction is the same story in miniature. It is a column, it is always
+"neutral", and the ingest docstring says why rather than leaving a reader to
+infer it.
+
+The practical fallout is real and it is q09: the Streamlit dashboard hardcodes
+four per-realm slugs, none of which has ever had a row.
+"""
+source = "config/default.toml"
+anchor = "# \"us\" = region-wide commodity AH (covers all US realms since patch 9.2.7)."
+see_also = ["wow_forecaster/pipeline/ingest.py"]
+
+[[question]]
+id = "m01-q09"
+kind = "predict"
+prompt = """
+`dashboard/app.py` sets its realm selector from a hardcoded list, under a
+comment saying the values mirror `config/default.toml`. Config sets
+`realms.defaults = ["us"]`.
+
+You run `streamlit run dashboard/app.py` against a healthy, fully populated
+database. What do you see?
+"""
+answer = """
+Every tab reports no data. The selector offers area-52, illidan, stormrage and
+tichondrius, and not one of those strings has ever appeared in `realm_slug`,
+because commodity records are tagged with the region "us".
+
+This is worth more than its one-line fix. It is the difference between a system
+that works and a system that can be seen to work. PLAN.md's audit lists it under
+data science legibility rather than under bugs, because the failure is that the
+only clickable demo in the repo shows a reader nothing.
+
+Two details make it a better cautionary tale than a plain typo would be. The
+comment above the list asserts that the values mirror config, so a reader
+auditing the file is actively told not to check. And the module docstring
+advertises a `--realm` override that is never parsed, so the documented
+workaround does not work either.
+
+The fix in PLAN.md Phase 1 is to read `config.realms.defaults`, so the two
+cannot drift again.
+"""
+options = [
+  { text = "Every tab shows no data, because none of the four hardcoded realm slugs has ever had a row", correct = true },
+  { text = "It falls back to config.realms.defaults when the selected realm has no data", note = "The dashboard never loads config at all. The hardcoded list is the only source of realm names in that process, and there is no fallback path." },
+  { text = "area-52 works, because commodity observations are tagged with each individual realm slug in the connected realm", note = "Commodity data is region-wide and one fetch covers everything, so every record carries realm_slug = \"us\". Per-realm tagging would require the connected-realm auctions endpoint, which is not what the hourly pipeline calls." },
+  { text = "Passing -- --realm us fixes it, as the docstring documents", note = "The docstring documents that override and nothing parses it. PLAN.md's audit flags exactly this: parse the argument or delete the claim." },
+]
+source = "dashboard/app.py"
+anchor = "[\"area-52\", \"illidan\", \"stormrage\", \"tichondrius\"]"
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m01-q10"
+kind = "mcq"
+prompt = """
+Region-wide commodities plus a single region means each archetype has exactly
+one cross-sectional unit. Which reading of that is correct?
+"""
+answer = """
+It removes the natural control group. A patch, a season start or a race to world
+first hits the entire region at once, so there is no untreated series of the
+same thing to compare against. That is a limit on what can be identified, not
+just a smaller dataset.
+
+This is why PLAN.md's ceiling lists panel data across regions as a real item
+rather than a nice-to-have. EU and KR, plus per-realm BoE auctions, turn one set
+of series into a panel, and cross-sectional methods need a panel to exist before
+they can be applied at all. M18 is where that bites hardest: difference-in-
+differences needs a comparison group that did not receive the treatment, and
+one region does not have one.
+
+The tempting workaround, using other archetypes as controls, is worth thinking
+through rather than dismissing. It is not useless, since an event can hit
+consumables hard and gems barely. But it is not a clean control either, because
+a global event touches every series to some degree and archetypes share
+upstream reagents, so treatment spills across the supposed control.
+"""
+options = [
+  { text = "It removes the untreated comparison series a causal design needs, which is why the ceiling names panel data across regions", correct = true },
+  { text = "It does not matter, since archetypes are independent series and can act as controls for each other", note = "Independence is exactly what fails. A global event moves every archetype to some degree, and archetypes share reagents, so the supposed control is partly treated. Useful as a sanity check, not as identification." },
+  { text = "Adding EU and KR would only add more rows, not new methods", note = "It adds cross-sectional units, which is a different thing from more rows. Cross-sectional methods cannot be applied to a single unit at all, so this is the step that opens them rather than one that improves precision." },
+  { text = "Drift detection already covers it, since it computes z-scores per archetype and realm", note = "With one realm the realm dimension is degenerate, so per-archetype-and-realm is just per-archetype. Drift also answers a different question: it flags distribution shift, it does not attribute a move to a cause." },
+]
+source = "PLAN.md"
+anchor = "- **Panel data across regions.** EU and KR plus per-realm BoE auctions turn one"
+
+# ── The taxonomy as a contract ────────────────────────────────────────────────
+
+[[question]]
+id = "m01-q11"
+kind = "find"
+prompt = """
+The README states how many archetype tags and how many event types exist. Count
+the enum members yourself and compare. Then explain why the taxonomy test suite
+never caught the difference.
+"""
+rubric = [
+  "ArchetypeTag has 40 members; the README says 36",
+  "EventType has 28 members; the README (and CLAUDE.md) say 26",
+  "The taxonomy tests assert structure (value uniqueness, every tag in exactly one category, prefix match) and never assert a count",
+  "So the enums grew, the docs did not, and nothing in CI could notice",
+]
+answer = """
+Forty tags and twenty-eight event types. Count them with the enums rather than
+by eye:
+
+    from wow_forecaster.taxonomy.archetype_taxonomy import ArchetypeTag
+    from wow_forecaster.taxonomy.event_taxonomy import EventType
+    len(ArchetypeTag), len(EventType)   # (40, 28)
+
+The README says 36 and 26 in several places, and so does CLAUDE.md.
+
+The reason CI is silent is the interesting part.
+`tests/test_taxonomy/test_archetype_taxonomy.py` is a genuinely good test file:
+it checks that every value is unique, that every tag appears in exactly one
+category's list, that every category has an entry, and that tags carry their
+category's slug prefix. Every one of those is a property that stays true as the
+enum grows. A count is the one assertion that would have to change every time a
+tag is added, and it is the one nobody wrote.
+
+That is the general shape of documentation drift and it is worth naming: the
+invariants got tested and the counts got written down. A number in prose has no
+test attached unless someone deliberately attaches one, which is exactly the
+problem the anchor guard in this learning track was built to solve for citations.
+"""
+source = "README.md"
+anchor = "defines 36 economic behavior tags"
+see_also = ["wow_forecaster/taxonomy/archetype_taxonomy.py", "PLAN.md"]
+
+[[question]]
+id = "m01-q12"
+kind = "find"
+prompt = """
+Two entries in `CATEGORY_TAG_MAP` map to an empty list. Find them, say why that
+does not break the integrity contract, and say what it means for an item that
+would belong to one of them.
+"""
+rubric = [
+  "SERVICE and COLLECTION both map to an empty list",
+  "The contract requires every category to have an entry, and an empty list is an entry, so the test passes",
+  "No ArchetypeTag can carry those prefixes, so nothing can ever be classified into them",
+  "An item with no archetype assignment is excluded from daily aggregation entirely, so it is never forecast",
+]
+answer = """
+`ArchetypeCategory.SERVICE` and `ArchetypeCategory.COLLECTION`, both marked in a
+comment as placeholders for future expansion.
+
+The contract holds because of how it is phrased. Every category must have an
+entry, every tag must appear in exactly one category's list, and tags must share
+their category's prefix. An empty list satisfies the first rule and is vacuously
+fine on the other two. The test passes and should pass: the placeholder is a
+deliberate statement that the category is known and not yet populated.
+
+The consequence is downstream and it is real. `daily_agg` joins through
+`items.archetype_id`, and items with no archetype assignment are excluded from
+aggregation rather than bucketed somewhere. So the entire pet, mount and
+transmog segment (a long-tail auction house market the COLLECTION docstring
+names explicitly) is outside the forecast grain, not badly forecast within it.
+
+The repo does surface this rather than hide it:
+`quality.count_items_without_archetype()` reports how many items are being
+dropped. Knowing an exclusion exists and knowing how large it is are different
+things, and the second one is what makes the first defensible.
+"""
+source = "wow_forecaster/taxonomy/archetype_taxonomy.py"
+anchor = "# Placeholder categories — no tags defined yet (future expansion)"
+see_also = ["wow_forecaster/features/daily_agg.py"]
+
+[[question]]
+id = "m01-q13"
+kind = "recall"
+prompt = """
+`CATEGORY_TAG_MAP` is described as the canonical integrity contract. State the
+three rules it enforces, and then name two things it deliberately does not
+check.
+"""
+rubric = [
+  "Every ArchetypeCategory must have an entry in the dict",
+  "Every ArchetypeTag must appear in exactly one category's list",
+  "Tags for a category must share that category's slug prefix",
+  "It does not check counts, and it does not check that any tag is ever used by a real item or that the grouping matches actual market behavior",
+]
+answer = """
+Three rules: every category has an entry, every tag appears in exactly one
+category's list, and a tag's slug carries its category's prefix. The prefix rule
+is what makes `ArchetypeTag` filterable by string prefix, which is why the
+naming convention is stated in the enum docstring rather than left implicit.
+
+What it does not check is the more useful half of the answer.
+
+It says nothing about counts, which is how the README drifted to 36 (q11).
+
+It says nothing about usage. A tag can exist with zero items assigned to it and
+the contract is perfectly happy. `gem.meta` is annotated in its own docstring as
+a placeholder for a classic-era mechanic, and nothing enforces that a live
+archetype has a live market.
+
+And it says nothing about whether the grouping is economically correct. The
+premise of the whole project is that items inside one archetype move together
+and items across archetypes do not. That is an empirical claim, it is asserted
+by a hand-authored taxonomy, and no test in this repo measures within-archetype
+price correlation against between-archetype correlation. That measurement would
+be a genuinely good addition and it does not exist yet.
+"""
+source = "wow_forecaster/taxonomy/archetype_taxonomy.py"
+anchor = "The ``CATEGORY_TAG_MAP`` dict is the canonical integrity contract:"
+
+[[question]]
+id = "m01-q14"
+kind = "mcq"
+prompt = """
+Both taxonomy modules end their docstring with the same sentence: this module
+has no imports from any other `wow_forecaster` package. Why is that stated as a
+rule rather than left as a coincidence?
+"""
+answer = """
+The taxonomy is the bottom of the dependency graph. `models/` imports
+`ArchetypeCategory` and `ArchetypeTag` to type its fields, so if the taxonomy
+ever imported back from `models/` there would be a circular import. Stating the
+rule in the docstring turns an accident of current structure into a constraint a
+future change has to respect.
+
+It also reflects what these modules are. They hold vocabulary, not behavior:
+`StrEnum` members with docstrings explaining what each one means economically.
+Anything that needs configuration, a database or a Pydantic model is by
+definition not vocabulary and belongs a layer up.
+
+The practical payoff is that the taxonomy can be imported from anywhere,
+including a test, a notebook, or a script, with no risk of dragging in the
+config loader or a database connection.
+"""
+options = [
+  { text = "The taxonomy is the base layer that models/ imports from, so an import back would create a cycle; the docstring makes that a rule instead of an accident", correct = true },
+  { text = "So the taxonomy can be published as a standalone package for other tools to depend on", note = "Nothing packages it separately. pyproject.toml declares one distribution, and no code or doc treats the taxonomy as an independently versioned artifact." },
+  { text = "To keep Pydantic out of the import chain, which measurably speeds up CLI startup", note = "The stated reason is circular imports. Pydantic is imported by models/ anyway, and every CLI path that touches an archetype loads it, so no import cost is avoided." },
+  { text = "Because StrEnum members cannot be defined in a module that has other imports", note = "There is no such restriction. StrEnum is ordinary Python; the constraint here is architectural, chosen by the author, not imposed by the language." },
+]
+source = "wow_forecaster/taxonomy/archetype_taxonomy.py"
+anchor = "This module has NO imports from any other ``wow_forecaster`` package."
+
+# ── Events as the fourth constraint ───────────────────────────────────────────
+
+[[question]]
+id = "m01-q15"
+kind = "recall"
+prompt = """
+The event taxonomy splits every event across three orthogonal dimensions, plus a
+fourth enum that lives somewhere else. Name all four, say what question each
+answers, and then say what epistemic status `EventSeverity` actually has.
+"""
+rubric = [
+  "EventType is the what, EventScope is the who, EventSeverity is the how much",
+  "ImpactDirection (spike, crash, mixed, neutral) is the fourth, and it is per archetype rather than per event",
+  "It lives in the event_archetype_impacts table, because direction depends on which archetype you ask about",
+  "The severity bands are hand-authored expected magnitudes, not measurements, so they encode a prior rather than a finding",
+]
+answer = """
+`EventType` is the what: 28 kinds from expansion launch to content drought.
+`EventScope` is the who: global, region, realm cluster, faction. `EventSeverity`
+is the how much: five bands with explicit percentage ranges attached, from
+critical at over 50 percent movement down to negligible under 5 percent.
+`ImpactDirection` is the fourth, and it is deliberately not a property of the
+event: the same patch spikes one archetype and crashes another, so direction is
+recorded per event-and-archetype pair in `event_archetype_impacts`.
+
+Now the part that matters for how you read every event feature downstream. Those
+severity percentages are authored by a person from domain knowledge. Nothing
+measured them. `config/events/tww_event_impacts.json` carries 56 category-level
+impact records in the same spirit, and they feed the event feature columns and
+the `event_boost` term in the recommendation score.
+
+So the event layer encodes a prior about what events do, and the system then
+acts on that prior. Measuring the actual effect is a separate piece of work: an
+interrupted time series or a difference-in-differences design per event, which
+is M18 and roadmap milestone M5. PLAN.md's ceiling names closing that loop, so
+that measured effects replace the hand-authored records rather than sitting
+beside them.
+
+The design that makes the measurement possible later is `announced_at` plus
+`is_known_at()`: separating when an event became known from when it took effect
+is both a look-ahead guard for forecasting and the identification backbone for
+the causal study.
+"""
+source = "wow_forecaster/taxonomy/event_taxonomy.py"
+anchor = "  - ``EventSeverity`` — the *how much*: expected market impact magnitude?"
+see_also = ["wow_forecaster/models/event.py"]
+
+[[question]]
+id = "m01-q16"
+kind = "predict"
+prompt = """
+An archetype has price observations on only 6 distinct dates inside a 90-day
+requested range. `build-datasets` runs over that range.
+
+What do that archetype's rows look like coming out of the daily aggregation and
+the lag/rolling step?
+"""
+answer = """
+You get 90 rows, not 6. The date spine is generated in Python over the full
+calendar range and every date with no observation becomes a row with
+`price_mean = None` and `obs_count = 0`. Nothing is forward filled: the fill is
+an explicit null, which is the honest representation of "no price was observed"
+and is distinguishable from a real price.
+
+The labels are worse than the features. `target_price_28d` is
+`price_lookup.get(d + 28 days)`, a plain dict lookup with no fallback, so it is
+None unless that exact future date happens to be one of the six with data. For a
+series this thin, nearly every row has no usable 28-day label at all, and those
+rows contribute nothing to training for that horizon.
+
+This is the "thin per-archetype series" constraint in concrete form, and it
+drives design decisions elsewhere: one global cross-archetype model rather than
+one model per series (M07), a 14-distinct-day threshold before an item is
+eligible for its own forecast row, and cold-start blending toward a transferred
+source price when there is not enough history to fit against.
+"""
+options = [
+  { text = "90 rows, 84 of them with price_mean None; target_price_28d is a dict lookup with no fallback, so it is null on nearly every row", correct = true },
+  { text = "6 rows, since the aggregation only emits dates that actually have observations", note = "That is what the SQL alone returns. daily_agg then generates the full calendar range in Python and fills the gaps, specifically so downstream lag and rolling windows can index by calendar offset." },
+  { text = "90 rows with prices forward-filled from the last observed day, so no feature is null", note = "There is no forward fill anywhere in daily_agg or lag_rolling. Filling would manufacture prices that were never observed and would quietly flatten volatility features toward zero." },
+  { text = "90 rows, with target_price_28d falling back to the most recent known price when the target date is empty", note = "The target is price_lookup.get(target_date) with no default. A fallback there would be label fabrication, and it would bias the model toward predicting no change." },
+]
+source = "wow_forecaster/features/daily_agg.py"
+anchor = "one row per (archetype_id, realm_slug, calendar_date).  That daily-grain table"
+see_also = ["wow_forecaster/features/lag_rolling.py"]
+
+# ── Saying it out loud ────────────────────────────────────────────────────────
+
+[[question]]
+id = "m01-q17"
+kind = "recall"
+prompt = """
+You are asked: "it is a price forecaster, what is hard about that?" Give the
+ninety-second answer, grounded in this system rather than in generic time-series
+talk.
+"""
+rubric = [
+  "State the target precisely: an archetype's daily mean price, h days out, not an item's",
+  "Cold start: the expansion you care about has no history and its item IDs did not exist when the mapping was written",
+  "The 30-day retention wall plus a current-snapshot-only API, so history only accumulates forward from the day capture started",
+  "Thin, sparse series and discrete event shocks rather than long smooth histories",
+  "The honest close: the model has never been compared to a baseline, so nothing here is established yet",
+]
+answer = """
+A ninety-second version that lands:
+
+"The unit of prediction is not an item, it is an economic archetype: a behavior
+group like stat flasks or common ore. Each one has a daily mean price per
+region, and the model predicts that price 1, 7 and 28 days out.
+
+Three things make it harder than it sounds. First, the whole point is
+forecasting an expansion that has no price history, so item-to-item mapping is
+impossible by construction. The item IDs do not exist when you write the map.
+Transfer has to happen at the behavior level, with a stated confidence and a
+written rationale for every mapping, and on day one the forecast is mostly a
+transferred prior rather than a fit.
+
+Second, the data constraint is structural, not an engineering shortfall. The API
+terms require raw data to be deleted within 30 days, and the commodities
+endpoint serves only the current snapshot. There is no historical endpoint. So
+history exists only as derived daily aggregates, only forward from the day
+capture started, and an hour missed is an hour gone permanently. We learned that
+one the expensive way: a leaked lock file silenced ingestion for 105 days and
+those dates are simply empty now.
+
+Third, the series are thin and the moves are discrete. Archetypes do not trade
+every day, so the date spine is mostly fill, and prices step on scheduled events
+(expansion launch, season start, race to world first, patch day) rather than
+drifting smoothly.
+
+And the honest part: the model has never been compared to a baseline. The
+walk-forward harness exists, the four baselines exist, the acceptance bar is
+written down in the source, and the comparison has not been run. So the pipeline
+is real and the accuracy claim is not established yet."
+
+The last paragraph is the one that makes the rest credible. A candidate who can
+name what their own system has not proved is a different candidate.
+"""
+source = "PLAN.md"
+anchor = "cold start across expansions, the 30-day ToS retention wall capping evaluation history, thin per-archetype series, event shocks"
+see_also = ["LESSONS.md", "README.md"]

@@ -1,0 +1,792 @@
+# M03: Normalization, rollups, and the date spine.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+
+# ── The rolling z-score: pipeline/normalize.py ────────────────────────────────
+
+[[question]]
+id = "m03-q01"
+kind = "recall"
+prompt = """
+NormalizeStage computes a z-score for every observation it writes. Name the
+grain the baseline is computed at, the rows it is computed over, and the two
+things the z-score is actually used for downstream.
+"""
+rubric = [
+  "The baseline is per (item_id, realm_slug), not per archetype and not global",
+  "Mean and std come from market_observations_normalized over the last normalize_rolling_days (default 30), non-outlier rows only",
+  "It sets is_outlier when |z| > outlier_z_threshold (default 3.0)",
+  "is_outlier = 1 rows are then excluded from both rollup tables and from every daily aggregate, so the flag removes the row from the series",
+]
+answer = """
+Grain: (item_id, realm_slug). Not archetype. That matters, because everything
+downstream of this stage aggregates to archetype, so the outlier decision is made
+at a finer grain than the thing being forecast. An item whose price jumped is
+judged against its own history, not against the category average, which is the
+right call.
+
+Rows: prior rows in market_observations_normalized inside a rolling window of
+config.pipeline.normalize_rolling_days calendar days (default 30), filtered to
+is_outlier = 0.
+
+Use: the z-score itself is stored on the row, but the load-bearing output is the
+boolean it produces. is_outlier = |z| > outlier_z_threshold, default 3.0. Both
+rollup UPSERTs and the legacy daily_agg query carry AND mon.is_outlier = 0, so
+flagging a row does not annotate it, it deletes it from the daily series.
+
+Worth holding onto: a symmetric z threshold on prices is a modeling assumption,
+not a neutral one. Auction prices are bounded below by zero and have a long right
+tail, so a fixed |z| > 3 rule flags more upside moves than downside ones. Nothing
+in the repo corrects for that, and no question here pretends otherwise.
+"""
+source = "wow_forecaster/pipeline/normalize.py"
+anchor = "3. Compute a rolling z-score per (item_id, realm_slug) using historical mean/std"
+
+[[question]]
+id = "m03-q02"
+kind = "mcq"
+prompt = """
+The rolling-baseline query filters to is_outlier = 0. What does that filter buy,
+and what does it cost when a market genuinely changes level (a patch changes a
+material's drop rate and the price permanently doubles)?
+"""
+answer = """
+It buys baseline stability: a single spike does not inflate the std and thereby
+mask the next spike, and does not drag the mean toward a price that never held.
+
+The cost is a feedback loop on a true level shift. The new price is more than
+three std from the old baseline, so it is flagged. Flagged rows are excluded from
+the baseline, so the baseline stays anchored to the old regime. Flagged rows are
+also excluded from the rollups, so the archetype's daily series thins out or goes
+blank during exactly the regime change the forecaster most wants to see.
+
+It does self-heal, and the mechanism is worth tracing rather than assuming. The
+window is 30 days wide and rolling. Once the last pre-shift observation ages out,
+the only rows left in the window are flagged ones, so the pair fails HAVING
+COUNT(*) >= _MIN_ROLLING_OBS, drops out of rolling_stats entirely, and falls to
+the cold-start batch path. The batch path scores a single-observation group as
+z = None, which is not an outlier, so the row is written unflagged and the new
+level starts rebuilding a baseline. Recovery takes up to the full window plus a
+run. For a month, the series is degraded in a way nothing alerts on.
+"""
+options = [
+  { text = "It stops a spike from corrupting future baselines, but a real level shift is flagged as a run of outliers and is excluded from both the baseline and the daily rollups until the 30-day window rolls past the old regime", correct = true },
+  { text = "It stops a spike from corrupting future baselines, and a real level shift is unaffected because the mean moves with it", note = "The mean cannot move with it. Every post-shift row is flagged, and flagged rows are excluded from the query that computes the mean, so the baseline is pinned to the pre-shift regime until those rows age out of the window." },
+  { text = "It has no statistical effect and exists only to keep the query on the covering index", note = "The index on (realm_slug, is_outlier, observed_at) does include is_outlier, but the filter is a modeling decision. Removing it would change every mean and std this stage computes." },
+  { text = "It prevents double-counting, since an outlier row is also written to the rollup tables", note = "Backwards. Outlier rows are excluded from the rollups by the same is_outlier = 0 predicate, so they are counted nowhere rather than twice." },
+]
+source = "wow_forecaster/pipeline/normalize.py"
+anchor = "rolling window are included so that previously flagged spikes don't corrupt"
+see_also = ["wow_forecaster/db/rollup.py"]
+
+[[question]]
+id = "m03-q03"
+kind = "predict"
+prompt = """
+The normalized table is empty (fresh database, or the state right after the 2026
+restore). One hourly ingest lands: roughly 314,000 rows, one observation per
+item, all for realm "us". NormalizeStage runs.
+
+What do the z_score and is_outlier columns look like on those rows?
+"""
+answer = """
+z_score is NULL on essentially every row and is_outlier is 0 on all of them.
+
+Trace it. _fetch_rolling_stats returns an empty dict, because there is no
+normalized history to compute a baseline from. _normalize_batch then groups the
+batch by (item_id, realm_slug). A commodity snapshot carries one observation per
+item, so each group holds exactly one row. That hits the len(valid_prices) == 1
+branch: mean_p is the price itself and std_p is 0.0. The z-score is only computed
+when std_p > 0, so it stays None, and is_outlier is None-safe and evaluates
+False.
+
+Two consequences. First, day one produces no outlier flags at all, which means
+day one also loses nothing from the rollups. Second, the flag only becomes
+meaningful from about the third hourly run, once at least _MIN_ROLLING_OBS = 2
+prior non-outlier rows exist per pair. The postmortem's day-one gap verification
+recorded an outlier rate of 3.4 to 4.5 percent, which is the third-run-onward
+regime, not this one.
+"""
+options = [
+  { text = "z_score NULL and is_outlier 0 on effectively every row: no rolling history, and each single-observation group has std 0", correct = true },
+  { text = "z_score 0.0 and is_outlier 0 on every row, since each price equals its own group mean", note = "0.0 would be the answer if the code divided by std anyway. It does not: the z-score is guarded by std_p > 0, so a degenerate group yields None, not zero. The distinction matters because NULL and 0.0 mean different things to every downstream consumer." },
+  { text = "z_score computed against the batch mean across all 314,000 items, with roughly 0.3 percent flagged as outliers", note = "Batch statistics are computed per (item_id, realm_slug) group, not across the whole batch. Pooling unrelated items would compare a herb against a gem, which is not a meaningful scale." },
+  { text = "NormalizeStage refuses to run and logs that no baseline exists", note = "The cold-start path is deliberate, not an error. The stage writes the rows with a NULL z-score so the prices land and the baseline can start building. Refusing would mean a fresh database never bootstraps." },
+]
+source = "wow_forecaster/pipeline/normalize.py"
+anchor = "For single-observation groups with no rolling history, z_score is None"
+see_also = ["docs/postmortem-2026-04-lock-outage.md"]
+
+[[question]]
+id = "m03-q04"
+kind = "recall"
+prompt = """
+SQLite has no STDEV, so the baseline query computes variance in one pass with
+AVG(price*price) - AVG(price)*AVG(price). The Python that reads the result clamps
+the value at zero before taking a square root.
+
+Why is that clamp there, and what is the general name for the problem it papers
+over?
+"""
+rubric = [
+  "The identity Var(X) = E[X^2] - E[X]^2 is exact in real arithmetic but not in floating point",
+  "It subtracts two large nearly-equal numbers, so the result loses most of its significant digits",
+  "That is catastrophic cancellation, and it can produce a small negative variance",
+  "A negative variance would raise or produce a complex value at the ** 0.5 step, so the code clamps to 0.0 first",
+  "The numerically stable alternative is a two-pass or Welford computation, which SQL in one pass makes awkward",
+]
+answer = """
+The identity is algebraically exact and numerically poor. E[X^2] and E[X]^2 are
+both large when prices are large, and their difference is small when prices are
+stable. Subtracting two nearly-equal doubles cancels the leading digits and
+leaves whatever rounding error survived, which can be negative. That is
+catastrophic cancellation, and it is the classic reason this identity is called
+the naive variance formula.
+
+Concretely: an item sitting at 12,000 gold with a few gold of spread gives
+E[X^2] near 1.44e8 and E[X]^2 within a rounding error of it. Doubles carry about
+15 to 16 significant decimal digits, so a difference six or seven orders of
+magnitude below the operands has already lost most of its precision. Taking
+** 0.5 of a negative would raise for floats or, in Python, return a complex
+number, so the clamp is not cosmetic.
+
+The stable alternatives are a two-pass computation (mean first, then the mean of
+squared deviations) or Welford's online algorithm. Neither is expressible as a
+single grouped SQL aggregate without either a second query or a user-defined
+function, which is exactly the tradeoff being made here: one round trip, accept
+the precision loss, clamp the sign.
+
+The honest read is that this is fine at the magnitudes involved, and the clamp is
+the right one-line defense. But note what it hides: the clamp turns an unusable
+negative into 0.0, and std 0.0 makes the z-score None. A precision failure and a
+genuinely constant price are indistinguishable in the output.
+"""
+source = "wow_forecaster/pipeline/normalize.py"
+anchor = "Guard against tiny negative floating-point variance"
+
+[[question]]
+id = "m03-q05"
+kind = "mcq"
+prompt = """
+_MIN_ROLLING_OBS = 2. A pair with two prior non-outlier observations gets a
+rolling baseline; a pair with one falls back to batch stats.
+
+What does a two-observation baseline do to the outlier flag on the third
+observation?
+"""
+answer = """
+It makes it hair-trigger. The query computes population variance, dividing by n
+rather than n - 1, so with two points the std is exactly half the gap between
+them. Two consecutive hourly scans of a stable item might differ by a few gold,
+giving a std of a couple of gold against a mean in the thousands. Any ordinary
+intraday move is then dozens of standard deviations out and gets flagged.
+
+Then the loop from q02 engages: the flagged row is excluded from the baseline, so
+the baseline stays as tight as it was, so the next row is flagged too.
+
+The threshold exists to avoid something worse (a one-observation "baseline" has
+std 0 and no scale at all), so 2 is an improvement on 1. But 2 is not a sample
+size, and nothing in the repo ramps the threshold or widens the interval while
+the sample is small. If you want one concrete improvement to this module, this is
+it: require enough observations that the scale estimate means something, or shrink
+the estimate toward a pooled archetype-level std while n is small.
+"""
+options = [
+  { text = "The std is half the gap between the two prior prices, so the scale is tiny and ordinary moves get flagged, and the flag then keeps the baseline tight because outliers are excluded from it", correct = true },
+  { text = "Nothing unusual: with n = 2 the sample variance is unbiased, so the z-score is well calibrated", note = "The query divides by n, not n - 1, so it is the population variance and is biased low. Even with Bessel's correction, an unbiased estimator with n = 2 still has enormous variance of its own, which is the actual problem." },
+  { text = "The z-score is undefined because at least three points are needed for a standard deviation", note = "Two points give a perfectly well-defined std, just a nearly useless one. The code computes it and uses it, which is what makes the threshold worth arguing about." },
+  { text = "It matches min_obs_for_feature = 30, so the feature layer filters those rows out anyway", note = "min_obs_for_feature is a separate config value used elsewhere and does not gate normalization. Nothing downstream re-checks how many observations backed an is_outlier decision, and once the row is flagged it is gone from the rollups." },
+]
+source = "wow_forecaster/pipeline/normalize.py"
+anchor = "_MIN_ROLLING_OBS = 2"
+see_also = ["config/default.toml"]
+
+[[question]]
+id = "m03-q06"
+kind = "recall"
+prompt = """
+The rolling baseline is fetched once per run, before the batch loop, and its
+window is expressed as datetime('now', '-N days') with no upper bound.
+
+Name the two consequences. One is documented and defensible; one is not
+documented and is a real property of the output.
+"""
+rubric = [
+  "Every batch in one run shares one baseline instead of re-querying per batch",
+  "That is documented and justified: a 30-day window dwarfs what one ingest run adds",
+  "The window is anchored on wall-clock time at run time, not on each row's own observed_at, and has no upper bound",
+  "So a row is scored against history that can be newer than the row itself, which matters when draining a backlog",
+  "And the z-score is therefore not reproducible: re-normalizing the same raw rows later gives different values",
+]
+answer = """
+First consequence, the documented one: the prefetch replaced a per-batch query.
+The comment argues that a 30-day window dwarfs what one ingest run adds, so
+every batch would have gotten effectively the same numbers anyway. That is sound.
+The cost is that rows normalized late in a long run are scored against a baseline
+that excludes rows normalized earlier in the same run, which at these magnitudes
+is noise.
+
+Second consequence, undocumented: the window is relative to the clock at run
+time, not to the observation being scored, and it is open-ended on the right.
+The predicate is observed_at >= now - 30 days, with nothing capping it above. So
+the baseline is "the last 30 days of whatever is already normalized", not "the 30
+days preceding this row".
+
+In steady hourly operation the two are nearly the same thing and this does not
+bite. It bites when the pipeline is behind. sync-snapshots drains cloud objects
+that may be hours or a night old, and a longer catch-up drains older ones still.
+Those rows are z-scored against a window whose right edge is now, which can sit
+after the row's own timestamp. Normalization is a leakage surface people rarely
+think about, and this is what it looks like.
+
+The reproducibility point follows from the same fact. Every pipeline run stamps a
+config_snapshot so the run can be reconstructed, but re-running normalization over
+the same raw rows on a different day produces different z-scores and potentially
+different is_outlier flags, because the window moved. The stage is not a pure
+function of its inputs and config.
+"""
+source = "wow_forecaster/pipeline/normalize.py"
+anchor = "AND observed_at >= datetime('now', '-{window_days} days')"
+see_also = ["wow_forecaster/ingestion/cloud_sync.py"]
+
+[[question]]
+id = "m03-q07"
+kind = "find"
+prompt = """
+An observation whose min_buyout_raw is NULL still gets written to the normalized
+table. Find what goes into price_gold for that row, then find the place in the
+rollup layer that exists because of it. Explain the connection.
+"""
+rubric = [
+  "price_gold is set to 0.0 when the source price is None, because the column is NOT NULL",
+  "The rollup tables store both zero-inclusive and positive-only price aggregates",
+  "The docstring reason: consumers disagree about whether to filter price_gold > 0",
+  "So a sentinel written at normalize time forces every downstream aggregate to carry two versions of the same statistic",
+]
+answer = """
+In _normalize_batch the row is built with price_gold set to 0.0 whenever the
+converted price is None. The column is NOT NULL in the schema, so a sentinel was
+needed and zero was chosen.
+
+The consequence is visible one layer down. daily_rollup_archetype carries both
+price_sum_all / price_sum_sq_all / obs_count (zero-inclusive) and price_sum /
+price_sum_sq / price_obs_count (guarded by CASE WHEN price_gold > 0), and
+daily_rollup_item does the same with its _pos columns. The module docstring says
+why plainly: consumers differ on whether they filter price_gold > 0.
+
+That is the connection. A missing price and a price of zero became the same value
+at normalize time, so every consumer downstream has to decide independently what
+to do about zeros, and the rollup schema pays for that indecision by storing each
+price statistic twice.
+
+The alternative worth being able to argue for: make price_gold nullable and let
+NULL mean "no price observed". SQL aggregates already skip NULLs, which is the
+behavior every one of the price_gold > 0 guards is reimplementing by hand. The
+cost is a schema migration and touching every consumer, which is why it has not
+happened. But recognize the shape: a NOT NULL column plus a sentinel value is a
+nullable column with the type system switched off.
+"""
+source = "wow_forecaster/pipeline/normalize.py"
+anchor = "price_gold=price_gold if price_gold is not None else 0.0,"
+see_also = ["wow_forecaster/db/rollup.py", "wow_forecaster/db/schema.py"]
+
+# ── The date spine: features/daily_agg.py ────────────────────────────────────
+
+[[question]]
+id = "m03-q08"
+kind = "recall"
+prompt = """
+Prices are sparse: an archetype may have no observation on a given day. The daily
+aggregation still emits one row per (archetype, date) across the whole range.
+
+Explain why that densification is required at all, and why it is done in Python
+rather than by the recursive CTE plus CROSS JOIN that used to do it.
+"""
+rubric = [
+  "Lag and rolling features index by position in a date series, so a missing day would silently shift lag_7 to mean something other than seven days",
+  "The spine makes the gap explicit as a row with obs_count 0 and NULL prices, rather than invisible by absence",
+  "The CTE approach forced SQLite to materialize N_dates x N_archetypes rows before the LEFT JOIN could run",
+  "The Python version queries only the rows that exist and fills the rest from a dict, which is O(rows) instead of O(dates x archetypes) inside the database",
+]
+answer = """
+Densification first. Every feature built on top of this table is positional:
+lag_1, lag_7, a 7-day rolling mean. If a day with no observations simply did not
+appear as a row, "seven rows back" would not be "seven days back", and the lag
+would quietly mean something different for every series depending on how sparse
+it was. The spine turns an absent day into a present row with obs_count = 0 and
+NULL prices, which the lag and rolling code can then handle explicitly. The
+postmortem's day-one verification checked exactly this: lag and rolling windows
+returned None rather than fabricated values when they reached into the 90-day
+gap.
+
+Why Python. The database version had to build the full cross product first. A
+recursive CTE generated the dates, a CROSS JOIN paired them with archetypes, and
+only then could the LEFT JOIN attach the real aggregates, so SQLite materialized
+N_dates x N_archetypes rows regardless of how few of them had data. The Python
+version inverts it: fetch only the rows that exist, index them in a dict by
+(archetype_id, obs_date), generate the calendar range with a list comprehension,
+and do the lookup in memory. Same output, and the expensive part now scales with
+the data rather than with the size of the grid.
+
+The generalizable point: densifying a sparse series is a cross product, and a
+cross product is the one thing you want the database to do least of. Doing the
+join key generation outside SQL is a legitimate optimization, not a hack, as long
+as the output shape is identical.
+"""
+source = "wow_forecaster/features/daily_agg.py"
+anchor = "for days with no data via a dict lookup.  This avoids the recursive CTE and"
+see_also = ["wow_forecaster/features/lag_rolling.py"]
+
+[[question]]
+id = "m03-q09"
+kind = "mcq"
+prompt = """
+The spine is clamped: spine_start = max(requested_start, data_min) and
+spine_end = min(requested_end, data_max), where the bounds come from the data
+itself.
+
+During the 96-day ingestion outage, what did that clamp do?
+"""
+answer = """
+It made the outage invisible to the forecast pipeline. The clamp derives the
+right-hand edge of the spine from the newest row in the data, not from the
+calendar. With ingestion dead, data_max stopped moving, so every daily build
+produced a spine ending at the last real observation, filled it with the same
+frozen history, trained on it, forecast from it, and wrote a CSV. No error, no
+empty result, no short series. From the outside it looked like a healthy system
+producing output on schedule.
+
+This is root cause four in the postmortem, and its lesson is the one to carry:
+a pipeline that clamps to the newest data cannot tell fresh from frozen.
+Freshness is a statement about the clock, and it has to be checked against the
+clock.
+
+Note that the clamp itself is not a bug and was not removed. Extending the spine
+to a requested end date beyond the data would fabricate a tail of empty rows and
+push the problem into the feature layer. The fix went elsewhere: a freshness gate
+in ForecastStage (max_data_age_hours, default 26) and a scheduled health check
+that compares the newest observation against now. Two seams, both clock-based.
+"""
+options = [
+  { text = "It kept the spine ending at the last real observation, so training and forecasting ran on a frozen window every day without error", correct = true },
+  { text = "It produced a growing tail of all-NULL rows, so the model degraded gradually and visibly", note = "That is what an unclamped spine would have done, and it would arguably have surfaced the problem sooner. The clamp is min(end_date, data_max), so no rows past data_max are generated at all." },
+  { text = "It returned an empty list once the requested start date passed the data end", note = "The empty return only triggers when spine_start > spine_end. The requested start was always well before data_max, so the function kept returning a full frozen window. An empty result would have been loud." },
+  { text = "It had no effect: the health check caught the outage within hours", note = "check-data-health existed since v2.1.0 and would have caught it, but it was never registered as a scheduled task. Monitoring that is not scheduled catches nothing, which is root cause three." },
+]
+source = "docs/postmortem-2026-04-lock-outage.md"
+anchor = "A pipeline that clamps to the newest data cannot tell"
+see_also = ["wow_forecaster/features/daily_agg.py", "config/default.toml"]
+
+[[question]]
+id = "m03-q10"
+kind = "predict"
+prompt = """
+fetch_daily_agg is called with start_date = 2026-01-01 and end_date = 2026-12-31.
+The realm has rollup data from 2026-03-01 through 2026-07-23 and 20 distinct
+archetypes.
+
+How many DailyAggRow objects come back, and what does the first one look like?
+"""
+answer = """
+2,900 rows: 20 archetypes x 145 spine dates.
+
+The clamp does the work. spine_start = max(2026-01-01, 2026-03-01) = 2026-03-01.
+spine_end = min(2026-12-31, 2026-07-23) = 2026-07-23. March through July 23 is
+31 + 30 + 31 + 30 + 23 = 145 days. Nothing outside that range is generated,
+however wide the request was.
+
+The archetype list is the other half of the shape and it is easy to miss: it
+comes from a DISTINCT query with no date filter, so it is every archetype that
+has ever appeared in the rollup for this realm, not just those active in the
+window. An archetype that stopped trading in April still gets 145 rows, most of
+them spine-only.
+
+The first row is (archetype_id = smallest id, realm, 2026-03-01). Whether its
+price fields are populated depends on whether that archetype had data that day.
+If not, it is a spine-only row: prices None, obs_count 0, quantity_sum None,
+is_volume_proxy True.
+"""
+options = [
+  { text = "2,900 rows: 20 archetypes x 145 dates, spanning 2026-03-01 to 2026-07-23", correct = true },
+  { text = "7,300 rows: 20 archetypes x 365 dates, with all-NULL rows outside the data extent", correct = false, note = "This is the unclamped answer. spine_start and spine_end are clamped to the data bounds before the range is generated, so no row exists for a date outside [data_min, data_max]. The docstring in this file still describes the unclamped behavior, which is why the guess is reasonable and still wrong." },
+  { text = "An empty list, because the requested range extends past the available data", correct = false, note = "The empty return fires only when spine_start > spine_end after clamping, or when start_date > end_date on input. A request wider than the data is normal and gets the intersection." },
+  { text = "2,900 rows, but only for archetypes with at least one observation inside the window", correct = false, note = "The archetype list query carries no date filter: it is DISTINCT archetype_id for the realm across all time. An archetype dormant for the whole window still contributes a full column of spine-only rows." },
+]
+source = "wow_forecaster/features/daily_agg.py"
+anchor = "spine_start = max(start_date, data_min)"
+
+[[question]]
+id = "m03-q11"
+kind = "find"
+prompt = """
+fetch_daily_agg's own docstring contradicts its code about one specific case.
+Find the sentence, say what the code actually does, and say which behavior came
+first.
+"""
+rubric = [
+  "The docstring says that if start_date is before the earliest observation, the spine still produces NULL rows at the beginning",
+  "The code clamps spine_start to max(start_date, data_min), so no leading NULL rows are produced",
+  "The docstring describes the pre-clamp behavior and was not updated when the clamp landed",
+  "Same paragraph also says rows outside the data extent have obs_count = 0, which cannot happen now because those rows are not generated",
+]
+answer = """
+The sentence is in the Args-preceding paragraph: it says that if the requested
+start_date is before the earliest observation, the Python spine still works
+because it simply produces NULL rows at the beginning, and that rows outside the
+data extent have obs_count = 0 with all price fields None.
+
+The code does the opposite at both ends. spine_start = max(start_date, data_min)
+and spine_end = min(end_date, data_max), so a request that extends past the data
+in either direction is silently narrowed and no row outside the data extent is
+ever constructed. The obs_count = 0 rows the docstring describes do exist, but
+only for holes inside the data extent, never outside it.
+
+The docstring is the older behavior left in place when the clamp was added. It is
+a small drift and it costs a specific thing: someone reading only the docstring
+would conclude the spine is a reliable calendar and would not predict the
+frozen-window failure in q09. The clamp is precisely what made the outage
+invisible, and the docstring says the clamp is not there.
+
+Fixing it is a two-line doc edit and would be a legitimate patch-level PR. That
+is the point of the find questions: half the defects in a codebase this age are
+sentences, not statements.
+"""
+source = "wow_forecaster/features/daily_agg.py"
+anchor = "``start_date`` is before the earliest observation, the Python spine still"
+
+[[question]]
+id = "m03-q12"
+kind = "mcq"
+prompt = """
+fetch_daily_agg picks between a rollup fast path and a legacy path that scans the
+normalized table. The check is _rollup_has_data: does this realm have any row at
+all in daily_rollup_archetype?
+
+Rollups exist for 2026-03-01 to 2026-03-20. The normalized table holds data
+through 2026-07-23. What comes back for a build over the full range?
+"""
+answer = """
+Only 2026-03-01 through 2026-03-20. Four months of normalized data is invisible,
+and nothing says so.
+
+The reason is that the path choice and the bounds query are the same decision.
+_rollup_has_data returns True on a single matching row, and from that point every
+subsequent query in the function reads the rollup: the bounds come from
+_ROLLUP_BOUNDS_SQL, so data_max is the rollup's newest date, not the normalized
+table's. The clamp from q09 and q10 then narrows the spine to the rollup's extent
+and the build proceeds normally over a short window.
+
+This is the same failure shape as the outage, one layer in. A pipeline that
+derives its own extent from a cache cannot tell a complete cache from a stale
+one. It is not hypothetical here either: the 2026 restore ran with rollup
+coverage at 22 dates while the normalized table held more, and backfill-rollups
+exists precisely because the two can diverge.
+
+The mitigation that would actually work is a freshness comparison rather than an
+existence check: compare MAX(obs_date) in the rollup against MAX(observed_at) in
+the normalized table and either backfill or fall back when they disagree. The
+existence check is cheap and was chosen for that reason. Know what it buys and
+what it cannot see.
+"""
+options = [
+  { text = "20 days of spine, clamped to the rollup's extent, because the bounds query reads the rollup once the fast path is chosen", correct = true },
+  { text = "The full range, because the bounds query always reads the normalized table and only the daily aggregates come from the rollup", note = "Both queries switch together. bounds_sql is assigned from the same use_rollup flag as daily_sql, so choosing the fast path also chooses where the extent comes from." },
+  { text = "20 days of populated rows followed by all-NULL spine rows through July", note = "That would require the spine to extend past data_max. The clamp is min(end_date, data_max), so dates past the rollup's newest are not generated at all." },
+  { text = "The legacy path is used, because 20 days of rollup coverage is below the threshold for the fast path", note = "There is no threshold. _rollup_has_data runs a LIMIT 1 existence check, so one row anywhere for the realm commits the whole build to the rollup path." },
+]
+source = "wow_forecaster/features/daily_agg.py"
+anchor = "# Choose fast path (rollup) or legacy path based on data availability."
+
+[[question]]
+id = "m03-q13"
+kind = "recall"
+prompt = """
+Spine-only rows carry price_mean = None and obs_count = 0 but a real forward
+target whenever the target date happens to land on a day with data. Explain how
+those rows reach the training matrix and what the fix is.
+"""
+rubric = [
+  "The spine emits a row for every (archetype, date) whether or not observations exist",
+  "The dataset builder attaches the forward label price(obs_date + h), which is a lookup on a different date and can be non-null",
+  "LightGBMForecaster.fit filters rows only on a null target, so a row with every feature null and a real label survives",
+  "The model then trains on rows with no signal in any feature and a genuine label, which is pure noise",
+  "Fix: also require a usable feature, price_mean non-null being the simplest rule, either at dataset build or next to the target filter",
+]
+answer = """
+The chain is short and each link is individually reasonable.
+
+The spine deliberately emits a row for a day with no observations, because
+positional lag features need it (q08). The dataset builder attaches the target
+price(obs_date + h), which is a lookup at a different date, so a gap day at T can
+easily have a real price at T + h. The fit-time filter in lgbm_model.py keeps
+every row whose target is non-null and asks nothing about the features. So rows
+with every price feature null and a genuine label go into the matrix.
+
+That is noise with a label attached. The model cannot condition on anything, so
+the best it can do on those rows is learn the unconditional mean of the target,
+which drags the fit toward a constant.
+
+Issue #71 measured it after the 96-day gap: 100 contaminated target cells in one
+day's training Parquet, 20 rows at 1d (obs_date 2026-07-20 with a target landing
+on the fresh 07-21), 40 at 7d, 40 at 28d, roughly 3 percent of usable rows per
+horizon. The proposed fix is one predicate: require price_mean non-null, either
+in dataset_builder or beside the existing target check.
+
+The framing that makes this worth studying: it is the mirror image of the leakage
+check everyone runs. The gap verification confirmed no row carries a target
+pointing into the gap. Nobody checked the other direction, rows inside the gap
+carrying targets pointing out of it. And the condition is not exotic. It recurs
+in miniature every time a single spine day has no data, which on a sparse
+archetype is often.
+"""
+source = "wow_forecaster/ml/lgbm_model.py"
+anchor = "train_valid = [r for r in train_rows if r.get(target_col) is not None]"
+see_also = ["wow_forecaster/features/daily_agg.py", "docs/postmortem-2026-04-lock-outage.md"]
+
+# ── Rollups, the UTC anchor, and index-serviceable predicates ────────────────
+
+[[question]]
+id = "m03-q14"
+kind = "recall"
+prompt = """
+The hourly rollup step used to anchor on the machine's local date and upsert one
+date. It now anchors on an injectable UTC clock and upserts two.
+
+State both defects the old version had, and say which one the previous-date
+upsert fixes.
+"""
+rubric = [
+  "Observations are stamped UTC but the target date was the local calendar date, so the two disagreed by the UTC offset",
+  "An evening run on a US machine wrote UTC-stamped rows for tomorrow's UTC date and then rolled up today's local date, producing zero rollup rows for what it had just ingested",
+  "Rollups lagged intraday by up to the offset and only self-healed on the next local day's run",
+  "The second defect: a machine that went down before the next local day lost that UTC day's tail permanently",
+  "The previous-date upsert fixes the tail: rows arriving after the last pre-midnight run are only ever rolled up by a post-midnight run, so re-doing yesterday is what closes each UTC day",
+]
+answer = """
+Two defects, one root cause. Observations carry UTC timestamps; the rollup step
+targeted date.today() in local time.
+
+Defect one is the mismatch. This was found during the 2026 restore: a 22:43 EDT
+run ingested 237,983 rows stamped with the next UTC date and then upserted the
+rollup for the local date, which matched none of them. Zero rollup rows for a
+successful ingest. It self-healed the following day, so the symptom was a lag of
+up to the UTC offset rather than a permanent hole, which is exactly why it went
+unnoticed.
+
+Defect two is the tail, and it is the one that survives fixing the timezone.
+Observations landing in the final hours of a UTC day arrive after the last run
+that fires before UTC midnight. No run inside that UTC day ever sees them. Only a
+run after midnight can roll them up, and it will only do so if it looks
+backwards. Hence the loop over (today_utc - 1 day, today_utc): the previous-date
+upsert is what actually completes each UTC day, and the current-date upsert is
+what keeps the day fresh as it fills.
+
+Re-upserting a finished date costs nothing correctness-wise, because the
+statement is an idempotent recompute-and-replace: it recounts the same source
+rows and writes the same values, a zero-delta upsert. It does cost a query per
+realm per table per run, which is what made the predicate rewrite in q16 worth
+doing.
+
+The clock is injectable (run(now=...)) so the incident can be pinned in a test
+from any timezone. That pattern is applied in about three places in this repo and
+absent in twenty; PLAN.md recommends extending it opportunistically rather than
+as a sweep.
+"""
+source = "wow_forecaster/pipeline/orchestrator.py"
+anchor = "previous-date upsert is what completes each day"
+see_also = ["wow_forecaster/db/rollup.py", "CHANGELOG.md"]
+
+[[question]]
+id = "m03-q15"
+kind = "mcq"
+prompt = """
+Someone proposes dropping the previous-date upsert and keeping only the current
+UTC date, on the grounds that rollups self-heal anyway.
+
+What breaks?
+"""
+answer = """
+The tail of every UTC day stops being written by anything, so a machine that is
+off or asleep across the seam loses that day permanently.
+
+Follow the timing. The hourly task fires at :16. The last firing before UTC
+midnight is 23:16 UTC, which is not the end of the day: the 23:16 to 00:00
+window's observations arrive in the 00:16 run, which is already the next UTC
+date. With only a current-date upsert, that run rolls up a UTC day 16 minutes
+old and never touches the one that just closed. Nothing else in the pipeline
+revisits a past date.
+
+"It self-heals" was true of the old local-date bug for a different reason: the
+local date lagged the UTC date, so the next day's runs happened to target the
+previous UTC date and swept it up. Remove the lag by anchoring on UTC and that
+accidental backfill disappears. The two-date loop is the deliberate version of
+what the bug was doing by accident.
+
+The relevant hardware fact makes it concrete: this machine sleeps between runs
+and a powered-off machine does not wake. Missing a single post-midnight run is
+routine, not exceptional, which is why the recompute is worth its cost.
+"""
+options = [
+  { text = "Observations from the last part of each UTC day only arrive in post-midnight runs, so nothing would ever roll them up and a machine down across the seam loses that day's tail", correct = true },
+  { text = "Nothing breaks: backfill-rollups can reconstruct any missing date on demand", note = "It can, but only from market_observations_normalized, and those rows are deleted after retention.raw_snapshot_days. A hole discovered more than 30 days later is unreconstructable. The rollups are the durable layer precisely because the source is not." },
+  { text = "The upserts would no longer be idempotent, so re-running a date would double-count", note = "Idempotency is unaffected. The statement recomputes each date's aggregates from source rows and replaces them via ON CONFLICT DO UPDATE, so re-running any date is a zero-delta write. That property is what makes the second upsert cheap, not what depends on it." },
+  { text = "The daily forecast would fail its freshness gate, so the loss would at least be loud", note = "The freshness gate reads the newest normalized observation, not the rollup. Normalization would be current while the rollups had a hole, so the gate would pass and the gap would stay silent." },
+]
+source = "wow_forecaster/db/rollup.py"
+anchor = "via UPSERT (two dates so post-midnight runs complete the prior day's tail)."
+
+[[question]]
+id = "m03-q16"
+kind = "recall"
+prompt = """
+The rollup UPSERTs used to select rows with DATE(observed_at) = ?. They now use
+a half-open range on the bare column, and DATE(observed_at) survives only in the
+SELECT list and GROUP BY.
+
+Explain why the first form cannot use an index, why the second can, and why the
+two return the same rows.
+"""
+rubric = [
+  "The index stores raw observed_at values in sorted order; wrapping the column in DATE() means SQLite cannot map the constant to a contiguous key range",
+  "So it evaluates the expression row by row: a full scan of the realm's rows, not a seek",
+  "The range form compares the bare column, so idx_obs_norm_realm_outlier_time serves it as a seek plus a scan of exactly the matching keys",
+  "observed_at is zero-padded ISO-8601 text, so lexicographic order equals chronological order and the 10-character date prefix dominates the comparison",
+  "DATE() in the SELECT list and GROUP BY cannot affect index selection, and with the range covering one date it produces the same single group",
+]
+answer = """
+An index on (realm_slug, is_outlier, observed_at) is a sorted structure over the
+stored column values. A query planner can use it when the predicate defines a
+contiguous range of those values. DATE(observed_at) = '2026-07-23' does not:
+SQLite would have to invert DATE() to know which stored strings satisfy it, and
+it does not reason about function inverses. So it falls back to reading rows and
+evaluating the expression on each one. On a table heading for its 30-day steady
+state, and with two dates x two rollup tables x one run per hour, this was on
+track to be the hottest DATE() site in the codebase.
+
+The rewrite compares the raw column: observed_at >= '2026-07-23' AND observed_at
+< DATE('2026-07-23', '+1 day'). Both bounds are constants of the same type as the
+stored values, so the planner seeks to the first matching key and walks forward.
+
+Equivalence comes from the storage format. observed_at is zero-padded ISO-8601
+text, so lexicographic comparison and chronological comparison agree, and the
+first ten characters are the date. Every timestamp on 2026-07-23 sorts at or
+after the bare string '2026-07-23' and strictly before '2026-07-24'. Same rows.
+
+DATE(mon.observed_at) stays in the SELECT list and GROUP BY, where it cannot
+influence index selection, and since the range covers exactly one date it yields
+the one group the equality predicate used to produce.
+
+The pattern generalizes and the repo applies it in three places: here, in the
+health-check coverage queries, and in the pruner's range deletes. The rule to
+carry: do not put a function on the indexed side of a predicate. Transform the
+constant instead, or add an expression index if you truly need the function.
+There is one more twist in health.py worth knowing, that SQLite's one-probe
+min/max optimization requires a bare column and exactly one aggregate per query,
+which is why a single MIN/MAX query there was split into two.
+"""
+source = "wow_forecaster/db/rollup.py"
+anchor = "wrapping the column in ``DATE()`` there would force a table scan (issue #65)."
+see_also = ["wow_forecaster/reporting/health.py", "wow_forecaster/db/schema.py"]
+
+[[question]]
+id = "m03-q17"
+kind = "predict"
+prompt = """
+The upper bound of the rollup range is written as:
+
+    AND mon.observed_at <  DATE(?, '+1 day')
+
+with the parameter '2026-07-23'. Four rows exist for the realm with these
+observed_at values, all with is_outlier = 0:
+
+    A  "2026-07-23T00:16:04"
+    B  "2026-07-23T23:59:59"
+    C  "2026-07-24"
+    D  "2026-07-22T23:59:59"
+
+Which are included, and does DATE() on the bound reintroduce the scan problem?
+"""
+answer = """
+A and B are in. C and D are out. And no, the DATE() call on the bound does not
+cost anything.
+
+The bound expression contains no column reference. DATE(?, '+1 day') is a
+function of a bind parameter, so SQLite evaluates it once and compares the result
+against the indexed column. That is the whole trick: the function moved from the
+column side to the constant side. Whether a predicate can use an index depends on
+which side the transformation sits on, not on whether a function appears at all.
+
+Row by row. A: '2026-07-23T00:16:04' >= '2026-07-23' and < '2026-07-24'. In.
+B: same, and the T-suffixed string still sorts before '2026-07-24'. In. That is
+the important case, because it is the tail-of-the-day row from q14 and q15.
+C: '2026-07-24' is not < '2026-07-24'. Out, correctly, since it belongs to the
+next date's group. D: '2026-07-22T23:59:59' < '2026-07-23'. Out.
+
+Worth noticing what C shows: a bare date string with no time component sorts
+before every timestamp on that date, which is exactly the behavior the half-open
+bound needs. It works because ISO-8601 is zero-padded and the separator 'T' sorts
+after every digit, so a longer string with the same 10-character prefix stays
+inside the date's range.
+"""
+options = [
+  { text = "A and B included, C and D excluded; DATE() applies to the bind parameter, not to a column, so the predicate is still index-serviceable", correct = true },
+  { text = "A, B and C included, D excluded; DATE(?, '+1 day') is inclusive of the following midnight", note = "The comparison is strictly less than, and '2026-07-24' is not less than '2026-07-24'. If it were included, every midnight-stamped row would be counted in two dates' rollups." },
+  { text = "A and B included, C and D excluded, but the DATE() call still forces a scan because a function appears in the WHERE clause", note = "What defeats an index is a function wrapping the indexed column, which prevents mapping the predicate to a contiguous key range. A function over a bind parameter is evaluated once to a constant and is harmless." },
+  { text = "Only A is included; B falls outside because its time component pushes it past the date bound", note = "Backwards. '2026-07-23T23:59:59' shares the 10-character date prefix and the T separator sorts after every digit, so it lands inside the range. If it did not, the last hours of every day would be lost from the rollups, which is the exact failure the two-date upsert exists to prevent." },
+]
+source = "wow_forecaster/db/rollup.py"
+anchor = "AND mon.observed_at <  DATE(?, '+1 day')"
+
+[[question]]
+id = "m03-q18"
+kind = "recall"
+prompt = """
+Three tables could answer "what was this archetype's mean price on 2026-07-23":
+market_observations_normalized, daily_rollup_archetype, and the training Parquet.
+
+Say what each one is for, which one is durable, and what the rollup stores
+instead of a mean.
+"""
+rubric = [
+  "market_observations_normalized is per-scan grain and is deleted with its parent raw rows at retention.raw_snapshot_days",
+  "daily_rollup_archetype is the durable daily layer: the pruner never touches it, so it outlives the 30-day raw window",
+  "The training Parquet is a derived artifact rebuilt on demand from the rollup, not a source of truth",
+  "The rollup stores additive components (price_sum, price_obs_count, price_sum_sq) rather than a mean, so rows can be recomputed and merged, and variance derived",
+  "daily_agg divides price_sum by price_obs_count to reconstruct price_mean at read time",
+]
+answer = """
+market_observations_normalized is the per-scan grain, one row per item per realm
+per snapshot. It is the input to everything and it is temporary: the pruner
+deletes it alongside the raw rows it derives from, at retention.raw_snapshot_days
+(30, set by the API terms of service). Anything you need past 30 days cannot live
+here.
+
+daily_rollup_archetype and daily_rollup_item are the durable layer. The pruner
+never touches them, which is the whole reason they exist beyond query speed. They
+are also what makes the 30-day retention wall survivable: the raw window is
+capped, the derived daily aggregates are not. PLAN.md names escaping that wall as
+the binding data constraint on this project, and a ToS-clean derived archive is
+the answer it proposes.
+
+The training Parquet is a derived artifact. It is rebuilt from the rollup by
+build-datasets and carries a manifest; losing it costs a rebuild, not history.
+
+The design detail worth taking away: the rollup does not store a mean. It stores
+price_sum, price_obs_count, price_sum_sq, price_min, price_max and the
+quantity-weighted equivalents. Sums are additive and means are not, so a rollup
+of sums can be recomputed for a partial day, merged across dates, and used to
+derive variance via the same E[X^2] - E[X]^2 identity from q04, all without going
+back to the source rows. daily_agg reconstructs price_mean at read time with
+CASE WHEN price_obs_count > 0 THEN price_sum / price_obs_count.
+
+That is the standard shape for a pre-aggregation layer: store the additive
+components, derive the statistic. Storing the mean would make the two-date upsert
+in q14 a merge problem instead of an idempotent replace.
+"""
+source = "wow_forecaster/db/rollup.py"
+anchor = "rollup instead of scanning the full 110M-row normalized table."
+see_also = ["wow_forecaster/governance/pruner.py", "PLAN.md"]
