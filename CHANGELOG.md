@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.11.2] - 2026-07-24
 
 ### Fixed
 - Taxonomy counts in the docs corrected to match the enums. `EventType` is 28, documented in three places as 26, and `ArchetypeTag` is 40, documented in three places as 36. Six stale references fixed across `README.md` (the taxonomy table, the archetype-mapping walkthrough, and the schema listing), `CLAUDE.md` (the key-files line), and `docs/events.md` (the event schema table). The numbers had drifted as tags and event types were added over time without the doc counts being re-swept
