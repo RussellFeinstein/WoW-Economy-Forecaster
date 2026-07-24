@@ -68,6 +68,7 @@ class TestCLIHelp:
             "build-margins",
             "report-crafting",
             "report-recipe-status",
+            "sync-snapshots",
         ],
     )
     def test_help_exits_zero(self, command):
