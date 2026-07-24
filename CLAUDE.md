@@ -197,7 +197,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - Sanity floor: refuses snapshots <50K records (healthy ~314K); design record + activation checklist (secrets are added by hand, never by agents): [docs/cloud-capture.md](docs/cloud-capture.md)
 - Activated 2026-07-20 (bucket + lifecycle + 6 repo secrets in place, workflow enabled)
 
-### Cloud Catch-up Ingestion (issue #43)
+### Cloud Catch-up Ingestion (v2.10.0, issue #43)
 - [wow_forecaster/ingestion/cloud_sync.py](wow_forecaster/ingestion/cloud_sync.py) — listing, download, selection, write lock. NO database code: `select_objects_to_ingest()` is a pure function over key names so ordering/dedup are testable without S3 or SQLite. Reuses `cloud_fetch.parse_key_timestamp` + `_retry`; `local_path_for_key()` is the exact inverse of `cloud_fetch.build_object_key`
 - [wow_forecaster/pipeline/sync_stage.py](wow_forecaster/pipeline/sync_stage.py) — `SyncSnapshotsStage` (three-phase connections, per-object try/except) + `sync_snapshots()` entry point mirroring `durable_backup.run_backup`
 - Selection order (each rule load-bearing, see docs/cloud-capture.md): unparseable -> beyond retention -> already ingested (by snapshot path) -> UTC hour already covered -> one per hour (earliest) -> oldest first -> cap at max_objects_per_run

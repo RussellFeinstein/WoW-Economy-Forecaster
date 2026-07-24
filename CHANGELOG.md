@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.10.0] - 2026-07-23
 
 ### Added
 - `sync-snapshots` command (issue #43): ingests hourly commodities snapshots that the cloud capture wrote to R2 while this machine was asleep or off. The commodities endpoint serves only the current snapshot, so hours missed locally are unrecoverable from the API; draining the bucket is the only way they reach the database. Each object goes through the same ingest path a live fetch uses (same on-disk location, same `_meta` envelope, same item foreign-key guard), followed by normalization and a rollup upsert for every UTC date touched
