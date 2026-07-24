@@ -33,7 +33,7 @@ Each entry is a JSON object with the following fields:
 |---|---|---|---|
 | `slug` | string | yes | Stable unique identifier (e.g. `tww-rtwf-nerubar-s1`). Never change after initial seed. |
 | `display_name` | string | yes | Human-readable name shown in reports. |
-| `event_type` | string | yes | One of 26 `EventType` values (see `event_taxonomy.py`). |
+| `event_type` | string | yes | One of 28 `EventType` values (see `event_taxonomy.py`). |
 | `scope` | string | yes | `global`, `region`, `realm_cluster`, or `faction`. |
 | `severity` | string | yes | `negligible`, `minor`, `moderate`, `major`, or `critical`. |
 | `expansion_slug` | string | yes | `tww`, `midnight`, etc. |
