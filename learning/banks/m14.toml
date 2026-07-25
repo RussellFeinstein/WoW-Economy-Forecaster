@@ -1,0 +1,807 @@
+# M14: Capture without the desktop.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+
+# ── Why capture has to leave the desktop ──────────────────────────────────────
+
+[[question]]
+id = "m14-q01"
+kind = "recall"
+prompt = """
+Every other data problem in this repo has a retry. This one does not. State the
+property of the Blizzard commodities endpoint that makes an uncaptured hour
+permanently lost, and say what that implies about where capture is allowed to
+run.
+"""
+rubric = [
+  "The endpoint serves only the current snapshot; there is no history API to backfill from",
+  "So an hour nobody captured is gone, and no amount of later effort recovers it",
+  "Capture therefore cannot depend on one desktop being awake, powered on, and un-wedged",
+  "The 2026-04 outage is the proof: 96 days of exit-0 skips, and every hour in them is gone",
+]
+answer = """
+The commodities endpoint returns the current auction snapshot and nothing else.
+There is no `?since=` parameter, no archive, no paid tier that serves yesterday.
+Whatever was on the auction house at 03:00 UTC is knowable at 03:00 UTC and
+never again.
+
+That single property drives the whole M0.5 milestone. Every other failure in
+this system is recoverable: a corrupt database restores from backup, a bad
+forecast retrains, a missed rollup recomputes from observations. A missed
+capture is a hole in the historical record that stays a hole. So the capture
+step gets reliability treatment that no other step in the pipeline gets.
+
+The desktop is a bad place to hold that responsibility. It sleeps, it gets
+rebooted for Windows updates, it has a documented history of hard crashes, and
+in April 2026 it wedged on a leaked lock file: for 96 days every hourly run read
+that lock, logged SKIPPED and exited 0, and ingestion was not restored until
+2026-07-21. The gap from 2026-04-08 to 2026-07-20 is permanent. Cloud capture
+exists because the machine you own is a single point of failure for data that
+cannot be re-fetched, and the honest fix is not "make the desktop more reliable"
+but "stop the desktop being the only capturer."
+
+Note what cloud capture does not fix: it protects the raw input stream only, and
+even that only for 30 days, because the bucket carries a ToS-mandated lifecycle
+rule. Protecting the derived history is a separate job, which is why the durable
+backup exists alongside it.
+"""
+source = "wow_forecaster/ingestion/cloud_fetch.py"
+anchor = "serves only the current snapshot, so a missed hour is unrecoverable"
+see_also = ["docs/cloud-capture.md"]
+
+[[question]]
+id = "m14-q02"
+kind = "recall"
+prompt = """
+The capture workflow originally relied on GitHub's own `schedule:` cron. It did
+not work. Describe the measured finding, the first fix that was attempted, why
+that fix was disproved, and what replaced it.
+"""
+rubric = [
+  "GitHub delivered roughly 11 of 24 hourly firings per day for this repo",
+  "First fix (#67): densify the cron to three slots an hour, :16/:36/:56",
+  "Densification changed nothing: 07-22 delivered 11 runs from 72 slots, so the cap is on run delivery, not on schedule expressions",
+  "Replaced by a Cloudflare Worker cron POSTing workflow_dispatch at :16 and :46",
+  "workflow_dispatch runs are created on demand and bypass the schedule backlog",
+]
+answer = """
+Measured across three consecutive days by pulling every run from the Actions
+API: GitHub delivered about 11 of 24 hourly schedule firings for this repo. Not
+occasionally, not under load. Consistently.
+
+The first fix was the obvious one. If only some firings land, ask for more of
+them: issue #67 densified the cron from one slot an hour to three, at :16, :36
+and :56. 07-22 delivered 11 runs against that schedule's 72 slots. Same count as
+the day before, from three times the requests.
+
+That is the finding worth carrying out of this module. The limiter is on run
+delivery, not on schedule expressions, so cron density is a dead lever. The
+supporting evidence was in the timing rather than the count: delivered runs
+repeated day over day within about three minutes of the same clock times, and
+the same three-and-a-half hour dead window near 00:15 to 03:50 UTC appeared on
+three consecutive days, before and after densification. Load-based dropping
+would not reproduce itself to the minute. A deterministic per-repo cap would.
+
+So #67 was reverted and #83 moved the trigger off GitHub entirely. A Cloudflare
+Worker cron on the account that already holds the R2 buckets POSTs
+`workflow_dispatch` to the GitHub API at :16 and :46. Dispatch runs are created
+on demand and start within about a second, and they do not queue behind whatever
+governs schedule delivery. The Worker was confirmed firing on every slot without
+a miss on 2026-07-24.
+
+The habit to steal: when a mitigation is applied, measure whether it worked
+before writing it up as a fix. Five documents in this repo asserted that the
+three-per-hour schedule was the remedy, and all five were wrong for a day.
+"""
+source = "cloud-trigger/worker.js"
+anchor = "The limiter is on run delivery, not on schedule"
+see_also = ["docs/cloud-capture.md", ".github/workflows/cloud-snapshot.yml"]
+
+[[question]]
+id = "m14-q03"
+kind = "mcq"
+prompt = """
+Which observation is the strongest evidence that GitHub's under-delivery is a
+deterministic per-repo cap rather than load shedding or a flaky scheduler?
+"""
+answer = """
+The dead window repeating. The same roughly three-and-a-half hour gap near 00:15
+to 03:50 UTC appeared on three consecutive days, and delivered runs landed within
+about three minutes of the same clock times day over day. Load shedding on a
+shared platform would drop different hours on different days; a stable pattern
+across days is a policy, not congestion.
+
+The run count on its own is weaker evidence. Eleven of twenty-four is consistent
+with plenty of stories. It is the count staying at eleven after the slot count
+tripled, combined with the pattern repeating, that closes the case: if the
+scheduler were dropping randomly at some rate, more slots would have produced
+more runs.
+
+Worth separating the two things the evidence rules out. It rules out "we are
+asking too rarely" (density did not help) and it rules out "we are unlucky"
+(the pattern is stable). It does not tell you the mechanism inside GitHub, and
+the design does not need to know: the fix is to stop asking through that channel.
+"""
+options = [
+  { text = "The same multi-hour dead window and the same delivery clock times repeated across three consecutive days, before and after densification", correct = true },
+  { text = "Every delivered run captured successfully, with about 250K records in 21 to 29 seconds", note = "This rules out the capture code being at fault and rules out runner minutes as the constraint, which is useful. But a healthy run tells you nothing about why the other runs never started." },
+  { text = "The repo is public, so Actions minutes are free and billing cannot be the limiter", note = "Also true and also useful for narrowing the cause, but a negative. It removes one explanation without distinguishing a deterministic cap from random dropping." },
+  { text = "The gap guard tripped with exit 3 on most runs", note = "That is the symptom the guard exists to report, not evidence about the mechanism. The guard says hours are being missed; it says nothing about whether the misses are patterned." },
+]
+source = "docs/cloud-capture.md"
+anchor = "changed nothing (07-22 delivered 11 runs from 72 slots)"
+
+# ── The dead-man alarm ────────────────────────────────────────────────────────
+
+[[question]]
+id = "m14-q04"
+kind = "recall"
+prompt = """
+After the Worker took over as the primary trigger, the GitHub `schedule:` was
+thinned to a single `:06` firing rather than deleted. Explain the two jobs that
+one line does, and how the gap guard's floor of 20 turns the second job into an
+actual alarm.
+"""
+rubric = [
+  "Job one: a redundant fallback capture if the Worker misses",
+  "Job two: the dead-man alarm for the Worker itself",
+  "If the Worker or its PAT dies, capture falls back to GitHub-only delivery of roughly 11 hours a day",
+  "The gap guard counts distinct capture hours in the trailing 24h and trips below 20, so fallback-only delivery cannot satisfy it and runs go red",
+]
+answer = """
+The `:06` schedule is a fallback and an alarm, and the alarm is the interesting
+half.
+
+A dead-man switch has to be something that keeps running after the thing it
+watches dies, and whose output changes when that happens. The `:06` firing is
+exactly that. If the Worker stops (the account lapses, the fine-grained PAT
+expires, which it will within a year, or someone deletes the cron trigger),
+capture does not stop. It degrades to GitHub-only delivery, which is the measured
+~11 hours a day. Each of those surviving runs still executes the gap guard,
+which counts distinct UTC capture hours in the trailing 24 hours and fails with
+exit 3 below 20. Eleven is not 20, so the runs go red and GitHub emails the
+failure.
+
+The whole thing only works because the floor sits above the failure mode. Set
+the floor to 10 and a totally dead Worker looks green forever. That is why the
+docs say the floor stays at 20 on purpose, and why the guard counts distinct
+hours rather than objects: with two or three triggers per hour, a day that
+misses a third of its hours can still hold plenty of objects, so an object count
+would be satisfied by exactly the failure it was meant to catch.
+
+Note also what makes the alarm cheap. There is no separate monitor to keep
+alive, no second service to check the checker. The alarm rides inside the thing
+being monitored, on a trigger path independent of the one that can fail.
+"""
+source = ".github/workflows/cloud-snapshot.yml"
+anchor = "the dead-man alarm: if the Worker or its token dies, capture drops to"
+see_also = ["docs/cloud-capture.md", "cloud-trigger/README.md"]
+
+[[question]]
+id = "m14-q05"
+kind = "mcq"
+prompt = """
+The Worker went live at 23:16Z. For the next several hours the gap guard kept
+reporting 13 and 14 distinct hours and the runs kept exiting 3. Someone proposes
+lowering `GUARD_MIN_HOURS_DEFAULT` to 12 so the runs go green.
+
+What is the right read?
+"""
+answer = """
+Wait. The guard measures the trailing 24 hours, so until the whole window sits
+after the Worker started it still contains the pre-Worker gaps. Red for up to a
+day after the switch is arithmetic, not a fault. The number creeping from 13 to
+14 is itself the useful signal: the metric is live rather than stuck.
+
+The proposal is a specific bad habit worth naming: retuning a threshold to match
+a degraded reality. The floor of 20 was chosen because fallback-only delivery is
+about 11 hours a day, so any floor at or below that is satisfiable by the exact
+failure the guard exists to catch. Lowering it to 12 would make a completely
+dead Worker report healthy forever. The alarm would still fire, still be green,
+and mean nothing.
+
+There is a real fault condition here, and it has a deadline. If the guard is
+still below 20 more than about 24 hours after the first dispatch, something is
+genuinely wrong: check that objects are landing at both :16 and :46, and that
+the guard's three-day-prefix listing is actually reaching them. Diagnose the
+capture, not the threshold.
+"""
+options = [
+  { text = "Leave the floor alone and wait: the trailing-24h window still holds pre-Worker gaps, and it climbs to 24 once the window is entirely post-Worker, well clear of the floor of 20", correct = true },
+  { text = "Lower the floor to 12; the guard should reflect what the system actually delivers", note = "This is the failure mode dressed as pragmatism. Fallback-only delivery is about 11 hours a day, so a floor of 12 is nearly satisfiable by a completely dead Worker. A threshold tuned to observed degradation stops being an alarm." },
+  { text = "The guard is measuring objects rather than hours, so duplicate captures at :16 and :46 are inflating it; fix the metric", note = "It already counts distinct UTC hours, precisely so multiple triggers per hour cannot mask missed hours. Counting objects would be the broken version, and it is not what the code does." },
+  { text = "Suppress exit 3 for 24 hours after a trigger change, then re-enable", note = "A muted alarm during a change window is how a real failure slips through unnoticed. The red runs during the transition cost an email each and carry a number that is visibly climbing, which is better information than silence." },
+]
+source = "docs/cloud-capture.md"
+anchor = "The guard floor stays at 20 deliberately; a floor the failure mode can satisfy would hide the failure."
+
+[[question]]
+id = "m14-q06"
+kind = "predict"
+prompt = """
+The bucket is empty. The very first capture run uploads one object, then lists
+the trailing three day prefixes and finds exactly that one key, timestamped a
+moment ago.
+
+`evaluate_gap_guard` sees 1 distinct hour covered against a minimum of 20. What
+does the run exit with, and why?
+"""
+answer = """
+Exit 0. The bootstrap rule catches it.
+
+The guard splits the listed timestamps into two groups: those inside the trailing
+24 hours, and those older. Low hour coverage only means "hours are being missed"
+if there was history to miss them from. When `older == 0`, nothing in the listing
+predates the window, so the sparse coverage is consistent with a bucket that has
+simply not existed for 24 hours yet, and the guard passes with a "bootstrap"
+detail string rather than failing.
+
+The same branch covers a resume after an outage longer than 48 hours, which
+empties all three listed prefixes. That case is an accepted blind spot rather
+than a designed feature, and the doc says so: the failed runs during the outage
+already sent their emails, so the condition was reported by another mechanism
+before the resume made it invisible here.
+
+That accepted blind spot is also the reason `list_recent_keys` walks three day
+prefixes instead of two. With two, the window just after UTC midnight had no
+objects older than 24 hours at all, so `older` read 0 and the bootstrap branch
+fired on days that genuinely had gaps (issue #68). The bug was not in the
+bootstrap rule; it was in the listing being too narrow to feed it honestly.
+"""
+options = [
+  { text = "0, because the bootstrap rule passes when no listed object is older than the 24-hour cutoff", correct = true },
+  { text = "3, because 1 distinct hour is below the minimum of 20", note = "It would be, without the bootstrap branch. The guard checks `older` before failing, exactly so a first run against an empty bucket does not report a gap that no capture could have filled." },
+  { text = "1, because a failed guard means the snapshot is not trustworthy", note = "Exit 1 means nothing was stored, or storing failed. The guard runs after a successful upload, so its failure never uses code 1. Conflating the two would make a healthy capture with a stale window look like a lost hour." },
+  { text = "0, because the guard only runs once the bucket holds at least 24 objects", note = "There is no such precondition. The guard runs on every capture, on whatever the three day prefixes list, and the bootstrap branch is what handles a thin listing." },
+]
+source = "wow_forecaster/ingestion/cloud_fetch.py"
+anchor = "Bootstrap rule: when no listed object is"
+
+[[question]]
+id = "m14-q07"
+kind = "find"
+prompt = """
+`list_recent_keys` lists three day prefixes, not two. Find the docstring that
+explains why, state the bug that forced the third prefix, and say which UTC
+window it broke in.
+"""
+rubric = [
+  "Three prefixes are today, yesterday, and the day before yesterday",
+  "Issue #68: with two prefixes, the guard's `older` count read 0 just after UTC midnight",
+  "So the bootstrap branch fired on days that genuinely had gaps, turning a real alarm green",
+  "The listing has to reach past the guard's 24-hour cutoff for the older-versus-recent split to mean anything",
+]
+answer = """
+The docstring on `list_recent_keys` in `cloud_fetch.py` carries it. The three
+prefixes are today, yesterday, and the day before yesterday.
+
+The failure with two prefixes is a clean example of a bug that lives in the
+boundary between two correct-looking pieces. The guard needs to know whether any
+capture history exists older than 24 hours, because that is what distinguishes
+"we are missing hours" from "we just started". Just after UTC midnight, every
+object older than 24 hours lives under the day-before-yesterday prefix. With
+only two prefixes listed, that object was never fetched, `older` came back 0,
+the bootstrap branch fired, and a day with real gaps reported healthy.
+
+The bootstrap rule was fine. The listing was too narrow to feed it honestly, and
+the symptom appeared only in a window a few hours wide, once a day. That is the
+shape of the bugs this layer produces: not a crash, a silently wrong green.
+
+Cross-reference `list_objects_since` in `cloud_sync.py`, which does the analogous
+listing for the drain path. It walks one prefix per UTC date from `since` to
+`now` and follows pagination to the end, with its own note that a truncated page
+reads exactly like a quiet day. Same failure class, both times solved by making
+the listing wide enough that a short answer cannot be mistaken for a true one.
+"""
+source = "wow_forecaster/ingestion/cloud_fetch.py"
+anchor = "count read 0 in that window and the bootstrap rule fired on days"
+see_also = ["wow_forecaster/ingestion/cloud_sync.py"]
+
+[[question]]
+id = "m14-q08"
+kind = "recall"
+prompt = """
+`cloud_fetch` defines four exit codes. Name what each one means, and explain why
+"uploaded, but the trailing 24 hours have gaps" was given its own code instead of
+being folded into the generic failure code.
+"""
+rubric = [
+  "0 uploaded and the trailing 24 hours look healthy",
+  "1 fetch, sanity, or upload failure: nothing was stored",
+  "2 configuration error, with the missing variables named and never their values",
+  "3 uploaded successfully, but the gap guard tripped",
+  "Separating 3 from 1 keeps 'this hour is safe' distinct from 'this hour is lost', which are different incidents",
+]
+answer = """
+0 is a clean run. 1 is a fetch, sanity, or upload failure, meaning nothing was
+stored. 2 is a configuration error, and it names the missing environment
+variables and never their values. 3 means the snapshot uploaded fine but the
+trailing 24 hours have gaps.
+
+The reason 3 is not 1: they are different incidents with different urgency. Exit
+1 says this hour is lost and cannot be recovered, so if it repeats the data is
+bleeding now. Exit 3 says this hour is safe and the pattern around it is not,
+which points at the trigger rather than the capture. Collapsing them would mean
+the alert for "the Worker died" looked identical to the alert for "Blizzard
+returned a 500", and the first thing you would do on receiving either is work
+out which one it actually was.
+
+There is a subtler placement decision here too. The guard runs after the upload,
+not before, so a gappy window never blocks storing the one hour you do have.
+Refusing to store a good snapshot because the surrounding day looks unhealthy
+would turn a monitoring signal into additional data loss. Even the listing
+failing gets exit 3 rather than 1, for the same reason: the snapshot is already
+safe in the bucket and only the checking failed.
+
+Compare with the sanity floor, which does refuse to store. Below 50,000 records
+against a normal ~314,000, the payload is a brownout and storing it would put a
+bad hour into the record permanently, which is worse than a missing one you can
+see.
+"""
+source = "wow_forecaster/ingestion/cloud_fetch.py"
+anchor = "3 — snapshot uploaded, but the trailing 24 hours have gaps (gap guard tripped)"
+
+# ── Draining the bucket: sync-snapshots ───────────────────────────────────────
+
+[[question]]
+id = "m14-q09"
+kind = "recall"
+prompt = """
+The catch-up path drops any bucket object whose UTC hour already holds local
+observations. Explain what `fetched_at` actually is, and why that rule is the
+only thing standing between the desktop and double-counted hours.
+"""
+rubric = [
+  "`fetched_at` is client-side wall clock: `datetime.now(UTC)` at the moment the client parsed the response",
+  "It is not the auction house snapshot's own modification time",
+  "So the desktop's :16 run and the Worker's :16 dispatch fetch the same underlying AH snapshot and stamp it with two timestamps seconds apart",
+  "Nothing else dedupes them: content hash, key, and local path all differ, so only the hour rule catches it",
+]
+answer = """
+`fetched_at` comes from `datetime.now(UTC)` inside `BlizzardClient`, set when the
+response is parsed. It records when we asked, not what we got. The auction house
+snapshot has its own identity and its own modification time, and the client
+discards the response headers that would carry it.
+
+That is the whole problem. The desktop's hourly task fires at :16 and the Worker
+dispatches at :16. Both hit the same endpoint within seconds and both receive the
+identical auction house snapshot: the same listings, the same prices, the same
+underlying moment in the market. They then stamp it with two different
+`fetched_at` values a few seconds apart, write two different snapshot filenames,
+and compute two different content hashes because the `_meta` block differs. To
+every other deduplication mechanism in the system, these are two distinct
+observations of the market.
+
+They are not. Ingesting both doubles that hour's sample density, which quietly
+biases every downstream aggregate that counts rows: the daily rollups, the
+volume gate in the recommender, the rolling normalization statistics. Nothing
+would crash. The numbers would just be wrong for the hours where catch-up
+overlapped the desktop, and right everywhere else, which is the hardest kind of
+wrong to notice.
+
+The UTC hour is a coarse proxy for the snapshot's identity, and the design says
+so. Capturing the API's `Last-Modified` header into `_meta` would let the drain
+dedupe on the snapshot's real identity instead, and it is written up as out of
+scope: the client discards headers today, and changing what `observed_at` means
+would touch the entire history. So the hour rule stands, with its coarseness
+documented rather than forgotten.
+"""
+source = "wow_forecaster/ingestion/cloud_sync.py"
+anchor = "modification time), so without this an overlapping hour is counted twice."
+see_also = ["docs/cloud-capture.md"]
+
+[[question]]
+id = "m14-q10"
+kind = "mcq"
+prompt = """
+`select_objects_to_ingest` applies seven filters in a fixed order. Three of them
+look like deduplication. Which one prevents the *desktop-versus-cloud* double
+count specifically?
+"""
+answer = """
+The hour-coverage rule: drop any object whose UTC hour already holds local
+observations. That is the one aimed at the overlap between the two capture
+paths, because it is the only filter that compares the bucket against what the
+database already contains rather than against the bucket itself.
+
+The other two are real, and they solve different problems:
+
+The already-ingested filter matches on the derived local snapshot path and is
+what makes re-running `sync-snapshots` a no-op. It only knows about objects this
+command previously drained. A snapshot the desktop fetched for itself never had
+a bucket key, so it is invisible to this filter.
+
+The one-per-hour rule is about the bucket's own redundancy. Two or three
+triggers fire each hour (:16 and :46 from the Worker, plus the :06 fallback), so
+a healthy hour holds multiple near-identical objects. Ingesting all of them would
+multiply the sample density of catch-up hours relative to hours the desktop
+captured itself, which is the same distortion arriving from the other direction.
+
+Order matters and the docstring says so. Hour coverage is checked before the
+one-per-hour reduction, so an hour the desktop already has is discarded whole
+rather than reduced to one object and then ingested.
+"""
+options = [
+  { text = "Objects whose UTC hour already holds local observations are dropped", correct = true },
+  { text = "Objects already recorded in `ingestion_snapshots` are dropped, matched on the derived local path", note = "This makes re-running the command idempotent, but it only recognizes objects this command drained before. A snapshot the desktop fetched live never had a bucket key or a matching path, so it slips straight past." },
+  { text = "At most one object survives per UTC hour, the earliest", note = "This handles the bucket holding two or three captures an hour from the Worker and the fallback. It deduplicates the bucket against itself and knows nothing about what the desktop already captured." },
+  { text = "Captures older than the retention cutoff are dropped", note = "That is a compliance filter, not a deduplication one. The pruner deletes rows by `observed_at` on the next hourly run, so ingesting an aged capture would write rows destined for immediate deletion." },
+]
+source = "wow_forecaster/ingestion/cloud_sync.py"
+anchor = "5. At most one object survives per UTC hour, the earliest. The bucket holds"
+
+[[question]]
+id = "m14-q11"
+kind = "predict"
+prompt = """
+The bucket holds three objects for the UTC hour 2026-07-24T05: one at 05:06Z
+(GitHub fallback), one at 05:16Z (Worker), one at 05:46Z (Worker). None is
+recorded in `ingestion_snapshots`.
+
+Case A: the database has no observations in that hour.
+Case B: the desktop's own hourly run already inserted observations at 05:16Z.
+
+What does `select_objects_to_ingest` return for that hour in each case, and how
+is it counted in `SkipCounts`?
+"""
+answer = """
+Case A: one object, the 05:06Z one. The other two are counted as
+`duplicate_hour = 2`.
+
+Case B: nothing. All three are counted as `hour_covered = 3`.
+
+The mechanics are worth tracing because the two cases exercise different parts
+of the function. In case A all three objects survive the per-object loop and land
+in `survivors`. The list is then sorted by `(captured_at, key)` before the
+per-hour reduction, so "earliest" is deterministic no matter what order S3 listed
+them in, and the first one seen for each hour wins while the rest increment
+`duplicate_hour`.
+
+In case B the hour-coverage check sits inside the per-object loop, before
+anything reaches `survivors`. So each of the three is rejected individually and
+the counter reflects three skipped objects, not one skipped hour. That is a
+deliberate accounting choice: the counters report objects considered, which is
+what a log line reading `hour_covered=48` should mean when you are trying to work
+out whether a drain did anything.
+
+The earliest-wins rule is a small preference rather than a strong one. All three
+objects are near-identical captures of the same auction house snapshot, so the
+choice barely matters for data content. Determinism is the point: a re-run
+against the same bucket must select the same object, or the already-ingested
+filter stops working on the next pass.
+"""
+options = [
+  { text = "A: the 05:06Z object, with duplicate_hour = 2. B: nothing, with hour_covered = 3", correct = true },
+  { text = "A: the 05:06Z object, with duplicate_hour = 2. B: nothing, with hour_covered = 1", note = "The hour-coverage check runs per object inside the loop, so all three objects are rejected and counted individually. The counters track objects considered, not hours resolved." },
+  { text = "A: all three objects, since none is recorded as ingested. B: nothing, with hour_covered = 3", note = "The one-per-hour reduction runs after the ingested-path check. Taking all three would triple that hour's sample density relative to every hour the desktop captured for itself." },
+  { text = "A: the 05:46Z object, since the latest capture is the freshest view of the hour. B: nothing, with hour_covered = 3", note = "The rule is earliest, not latest. All three are captures of substantially the same snapshot, so freshness buys nothing, and the sort exists to make the choice deterministic across re-runs rather than optimal." },
+]
+source = "wow_forecaster/ingestion/cloud_sync.py"
+anchor = "5. At most one object survives per UTC hour, the earliest. The bucket holds"
+
+[[question]]
+id = "m14-q12"
+kind = "recall"
+prompt = """
+`cloud_sync.py` deliberately holds no database code, and `docs/cloud-capture.md`
+states flatly that a green test suite is not evidence the drain works. Explain
+both claims, and say what the first real proof is.
+"""
+rubric = [
+  "Selection is a pure function over key names: no S3, no database, no clock",
+  "So the ordering and deduplication rules are testable on their own, which is where the subtle bugs live",
+  "But S3 is a stub in every test, so they prove the logic and nothing about the credentials, bucket, or real key shapes",
+  "The first real proof is `wowfc sync-snapshots --dry-run` against the live bucket",
+  "As of the last session the path had shipped with 73 tests and had never been run for real",
+]
+answer = """
+The split is real engineering. `select_objects_to_ingest` takes a list of key
+strings plus a few resolved values and returns the objects to ingest, in order.
+No S3 client, no SQLite connection, no call to `now()`. Every filter is a set
+membership or a comparison against something the caller resolved. That means the
+seven ordering and deduplication rules, which is where the genuinely subtle bugs
+live, can be tested exhaustively with a list of strings and no infrastructure.
+The database half lives in `pipeline/sync_stage.py`.
+
+And then the doc immediately refuses to let that be mistaken for validation.
+Every test that reaches S3 gets a stub client injected. What issue #43's 73 tests
+prove is that given a list of keys, the selection is right, that the queries feed
+it the right sets, and that the CLI reports what it did. What they cannot prove
+is that the
+credentials resolve, that the bucket name points at the capture bucket rather
+than the backup bucket, that the read-only token has list permission, that real
+R2 keys match the parsing regex, or that pagination behaves as assumed against a
+day prefix holding hundreds of objects.
+
+The first real proof is `wowfc sync-snapshots --dry-run` against the live bucket,
+which lists candidates and reports what it would skip while writing nothing.
+Until the `SNAPSHOT_S3_*` variables exist in `.env`, the command exits 1 and
+names every missing variable, never their values.
+
+This is the module's honest defect, and it is a status rather than a bug: the
+code shipped in v2.10.0, the tests are green, and the path has never once run
+against the real bucket. A feature that is complete and unexercised is not the
+same as a feature that works, and the doc saying so in bold is the right way to
+carry that.
+"""
+source = "docs/cloud-capture.md"
+anchor = "every test runs against a stub S3 client"
+see_also = ["wow_forecaster/ingestion/cloud_sync.py", "wow_forecaster/pipeline/sync_stage.py"]
+
+[[question]]
+id = "m14-q13"
+kind = "mcq"
+prompt = """
+Both `run_hourly.bat` and the catch-up sync take `data/db/.hourly.lock`, and both
+take over a lock older than 180 minutes. They differ on what to do when the lock
+is fresh and held. What is the difference, and what is the reasoning?
+"""
+answer = """
+The bat skips and exits 0. The sync waits, and if the wait runs out it raises
+`TimeoutError` and the command exits nonzero.
+
+The asymmetry follows from what each one loses by not running. A skipped hourly
+run costs exactly one sample, and the next hour will come around in an hour. A
+skipped catch-up leaves the entire backlog unrecovered, which after an overnight
+outage is a whole night of hours that only the bucket still holds, and the bucket
+expires them at 30 days. Same lock, same staleness rule, opposite default,
+because the cost of a false skip is not symmetric.
+
+The second half of the reasoning is louder than the first. An exit-0 skip is
+precisely the shape of the 2026-04 outage: a failure path that returned success,
+so Task Scheduler recorded green for 105 days while nothing was being captured.
+The design rule that came out of that postmortem is that a component which
+declines to do its job must say so through its exit code. Waiting and then
+failing loudly satisfies it; skipping quietly does not.
+
+Why a lock at all, when SQLite serializes writers itself: the bulk inserts here
+run to hundreds of thousands of rows and can exceed the 30-second busy timeout,
+so relying on SQLite's own serialization would surface as sporadic "database is
+locked" errors mid-drain rather than as clean mutual exclusion.
+"""
+options = [
+  { text = "The bat skips and exits 0; the sync waits up to `lock_wait_seconds` and then fails loudly, because a skipped catch-up loses a whole night and an exit-0 skip is what hid the 96-day outage", correct = true },
+  { text = "The bat waits and the sync skips, because the hourly run is the one that must not be missed", note = "Backwards. The hourly run is the cheap one to miss: another comes in an hour. The catch-up is the expensive one, because the backlog it would have drained expires from the bucket at 30 days." },
+  { text = "Both skip on a fresh lock; only the staleness takeover threshold differs", note = "The takeover threshold is identical at 180 minutes, and it is the fresh-lock behavior that differs. The `hourly_lock` docstring calls the waiting a deliberate difference from the bat." },
+  { text = "The sync does not need the lock, since SQLite serializes writers through the busy timeout", note = "The bulk inserts run to hundreds of thousands of rows and can exceed the 30-second busy timeout, so SQLite's own serialization is not sufficient here. That is stated as the reason the lock is taken at all." },
+]
+source = "wow_forecaster/ingestion/cloud_sync.py"
+anchor = "skips when the lock is fresh because a skipped hourly run costs one sample;"
+see_also = ["docs/postmortem-2026-04-lock-outage.md"]
+
+[[question]]
+id = "m14-q14"
+kind = "predict"
+prompt = """
+The `SNAPSHOT_S3_*` credentials are added to `.env` for the first time, after the
+desktop has been off for twenty days. The bucket holds roughly 20 days of hourly
+captures. You run `wowfc sync-snapshots` with no flags.
+
+What actually gets drained?
+"""
+answer = """
+About three days of it. The other seventeen days stay in the bucket, untouched
+and unmentioned.
+
+`max_backfill_days` defaults to 3, so with no `--since` the stage sets
+`since = now - 3 days`, and `list_objects_since` walks one prefix per UTC date
+from that date to today. That window holds between 72 and 96 hourly objects, and
+selection keeps one per UTC hour. `max_objects_per_run` is 96, so on the default
+lookback the cap does not actually bite: `over_limit` stays 0 and nothing is
+reported as waiting. The cap is there for the run where you pass `--since` and
+widen the window past four days.
+
+The seventeen older days are not skipped, counted, or logged. They were never
+listed, so no skip counter mentions them, and the next default run makes the same
+three-day choice, so they do not drain themselves later either. Only an explicit
+`--since` reaches them. The stage does clamp `since` forward to the retention
+cutoff whatever you pass, since ingesting rows the pruner deletes on the next
+hourly run is pointless and touches the ToS line.
+
+The short default is about the machine rather than the code. On the first run
+nothing is recorded as ingested, so an unbounded default would select every
+object in the bucket: hundreds of objects at roughly 250,000 records each, in one
+pass, on a desktop with a documented history of instability and two SQLite
+corruption events under sustained multi-gigabyte writes. Losing seventeen days of
+capturable history is bad. Corrupting the database that holds the rollups nothing
+can regenerate is worse. So the longer recovery is an explicit `--since`, run
+with someone watching: the operator has to choose it rather than trip into it.
+"""
+options = [
+  { text = "Roughly the last three days, about 72 to 96 objects. The other seventeen days sit outside the default lookback, are never listed, and no later default run picks them up either", correct = true },
+  { text = "The full twenty days, since nothing is recorded as ingested and every object is a candidate", note = "That is exactly the behavior `max_backfill_days = 3` exists to prevent. Hundreds of objects at ~250K records each in a single pass is the sustained multi-gigabyte write pattern that has corrupted this machine before." },
+  { text = "Nothing, because objects older than `max_backfill_days` are treated as beyond retention", note = "Two separate bounds. `max_backfill_days` narrows the listing window; the retention cutoff is 30 days and clamps `since` forward. A 20-day-old capture is inside retention, just outside the default lookback." },
+  { text = "The last three days, then the 96-object cap truncates the run and the remainder is logged as waiting for the next run", note = "The cap is real but does not bite here. Three days of hourly captures is at most 96 objects, so `over_limit` stays 0 and nothing is reported as waiting; the cap matters once `--since` widens the window. What is actually left behind in this scenario is the seventeen days that were never listed at all, and those are reported nowhere." },
+]
+source = "config/default.toml"
+anchor = "max_backfill_days = 3"
+see_also = ["wow_forecaster/pipeline/sync_stage.py"]
+
+# ── The other half: protecting the derived history ────────────────────────────
+
+[[question]]
+id = "m14-q15"
+kind = "recall"
+prompt = """
+`build_durable_db` copies each table's `CREATE` statement from the live
+database's `sqlite_master` rather than calling `apply_schema()`. Explain the
+concrete failure that forced this, and the second benefit it buys.
+"""
+rubric = [
+  "The live `recommendation_outputs` carries migration-added columns (`score`, `score_components`, `category_tag`, `risk_level`) that `schema.py`'s DDL does not declare",
+  "So `apply_schema()` builds a narrower table and `INSERT ... SELECT *` fails on the column count",
+  "`ALTER TABLE ADD COLUMN` rewrites the stored `CREATE TABLE` text, so `sqlite_master` is always the true current shape",
+  "Second benefit: any future table or migration is captured with no change to the backup code",
+]
+answer = """
+The concrete failure is a column-count mismatch. `schema.py` declares the
+original shape of `recommendation_outputs`; migrations 0003 and 0006 added
+`score`, `score_components`, `category_tag`, and `risk_level` on top of it. Build
+the destination table from `apply_schema()` and you get the narrow version, then
+`INSERT INTO main.recommendation_outputs SELECT * FROM src.recommendation_outputs`
+hands it four more columns than it has and raises.
+
+The insight is that `ALTER TABLE ADD COLUMN` rewrites the `CREATE TABLE` text
+stored in `sqlite_master`. So the DDL in the repo is the schema's history and
+`sqlite_master` is its present tense. For anything that has to match the live
+shape exactly, the live catalog is the source of truth and the checked-in DDL is
+a starting point that migrations have since moved past.
+
+The second benefit is that the backup stops needing maintenance. Add a table in
+migration 0011 and it appears in the next backup with no code change here,
+because the loop walks whatever `sqlite_master` reports. A backup that has to be
+updated whenever the schema changes is a backup that will eventually be missing
+the newest table, and you find out during a restore.
+
+`bi_export.py` hits the same drift and works around it differently, with a
+`PRAGMA table_info` probe. Two places in this repo have independently discovered
+that the checked-in DDL is not the current schema, which is a reasonable argument
+that the migration system should reconcile the two rather than every consumer
+routing around it.
+"""
+source = "wow_forecaster/backup/durable_backup.py"
+anchor = "ADD COLUMN`` updates the stored ``CREATE TABLE`` text, so ``sqlite_master`` is"
+see_also = ["docs/db-backup.md"]
+
+[[question]]
+id = "m14-q16"
+kind = "mcq"
+prompt = """
+`run_backup` orders its steps: build the `.db`, gzip it, prune old local copies,
+then upload. Why is upload last?
+"""
+answer = """
+So a failed upload still leaves a good local backup on disk, while the error
+still propagates to a non-zero exit.
+
+The pattern generalizes: do the part that cannot fail halfway first, and put the
+network last. Upload is the only step that depends on something outside the
+machine, so it is the only one that fails for reasons unrelated to the data. If
+it ran first, or if a failure there aborted before the local write, a Cloudflare
+outage would cost you the night's backup entirely rather than just its off-site
+copy. Ordered this way, the worst outcome of an upload failure is one backup that
+exists only locally, plus a red task in Task Scheduler telling you so.
+
+Two related details in the same function. `keep_local` pruning also runs before
+the upload, so local retention is enforced on a schedule that does not depend on
+the network either. And the uncompressed `.db` is unlinked right after gzip, so
+the only artifact left is the compressed one, which is what gets uploaded and
+what `check-data-health --backup-stale-hours` stats for freshness.
+
+The build itself has the matching property one level down: on any exception it
+closes the connection and unlinks the partial output, so a failed build leaves no
+truncated `.db` that a later staleness check would mistake for a real backup.
+"""
+options = [
+  { text = "So a failed upload still leaves a good local `.db.gz`, while the error still surfaces as a non-zero exit", correct = true },
+  { text = "So the object key can carry the compressed size, which is only known after gzip", note = "The key is built from the timestamp alone (`db_backups/YYYY/MM/DD/durable_<ts>Z.db.gz`) and carries no size. Ordering is about failure containment, not about what the key needs." },
+  { text = "So `foreign_key_check` runs against the uploaded copy rather than the local one", note = "The check runs inside `build_durable_db`, on the freshly built file, before compression or upload. Validating after upload would mean a known-bad object had already been stored." },
+  { text = "So the upload can be skipped when pruning finds a recent enough backup already present", note = "Pruning deletes all but the `keep_local` newest files and never influences whether the upload runs. `--no-upload` is the only thing that skips it." },
+]
+source = "wow_forecaster/backup/durable_backup.py"
+anchor = "upload LAST — so a failed upload still leaves a good local backup and the"
+
+[[question]]
+id = "m14-q17"
+kind = "find"
+prompt = """
+The durable backup excludes two tables from the data copy but still creates them.
+Find them, say why the file is still a drop-in restore, and give the compliance
+argument for keeping these backups past 30 days when the snapshot bucket expires
+its objects at 30.
+"""
+rubric = [
+  "`market_observations_raw` and `market_observations_normalized`",
+  "Their schema is still copied, so the restored file opens as a complete database with those two tables empty",
+  "They are the transient 30-day-retention tables, and the next hourly ingest refills them",
+  "ToS 2.r governs raw API data; the durable tables are derived aggregates, and excluding the observation data means the backup carries no raw per-listing data at all",
+  "Practical effect: the build never reads the multi-gigabyte tables, only their CREATE text",
+]
+answer = """
+`EXCLUDED_TABLES` holds `market_observations_raw` and
+`market_observations_normalized`. Their `CREATE` statements are still executed in
+the destination, so the restored file has both tables present and empty. Restore
+is a copy: gunzip, drop it at `data/db/wow_forecaster.db`, and the next hourly
+ingest refills the observations. `schema_versions` comes across too, so
+migrations do not re-run against an already-current schema.
+
+The compliance argument is the part worth being precise about, because it is what
+makes a permanent backup legal alongside a 30-day snapshot bucket. Blizzard API
+ToS 2.r governs raw API data. The rollups, forecasts, recommendations, backtests
+and drift snapshots are derived aggregates, not raw data, so retaining them past
+30 days is fine. Excluding the two observation tables' data means the backup
+carries no raw per-listing data at all, which is a stronger position than
+arguing about aggregation thresholds: there is simply nothing raw in the file.
+
+The practical effect is the reason the exclusion is safe to be enthusiastic
+about. Those two tables are most of the ~9.7 GB live database. Skipping their
+data means the build reads their `CREATE` text and nothing else, so the whole job
+is 118 MB uncompressed, 31 MB gzipped, and under six seconds, and it never goes
+near the sustained multi-gigabyte read/write pattern that has corrupted this
+machine twice.
+
+And it is the reason the backup matters at all. Once a day's raw ages past 30
+days the pruner deletes it everywhere, local rows and bucket objects alike, so
+the rollups become the only surviving record of that day and cannot be
+regenerated. The cloud capture protects the input stream for 30 days; this
+protects the derived history forever.
+"""
+source = "wow_forecaster/backup/durable_backup.py"
+anchor = "the whole point of the backup is"
+see_also = ["docs/db-backup.md"]
+
+[[question]]
+id = "m14-q18"
+kind = "recall"
+prompt = """
+This layer runs on five distinct credentials across two clouds. Name them, say
+which direction each one points, and explain why the Worker's GitHub PAT is
+called out as different in kind from the rest.
+"""
+rubric = [
+  "Blizzard OAuth2 client credentials: read access out to the data source, held as Actions secrets",
+  "The capture workflow's bucket credentials: write access to the snapshots bucket, resolved by boto3 as `AWS_*` on the runner",
+  "`SNAPSHOT_S3_*` on the desktop: a separate read-only token on the same bucket, named explicitly rather than `AWS_*`",
+  "`BACKUP_S3_*`: its own scoped token on a different bucket entirely",
+  "The `GH_PAT` grants control into GitHub rather than access out to a data source, so a leak lets someone trigger the workflow rather than read data",
+]
+answer = """
+Five, and they are deliberately not shared.
+
+Blizzard OAuth2 client credentials authenticate out to the data source. On the
+runner they are Actions secrets; on the desktop they are in `.env`.
+
+The capture workflow writes to the snapshots bucket. Its R2 token needs write
+access, and boto3 resolves it from the standard `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`, which is fine on a runner where nothing else competes
+for those names.
+
+The desktop reads the same bucket through `SNAPSHOT_S3_*`, a separate token
+scoped read-only. Two reasons for the different names: a desktop may already
+carry unrelated `AWS_*` credentials in its environment, and the drain has no
+business being able to write to the bucket it is draining.
+
+`BACKUP_S3_*` points at an entirely different bucket with its own scoped token.
+Separate because the snapshots bucket's 30-day lifecycle rule would otherwise
+delete the backups it is meant to preserve, which is a good reminder that a
+lifecycle rule is a property of the bucket, not of the object you intended it
+for.
+
+The PAT is the odd one out and the doc says so plainly: it is the first
+credential that grants control into GitHub rather than access out to a data
+source. Everything else, if leaked, lets an attacker read auction prices that
+are public anyway, or read a bucket of them. The PAT lets someone cause work to
+happen inside the repo. It is mitigated by being fine-grained: scoped to this one
+repo, with the Actions permission and nothing else, so the blast radius is
+triggering this one workflow. It is stored as an encrypted Worker secret rather
+than in a third-party cron service's config, which was the rejected alternative
+for exactly this reason, and it expires within a year, which is a renewal
+reminder rather than a hazard.
+"""
+source = "docs/cloud-capture.md"
+anchor = "The PAT is the first credential that grants control"
+see_also = ["cloud-trigger/README.md", "docs/db-backup.md"]

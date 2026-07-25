@@ -1,0 +1,651 @@
+# M16: Is the difference real?
+#
+# Significance testing for forecast comparison: paired error differences, the
+# Diebold-Mariano test, the Wilcoxon signed-rank alternative, and what twelve
+# simultaneous comparisons do to a p-value.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring. Many questions here are pure statistics and carry no anchor, because
+# the tests they describe are not written yet: they are M1 issue #17.
+
+# ── Pairing: what the fold structure buys you ─────────────────────────────────
+
+[[question]]
+id = "m16-q01"
+kind = "recall"
+prompt = """
+Comparing the LightGBM model against the last_value baseline, you could compute
+each one's MAE over the backtest and subtract the two numbers. Instead the right
+comparison is paired: for each fold you take the difference of the two errors on
+the same test_date, then work with that difference series. What does pairing buy,
+and what is the property of this data that makes the unpaired comparison weak?
+"""
+rubric = [
+  "Some test dates are hard to predict for every model (an event shock, a thin-data day)",
+  "That shared difficulty is common variance that inflates each model's error spread",
+  "Pairing on the same test_date cancels it: the difference d_t isolates the model-vs-baseline gap",
+  "Lower variance in d_t means more power to detect a real difference from the same number of folds",
+  "It is the same logic as a paired t-test versus a two-sample t-test",
+]
+answer = """
+Pairing removes the variance the two models share.
+
+Every fold predicts one test_date, and the evaluator emits one PredictionRecord
+per (fold, series, model), so the LightGBM error and the baseline error on any
+given day are measured against the identical actual price under identical
+conditions. Some of those days are just hard: an event shock, a patch, a
+thin-data archetype with two observations that week. On a hard day both models
+miss, and on an easy day both are close. That day-to-day difficulty is real
+variance, and it is common to both models.
+
+Compare unpaired MAEs and that common difficulty sits inside each model's error
+spread, swamping the gap you actually care about. Take the per-fold difference
+d_t = e_model,t - e_baseline,t first, and the shared difficulty cancels: a hard
+day inflates both errors, so their difference is unaffected. You are left with a
+series whose variance reflects only how the two models differ, which is exactly
+what a test of "are they different" should measure. Same reason a paired t-test
+beats a two-sample t-test when the pairing is real: you spend your degrees of
+freedom on the comparison, not on the nuisance.
+
+This is why the significance tests in M1 operate on the fold error series and not
+on the two summary MAEs. Two numbers cannot be tested against each other. A series
+of paired differences can.
+"""
+source = "wow_forecaster/backtest/evaluator.py"
+anchor = "List of PredictionRecord — one per (fold × series × model)."
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m16-q02"
+kind = "find"
+prompt = """
+The paired difference series has to be reconstructable from what the backtest
+persists, or none of this is possible. Find the table that stores per-fold errors
+and name the columns that let you line up one model's error against another's on
+the same prediction. Then say which model is missing from that table today.
+"""
+rubric = [
+  "backtest_fold_results stores one row per fold/series/model with abs_error (and pct_error)",
+  "The pairing keys are (archetype_id, realm_slug, horizon_days, test_date), varying model_name",
+  "The idx_bt_results_archetype index on (archetype_id, model_name, horizon_days) reflects that access pattern",
+  "Only the four baselines are ever written there; LightGBMForecaster never runs in the backtest loop, so its error rows do not exist",
+]
+answer = """
+The table is backtest_fold_results. Each row carries fold_index, test_date,
+horizon_days, archetype_id, realm_slug, model_name, and abs_error, which is
+exactly enough to pair: fix (archetype_id, realm_slug, horizon_days, test_date)
+and the rows differ only by model_name, so subtracting two models' abs_error
+gives d_t for that series and day. The index idx_bt_results_archetype on
+(archetype_id, model_name, horizon_days) exists because that is how the reporter
+already slices it.
+
+The catch is which model_name values are present. BacktestStage calls
+all_baseline_models() and nothing else, so the only rows ever written are
+last_value, rolling_mean, day_of_week, and simple_volatility. LightGBMForecaster
+appears nowhere under backtest/. So the raw material for pairing exists for the
+baselines against each other, and the one comparison the whole exercise is for,
+model versus baseline, has no data on one side of the subtraction. Putting
+LightGBM in the backtest loop is issue #16, the walk-forward harness; until it
+lands, the model-side error series does not exist, which is why the significance
+test (issue #17) cannot be run today no matter how correct the statistics are.
+"""
+source = "wow_forecaster/db/schema.py"
+anchor = "    ON backtest_fold_results(archetype_id, model_name, horizon_days);"
+see_also = ["PLAN.md"]
+
+# ── Diebold-Mariano: what it tests and what it assumes ────────────────────────
+
+[[question]]
+id = "m16-q03"
+kind = "mcq"
+prompt = """
+The Diebold-Mariano test is run on the loss-differential series d_t = L(e_model,t)
+- L(e_baseline,t), where L is a loss like squared or absolute error. What is its
+null hypothesis?
+"""
+answer = """
+DM tests H0: E[d_t] = 0, that the two forecasts have equal expected loss.
+
+It is deliberately a statement about the loss differential, not about the models'
+mechanics. DM does not care whether one model is linear and the other is a
+gradient-boosted tree, whether either is correctly specified, or whether the
+forecast errors are normal. It reduces the whole question to one series, d_t, and
+asks whether that series has mean zero. The alternative is E[d_t] != 0 (two-sided)
+or a signed version if you have a directional claim, such as "the model's expected
+loss is lower."
+
+That framing is the test's strength: it compares forecasts, not models, so it
+applies to any pair of forecasts on the same targets regardless of how they were
+produced.
+"""
+options = [
+  { text = "The two forecasts have equal expected loss: E[d_t] = 0", correct = true },
+  { text = "The two models have the same functional form", note = "DM says nothing about model structure. It compares forecast losses on the same targets, which is why it works on a boosted tree versus a naive baseline. It never inspects the models." },
+  { text = "The forecast errors are drawn from a normal distribution", note = "That is not the null; it is closer to an assumption DM tries to avoid. DM relies on a central-limit argument for the mean of d_t, not on the errors themselves being normal." },
+  { text = "The model's MAE is below a fixed acceptance threshold", note = "A threshold on one model's error is a different question. DM is a comparison between two forecasts, phrased entirely through their loss difference; there is no absolute bar in it." },
+]
+
+[[question]]
+id = "m16-q04"
+kind = "recall"
+prompt = """
+The DM statistic is the mean of d_t divided by an estimate of its standard error,
+compared to a normal. Naively you would estimate that standard error as
+sd(d_t)/sqrt(n). For forecast errors that estimate is usually wrong. Why, and what
+does the standard DM construction do about it?
+"""
+rubric = [
+  "The loss differentials d_t are serially correlated, not independent",
+  "Overlapping multi-step horizons and persistent regimes both induce autocorrelation in d_t",
+  "sd(d_t)/sqrt(n) assumes independence, so it understates the true variance and inflates the statistic",
+  "DM uses a HAC / Newey-West long-run variance estimate that accounts for the autocorrelation",
+  "The core assumption is that d_t is covariance-stationary with a finite long-run variance",
+]
+answer = """
+Because d_t is autocorrelated, and the naive standard error assumes it is not.
+
+Two sources of autocorrelation. First, overlapping horizons: a 28-day forecast
+made today and one made tomorrow are predicting almost the same window, so their
+errors, and therefore the differentials, move together across adjacent folds.
+Second, regimes persist: a stretch of days where the model happens to beat the
+baseline tends to run in a block, not to alternate independently. Either way,
+consecutive d_t values are correlated.
+
+sd(d_t)/sqrt(n) is the standard error of a mean of n independent draws. Feed it a
+positively autocorrelated series and it treats correlated observations as if they
+were fresh information, so it understates the true variance of the mean. A
+too-small denominator makes the DM statistic too large and the p-value too small:
+you would declare significance that is not there.
+
+The fix built into DM is a HAC (heteroskedasticity- and autocorrelation-
+consistent) variance estimate, the Newey-West long-run variance, which sums the
+autocovariances of d_t out to a lag related to the horizon. The assumption that
+makes this legitimate is that d_t is covariance-stationary with a finite long-run
+variance: its mean and autocovariance structure do not themselves drift over the
+backtest. On a short WoW history spanning a regime change, that stationarity
+assumption is worth stating out loud rather than taking for granted, and it is one
+reason the Harvey-Leybourne-Newbold small-sample correction to DM exists.
+"""
+
+# ── Wilcoxon: the nonparametric alternative ───────────────────────────────────
+
+[[question]]
+id = "m16-q05"
+kind = "mcq"
+prompt = """
+The Wilcoxon signed-rank test is named as the alternative to DM "when normality is
+doubtful." One archetype has a single catastrophic fold: a flask predicted at 200g
+that actually spiked to 1800g during a world-first race, so one d_t is enormous.
+What does choosing Wilcoxon over DM buy you here, and what do you give up?
+"""
+answer = """
+Wilcoxon buys resistance to that one outlier, and gives up the magnitude
+information beyond its rank.
+
+DM is built on the mean of d_t. One d_t of 1600 gold can move the mean of a short
+series single-handedly and blow up the variance estimate too, so a single freak
+fold can flip the DM verdict either way. Wilcoxon signed-rank throws away the raw
+sizes: it ranks the absolute differences, attaches the sign of each difference to
+its rank, and sums. The 1600-gold miss becomes "the largest rank," worth no more
+than if it had been 160 gold. So a lone catastrophic fold cannot dominate the
+result. That is the point of reaching for it when the differences are heavy-tailed
+or plainly non-normal, which forecast errors on thin, spiky WoW series often are.
+
+What you surrender: Wilcoxon tests whether the median difference is zero, not the
+mean, and it assumes the differences are symmetric about that median. It uses only
+ranks, so if the model's edge is real and shows up mostly as occasionally avoiding
+huge misses (a magnitude story), Wilcoxon is less able to see it than DM would be.
+It also does not natively handle the serial correlation that DM's HAC variance
+addresses. Different question (median versus mean), different outlier resistance, and you
+pick based on which failure you are more worried about.
+"""
+options = [
+  { text = "Buys resistance to the outlier because it ranks the differences instead of averaging them; gives up magnitude beyond rank and tests the median, not the mean", correct = true },
+  { text = "Buys resistance because it removes outliers before testing", note = "It does not discard the outlier. It keeps every difference but replaces its size with its rank, so the extreme fold still counts, just only as the top rank rather than by its raw magnitude." },
+  { text = "Buys more statistical power than DM in every case, with no tradeoff", note = "Under genuine normality Wilcoxon is slightly less powerful than DM, and it ignores magnitude information. It wins on outlier resistance, not universally, and there is a real tradeoff." },
+  { text = "Buys the ability to test three horizons at once without a multiple-comparison penalty", note = "Wilcoxon is a single paired test like DM; it says nothing about testing several horizons together. Multiplicity is a separate problem that neither test addresses on its own." },
+]
+
+[[question]]
+id = "m16-q06"
+kind = "recall"
+prompt = """
+DM and Wilcoxon can disagree on the same fold series. Give one concrete pattern of
+d_t where DM reports significance but Wilcoxon does not, and one where Wilcoxon
+reports significance but DM does not. What does each disagreement tell you about
+the model?
+"""
+rubric = [
+  "DM significant, Wilcoxon not: a few large-magnitude wins with the rest near zero, so the mean shifts but the median and ranks barely do",
+  "That says the edge is a magnitude story, concentrated in avoiding or scoring big on a handful of days",
+  "Wilcoxon significant, DM not: the model wins slightly on most folds but loses big on one or two, so the median favors it while the mean is dragged back",
+  "That says the edge is consistent-but-small, and DM is being pulled around by outliers its variance estimate inflates",
+  "The disagreement is information: it localizes whether the difference lives in the tail or in the body of the distribution",
+]
+answer = """
+DM significant, Wilcoxon not. Suppose d_t is near zero on most folds but strongly
+positive on three of them, the model scoring big during a few volatile windows.
+The mean of d_t is clearly positive, so DM rejects. But the median difference is
+about zero and most ranks are tiny, so Wilcoxon shrugs. Reading: the model's
+advantage is a magnitude story, real but concentrated in a handful of days. Whether
+that is valuable depends on whether you can act on those days.
+
+Wilcoxon significant, DM not. Now suppose the model wins by a hair on most folds
+but takes one or two large losses. The signs mostly favor the model, so the
+signed-rank sum rejects, but those one or two big negative d_t drag the mean toward
+zero and inflate the HAC variance, so DM does not. Reading: the edge is
+consistent but small, and DM is being jerked around by tail events. This is the
+case where trusting DM alone would hide a real, if modest, improvement.
+
+The disagreement is not a nuisance to be resolved by picking a favorite test. It
+tells you where in the distribution the difference lives, tail or body, which is
+something neither test reports on its own and which matters for whether the edge
+survives contact with a trading rule.
+"""
+
+# ── Multiple comparisons ──────────────────────────────────────────────────────
+
+[[question]]
+id = "m16-q07"
+kind = "predict"
+prompt = """
+You run the model against all four baselines at all three production horizons and
+test each pair at alpha = 0.05, treating them as separate tests. That is 3 x 4 =
+12 comparisons. If in truth the model is no better than any baseline anywhere, and
+the tests were independent, roughly what is the chance that at least one of the 12
+comes back "significant"? And what does Bonferroni set the per-test threshold to?
+"""
+answer = """
+About 46%, and Bonferroni sets each test to alpha / 12 ≈ 0.0042.
+
+Under a true global null and independence, each test has a 0.95 chance of NOT
+firing falsely, so all 12 stay quiet with probability 0.95^12 ≈ 0.54. The
+complement, at least one false alarm, is 1 - 0.54 ≈ 0.46. Run twelve
+coin-flips at 5% and you are closer to even money than to 5% on seeing a spurious
+win somewhere. That is the family-wise error rate, and it is why "we found a
+horizon where the model beat a baseline, p < 0.05" is nearly worthless without
+saying how many horizons and baselines were searched.
+
+Bonferroni controls the family-wise rate by dividing: test each of the 12 at
+0.05/12 ≈ 0.0042, and the chance of any false positive across the family falls
+back to about 0.05. It is conservative (it assumes the worst about dependence and
+costs power), but it is the honest floor. In practice the 12 tests are not
+independent, since horizons and baselines share the same folds and actuals, so the
+true FWER is somewhat below 46%, but the direction and the lesson are unchanged.
+"""
+options = [
+  { text = "About 46%; Bonferroni uses alpha/12 ≈ 0.0042", correct = true },
+  { text = "About 5%; Bonferroni uses alpha/12 ≈ 0.0042", note = "5% is the per-test rate, not the family rate. The whole point of multiplicity is that the chance of at least one false positive across 12 tests is far above the per-test 5%: it is about 46%." },
+  { text = "About 60%; Bonferroni uses alpha/4 ≈ 0.0125", note = "The arithmetic is 1 - 0.95^12 ≈ 0.46, not 0.60, and Bonferroni divides by the family size 12, not by the 4 baselines alone. Both horizons and baselines multiply." },
+  { text = "About 46%; Bonferroni uses alpha x 12 = 0.6", note = "Bonferroni divides the threshold, it does not multiply it. Multiplying would loosen every test and make false positives more likely, the opposite of a correction." },
+]
+
+[[question]]
+id = "m16-q08"
+kind = "mcq"
+prompt = """
+The acceptance bar in backtest/models.py is "If an ML model cannot beat ALL of
+these baselines, it is not ready for use." A reviewer says: since you are making
+four comparisons per horizon, you must Bonferroni-correct the four-baseline set or
+the "beats all" claim is statistically invalid. Is the reviewer right?
+"""
+answer = """
+No, and the reason is that "beats all four" is a conjunction, which runs the
+opposite way from the usual multiplicity worry.
+
+To claim the model beats all four baselines at a horizon, you must reject all four
+individual nulls. This is an intersection-union test: you only get to announce
+victory when every one of the four tests rejects. The probability of falsely
+announcing "beats all" when the model actually fails against at least one baseline
+is bounded by the largest single-test alpha, so it is already controlled at 0.05
+with no correction. If anything the conjunction is conservative: one stubborn
+baseline (last_value is often that baseline) blocks the whole claim, so you are
+underpowered, not over-eager. Correcting downward would make an already-hard bar
+harder for no reason.
+
+Multiplicity bites in the other framings. "The model beats at least one baseline"
+is a union of rejections and does inflate toward the 46% family rate. Reporting all
+twelve p-values and highlighting the significant ones is exploration and needs
+correction. And the three horizons are three separate deployment decisions, so
+across horizons you are making three claims. The correct reading: no penalty for
+the conjunctive "beats all" within a horizon, real penalty for cherry-picking
+across the grid.
+"""
+options = [
+  { text = "No. 'Beats all' is an intersection-union test whose error is already bounded by the single-test alpha; it needs no downward correction and is if anything conservative", correct = true },
+  { text = "Yes. Any time you run four tests you must divide alpha by four", note = "The rule depends on the claim structure. A conjunction ('all four must reject') is an intersection-union test and is self-correcting; the divide-by-k rule is for disjunctive or exploratory families, not for a required-all conjunction." },
+  { text = "Yes, and also divide by three for the horizons, giving alpha/12", note = "The horizons are separate decisions where multiplicity does apply, but within a horizon the four-baseline conjunction does not need correction. Lumping all twelve into one Bonferroni over-penalizes the conjunctive part." },
+  { text = "No, because Bonferroni only applies to the DM test and Wilcoxon is exempt", note = "Multiplicity is about how many tests you run and how you combine them, not about which test you use. Both DM and Wilcoxon are equally subject to it; the exemption here comes from the conjunction structure, not the test choice." },
+]
+source = "wow_forecaster/backtest/models.py"
+anchor = "If an ML model cannot beat ALL of these baselines, it is not ready for use."
+see_also = ["LESSONS.md"]
+
+# ── Significant versus matters ────────────────────────────────────────────────
+
+[[question]]
+id = "m16-q09"
+kind = "recall"
+prompt = """
+A significant difference and a difference that matters are not the same claim.
+Give the two distinct ways a DM-significant win over last_value can still fail to
+matter for this project, and name the metric or the next step that actually
+answers "does it matter."
+"""
+rubric = [
+  "Statistical: with enough folds, a tiny MAE gap (e.g. 0.4 gold on a 200g item) is significant but decision-irrelevant",
+  "The size of the effect, not just its p-value, is what a deployment decision needs",
+  "Economic: lower forecast error does not imply more profit; the win must survive AH fees and an exit rule",
+  "The metric that answers it is P&L from paper trading (M2), and directional accuracy over magnitude",
+  "And the honest caveat: a significant win on a leaked or unmatched holdout is significant about the wrong number",
+]
+answer = """
+Two failure modes, one statistical and one economic.
+
+Statistical: significance scales with sample size. Pool enough folds and archetypes
+and a 0.4-gold MAE edge on a 200-gold item clears any p-value threshold while
+changing no buy-or-sell decision a player would ever make. The p-value answers
+"is the difference distinguishable from zero," not "is the difference large enough
+to act on." The effect size is the missing half. A responsible report states the
+gap in gold and in percent alongside the p-value, so a reader can see that a
+statistically certain 0.2% improvement is operationally nothing.
+
+Economic: forecast accuracy and profit are different questions, and M17 is built on
+exactly that gap. A model can be more accurate on average yet lose money once you
+subtract the auction-house cut and apply a per-horizon exit rule, because accuracy
+rewards being close everywhere while profit rewards being right on the trades you
+actually take. The metric that answers "does it matter" is P&L from the paper-
+trading simulator (M2), measured against random-portfolio and buy-everything
+comparators, plus directional accuracy, which weights getting the move right over
+getting the magnitude close.
+
+The caveat that outranks both: right now a DM-significant win would be significant
+about a contaminated number. The training holdout leaks (DS-1) and the model is
+never in the backtest loop (DS-2), so before "significant versus matters" is even
+a live question, the comparison has to be run on clean, matched folds at all.
+"""
+see_also = ["PLAN.md", "docs/ROADMAP.md"]
+
+[[question]]
+id = "m16-q10"
+kind = "predict"
+prompt = """
+config/default.toml sets backtest horizons_days = [1, 3] and features
+target_horizons_days = [1, 7, 28]. You want to run the full significance battery,
+model versus four baselines, at every production horizon. At how many production
+horizons can the test even be constructed from the current backtest, and why?
+"""
+answer = """
+One. Only horizon 1.
+
+A paired significance test needs both the model's error series and the baseline's
+error series at the same horizon, so the horizon has to be present in the backtest
+that produced the baseline fold errors. The backtest runs at [1, 3]; production
+forecasts at [1, 7, 28]. The only value the two lists share is 1. So at 7 and 28,
+the horizons the crafting windows and long-range recommendations actually depend
+on, there are no baseline fold errors to pair against, and 3 is a backtest horizon
+that is never forecast in production, so its baseline errors pair with nothing on
+the model side either.
+
+The mismatch is not a subtle bug. It sits in two lines of config in plain sight,
+and it means that even after the leak is fixed and LightGBM is added to the loop,
+two of the three horizons that matter cannot be tested until backtest.horizons_days
+is aligned up to [1, 7, 28]. Shrinking production to [1, 3] to match would be the
+wrong fix: it deletes the outputs the product is built on to make a measurement
+problem disappear.
+"""
+options = [
+  { text = "One horizon (h = 1), because it is the only value shared by [1, 3] and [1, 7, 28]", correct = true },
+  { text = "Three horizons, because the model forecasts 1, 7, and 28", note = "The model forecasting a horizon is not enough. The paired test also needs baseline fold errors at that horizon, and the backtest only produces them at 1 and 3, so 7 and 28 have nothing to pair against." },
+  { text = "Two horizons (1 and 3), because those are the backtest horizons", note = "Horizon 3 is never forecast in production, so there is no model-side error series to pair with its baseline errors. Only h = 1 exists on both sides." },
+  { text = "Zero, because the horizon lists do not match at all", note = "They do share one value: 1 is in both lists. The mismatch removes 7 and 28, but h = 1 is testable, which is exactly what makes the gap easy to overlook." },
+]
+source = "config/default.toml"
+anchor = "horizons_days = [1, 3]"
+see_also = ["PLAN.md"]
+
+# ── What actually exists versus what M16 describes ────────────────────────────
+
+[[question]]
+id = "m16-q11"
+kind = "find"
+prompt = """
+This module talks at length about Diebold-Mariano and Wilcoxon. Search the
+wow_forecaster package for either test. What do you find, what does that tell you
+about the state of M16's subject, and where is the work tracked?
+"""
+rubric = [
+  "A search for diebold / wilcoxon / signed-rank across wow_forecaster/ returns nothing: neither test is implemented",
+  "metrics.py computes MAE, RMSE, MAPE, and directional accuracy, but no paired comparison or p-value anywhere",
+  "So the significance layer is entirely prospective; the module teaches the method, not existing code",
+  "It is M1 in docs/ROADMAP.md: the walk-forward LightGBM harness is issue #16, and the Diebold-Mariano and Wilcoxon significance tests against the four baselines are issue #17",
+]
+answer = """
+The search returns nothing. There is no Diebold-Mariano, no Wilcoxon, no
+signed-rank, no p-value machinery anywhere in wow_forecaster/. metrics.py computes
+point-estimate errors, MAE, RMSE, MAPE, and directional accuracy, and stops there.
+Nothing pairs two models' errors and asks whether the difference is real.
+
+That is the honest state of M16's subject: it is a method the project intends to
+apply, not code you can read. The module teaches significance testing so that when
+the layer is built it is built correctly, and so you can say precisely why the
+current "the model looks good" claims are unsupported. The two prerequisites, a
+clean training split (DS-1) and LightGBM in the backtest loop (DS-2), are the same
+ones the whole evaluation story is blocked on.
+
+The work is M1 in docs/ROADMAP.md, described as "a walk-forward LightGBM backtest,
+Diebold-Mariano and Wilcoxon significance tests against the four baselines." The
+walk-forward harness is issue #16 and the significance tests themselves are issue
+#17 in the work order. This is one of the modules where the repo is teaching you
+by its absence: the interesting content is what has not been written and why.
+"""
+source = "wow_forecaster/backtest/metrics.py"
+anchor = "  Penalizes large errors more than MAE because errors are squared before"
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m16-q12"
+kind = "recall"
+prompt = """
+Even with DM and Wilcoxon written and the horizons aligned, one prior defect would
+make every p-value they produce meaningless. Name it, and explain in one step why a
+significance test on top of it answers the wrong question.
+"""
+rubric = [
+  "The training/validation split leaks: labels cross the boundary for h > 0 (DS-1)",
+  "So the model's held-out error is measured partly on prices it already trained on",
+  "A significance test on that error series tests whether a leaked number differs from the baseline, not whether the model generalizes",
+  "Garbage in: the test can be perfectly executed and still certify a contaminated comparison",
+  "The order of operations is fix the split, add the model to the backtest, THEN test significance",
+]
+answer = """
+The leak in the training split (DS-1). trainer.py holds out the last 14 calendar
+days by obs_date, but each row's label is price(obs_date + h), so for the 28-day
+model every validation label is a price the model already trained on, and the 7-day
+model leaks half its window. The recorded validation error is an optimistic
+training error wearing a validation label.
+
+Run DM or Wilcoxon on that and the test is flawless and the conclusion is void. The
+statistic faithfully answers "does this contaminated error series differ from the
+baseline's," which is not the question anyone cares about. A significance test
+inherits the validity of the numbers it is fed; it cannot detect that the holdout
+was leaked, any more than a t-test can tell you your thermometer was miscalibrated.
+This is the classic trap of adding rigor at the wrong layer: a very precise p-value
+on a meaningless quantity reads as more trustworthy than a rough estimate on a
+sound one, and is worth less.
+
+The order of operations is fixed and not negotiable. Purge and embargo the split so
+the held-out numbers mean something (M06's lab), add LightGBM to the walk-forward
+loop so there is a matched model error series at all (DS-2), align the horizons, and
+only then is a significance test measuring what its math claims to measure.
+"""
+see_also = ["LESSONS.md", "PLAN.md"]
+
+# ── Metrics grounding ─────────────────────────────────────────────────────────
+
+[[question]]
+id = "m16-q13"
+kind = "mcq"
+prompt = """
+metrics.py already computes directional accuracy: the fraction of folds where
+sign(predicted - last_known) matches sign(actual - last_known), excluding ties.
+Suppose you want a significance test on directional accuracy rather than on MAE.
+Which test fits its structure, and why not DM?
+"""
+answer = """
+Directional accuracy is a proportion of binary hits, so the natural paired test is
+McNemar's test (or a paired sign / binomial test on the per-fold agreement), not DM.
+
+DM is built for a continuous loss differential whose mean you compare to zero
+through a normal approximation with a HAC variance. Directional correctness is not
+continuous: on each fold each model either got the direction right or wrong. Pairing
+two models on the same folds gives a 2x2 table of agreements and disagreements, and
+the informative cells are the discordant ones, folds where one model was right and
+the other wrong. McNemar's test is exactly the paired test for that table. Feeding a
+zero/one hit series into DM would technically produce a number, but you would be
+approximating a Bernoulli difference with machinery designed for a continuous loss,
+throwing away the natural exact/binomial treatment for no gain.
+
+The general point: the test has to match the loss. Squared or absolute error goes to
+DM or Wilcoxon; a hit rate goes to McNemar or a sign test. Directional accuracy is
+also the metric that most directly speaks to "does it matter," because a model that
+calls the direction correctly is actionable even when its magnitude is off.
+"""
+options = [
+  { text = "McNemar's / a paired sign test, because directional accuracy is paired binary hits, not a continuous loss differential", correct = true },
+  { text = "DM, because it is the standard forecast-comparison test and applies to any metric", note = "DM is standard for continuous loss differentials compared via a normal approximation. A per-fold right/wrong outcome is binary; a paired binary comparison calls for McNemar or a sign test." },
+  { text = "A two-sample t-test on the two accuracy rates", note = "That discards the pairing, the same mistake as comparing two summary MAEs. Both models are scored on the same folds, so the comparison must be paired; an unpaired t-test on two rates ignores that structure." },
+  { text = "Wilcoxon signed-rank, because it is nonparametric and directional accuracy is non-normal", note = "Wilcoxon signed-rank is for paired continuous differences you can rank by magnitude. A zero/one hit has no magnitude to rank, so signed-rank is not the right nonparametric choice here; McNemar is." },
+]
+source = "wow_forecaster/backtest/metrics.py"
+anchor = "  Computed as: sign(predicted - last_known) == sign(actual - last_known)."
+
+[[question]]
+id = "m16-q14"
+kind = "predict"
+prompt = """
+compute_metrics builds the error list as errors = [a - p for a, p in zip(actuals,
+predicted, ...)] and reports one MAE per call. To get the paired difference series a
+DM test needs, at what grain must you call the backtest machinery, and what is the
+one thing you must hold fixed across the two models when you subtract?
+"""
+answer = """
+You need per-fold errors kept separate, not a single pooled MAE, and the thing held
+fixed across the two models is the (series, horizon, test_date) each error is
+measured on.
+
+compute_metrics collapses a list of PredictionRecords into one BacktestMetrics with
+a single mae field. That is the wrong grain for pairing: once the errors are averaged
+into one number, the fold-by-fold structure the test consumes is gone. The pairing
+lives at the PredictionRecord / backtest_fold_results grain, one row per fold per
+series per model, where abs_error is retained individually. To form d_t you take the
+model's error and the baseline's error on rows that share archetype_id, realm_slug,
+horizon_days, and test_date, and subtract. Hold those keys fixed and the difference
+isolates the two models; let any of them vary and you are subtracting errors measured
+on different targets, which is not a paired difference at all.
+
+So the significance layer does not call compute_metrics and diff the results. It
+reads the fold-grain error rows, joins the two models on the shared keys, and builds
+the difference series from that join. compute_metrics stays useful for reporting
+headline numbers; it is simply the wrong altitude for a paired test.
+"""
+options = [
+  { text = "At the per-fold (per series, per horizon, per test_date) grain; hold (archetype_id, realm_slug, horizon_days, test_date) fixed and vary only model_name", correct = true },
+  { text = "At the pooled grain; call compute_metrics for each model and subtract the two mae fields", note = "Subtracting two pooled MAEs is the unpaired comparison this module warns against. It discards the fold structure, so there is no difference series to test and no way to cancel shared per-day difficulty." },
+  { text = "At the per-archetype grain; subtract each archetype's mean error, ignoring the date", note = "Averaging within an archetype before subtracting still collapses the per-fold pairing across dates. Two errors must share the same test_date to be a valid pair; a per-archetype mean mixes easy and hard days together." },
+  { text = "At the per-model grain only; the test compares the two models' full error lists regardless of alignment", correct = false, note = "Order and alignment are the whole point. Two unaligned error lists are two independent samples, not paired differences; DM requires the errors be matched on the same targets before subtracting." },
+]
+source = "wow_forecaster/backtest/metrics.py"
+anchor = "    errors    = [a - p for a, p in zip(actuals, predicted, strict=True)]"
+
+# ── Synthesis ─────────────────────────────────────────────────────────────────
+
+[[question]]
+id = "m16-q15"
+kind = "recall"
+prompt = """
+Interview version. "Your roadmap says M1 adds Diebold-Mariano and Wilcoxon tests.
+Walk me through why you need both, and what has to be true before either number is
+worth reporting." Give the ninety-second answer.
+"""
+rubric = [
+  "The comparison is paired on fold/test_date so shared per-day difficulty cancels and you gain power",
+  "DM tests equal expected loss on the mean of the differential, with a HAC variance for autocorrelation, and leans on a normal approximation",
+  "Wilcoxon is the outlier-resistant fallback on the median difference when the differentials are heavy-tailed or non-normal, giving up magnitude for resistance to outliers",
+  "Across 3 horizons and 4 baselines multiplicity applies to exploration, though 'beats all' is a self-correcting conjunction",
+  "And the precondition: fix the leaked split and put LightGBM in the backtest loop, or the tests certify a contaminated, unmatched comparison",
+]
+answer = """
+A version that lands:
+
+"Comparing two forecasters, the comparison has to be paired. Both models predict the
+same test dates, so I take the per-fold difference of their errors first: hard days
+inflate both errors and cancel in the difference, which cuts the variance and gives
+me power a comparison of two summary MAEs would not have. I run two tests on that
+difference series because they fail differently. Diebold-Mariano asks whether the
+mean loss differential is zero, using a Newey-West variance because forecast errors
+at overlapping horizons are autocorrelated and the naive standard error would
+understate the variance and over-reject. It leans on a normal approximation, so on a
+short, spiky history with a few catastrophic folds I do not trust it alone. Wilcoxon
+signed-rank is the outlier-resistant check: it ranks the differences, so one 1600-gold miss
+becomes just the top rank instead of dominating the mean. It tests the median rather
+than the mean and gives up magnitude information, so when the two disagree that tells
+me whether the edge lives in the tail or the body.
+
+Across three horizons and four baselines there are twelve comparisons, so exploratory
+reporting needs a multiplicity correction, family-wise error runs near 46% at
+five percent otherwise. My actual bar, beat all four baselines, is a conjunction that
+is self-correcting and if anything under-powered, so the penalty applies to
+cherry-picking, not to the 'beats all' claim.
+
+And the honest part: none of this is worth running yet. The training holdout leaks by
+the forecast horizon and the model is never in the backtest loop, so today a
+significance test would perfectly certify a contaminated, unmatched number. Fix the
+split, add LightGBM to the walk-forward loop, align the horizons, then the tests
+measure what their math claims."
+
+The last paragraph is the tell that you understand a significance test inherits the
+validity of its inputs and cannot manufacture it.
+"""
+see_also = ["LESSONS.md", "PLAN.md", "docs/ROADMAP.md"]
+
+[[question]]
+id = "m16-q16"
+kind = "find"
+prompt = """
+The backtest already retains everything needed to pair the four baselines against
+each other today, no model fix required. Find where a per-fold baseline error would
+be paired against another baseline's on the same target, and state the one query
+shape that produces the difference series. Then say why running that baseline-versus-
+baseline test now would still be a useful exercise.
+"""
+rubric = [
+  "backtest_fold_results holds abs_error per (fold, series, model), and idx_bt_results_archetype indexes (archetype_id, model_name, horizon_days)",
+  "Self-join the table to itself on (archetype_id, realm_slug, horizon_days, test_date), one side model_name = A, the other model_name = B",
+  "The difference of the two abs_error columns over matching keys is the paired d_t series",
+  "Useful because it validates the whole pairing-and-testing pipeline on real data before LightGBM exists, and it answers a real question (does mean-reversion beat the random walk?)",
+]
+answer = """
+The rows live in backtest_fold_results, and the access pattern is already indexed:
+idx_bt_results_archetype on (archetype_id, model_name, horizon_days). To pair two
+baselines you self-join the table on the shared target keys, archetype_id,
+realm_slug, horizon_days, and test_date, taking model_name = 'rolling_mean' on one
+side and model_name = 'last_value' on the other. The two abs_error columns over the
+matched keys are e_A,t and e_B,t; their difference is the d_t series a DM or Wilcoxon
+test consumes. No LightGBM, no split fix: the baselines are all present today.
+
+Why bother before the real comparison exists. Two reasons. First, it exercises the
+entire pipeline, join, difference, HAC variance, p-value, on real fold data, so when
+LightGBM finally lands you are dropping a known-good model into a known-good test
+rather than debugging both at once. Second, it answers a question the baselines were
+literally chosen to pose. models.py frames rolling_mean as "does mean-reversion beat
+the random walk?" and day_of_week as "is weekly seasonality exploitable?" Those are
+real hypotheses about WoW markets, and a paired test across archetypes would settle
+them with evidence instead of intuition, which is worth having on its own.
+"""
+source = "wow_forecaster/backtest/models.py"
+anchor = "                          Tests: does mean-reversion beat the random walk?"
+see_also = ["docs/ROADMAP.md"]

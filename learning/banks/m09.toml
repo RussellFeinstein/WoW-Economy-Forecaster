@@ -1,0 +1,775 @@
+# M09: Cold start and transfer.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+
+# ── The premise: why archetypes ───────────────────────────────────────────────
+
+[[question]]
+id = "m09-q01"
+kind = "recall"
+prompt = """
+The whole project rests on transferring TWW behavior to Midnight archetypes
+rather than to Midnight items. Give the argument for that choice, and name what
+it costs.
+"""
+rubric = [
+  "Midnight item IDs do not exist before Midnight ships, so an item-to-item map cannot be authored in advance",
+  "An archetype is defined by economic behavior (supply source, demand driver, price arc across a season), not by item identity",
+  "The same behavior recurs each expansion under new item IDs, so a behavior map survives the expansion boundary while an ID map cannot",
+  "The cost: the forecast target is an archetype mean, so within-archetype item differences are averaged away and have to be recovered downstream",
+]
+answer = """
+The argument is availability. An item-to-item map needs both sides to exist, and
+the target side does not exist until the expansion ships. A behavior map needs
+only a claim about economic role, and that claim can be written a year early.
+
+What makes it more than a workaround is that the behavior really is the stable
+thing. A stat flask in TWW and a stat flask in Midnight are different item IDs
+with the same supply chain (alchemy, herb throughput), the same demand driver
+(raid nights, race to world first), and the same seasonal arc (spike before
+progression, crash at season end). The IDs are the accident. The arc is the
+signal.
+
+The cost lands in two places. The forecast target is the archetype's daily mean
+price, so every item inside an archetype gets one number, and the spread between
+a cheap and an expensive flask is gone. `crafting_advisor` claws some of that
+back with a trend-ratio projection that scales the item's own current price by
+the archetype's forecast ratio, which is a patch rather than a model. The second
+cost is that the mapping is a human judgement, so it is only as good as the
+person who wrote it, which is exactly why `mapping_rationale` is a required
+field.
+
+One design detail follows directly from this: `archetype_id` is deliberately
+excluded from the feature set. If the booster could see archetype identity it
+would memorise TWW archetypes, and a Midnight archetype would arrive as an
+unseen category value with nothing learned about it. Behavior columns are the
+representation on purpose.
+"""
+source = "wow_forecaster/taxonomy/archetype_taxonomy.py"
+anchor = "Design principle: archetypes represent **economic behavior**, not item identity."
+see_also = ["README.md", "wow_forecaster/models/archetype.py"]
+
+[[question]]
+id = "m09-q02"
+kind = "recall"
+prompt = """
+Write the cold-start blend formula from memory, then state what happens at each
+of its three edge cases.
+"""
+rubric = [
+  "blended = transfer_confidence * model_prediction + (1 - transfer_confidence) * source_price",
+  "confidence at or above 1.0 returns the model prediction unchanged",
+  "confidence at or below 0.0 returns the source price unchanged",
+  "source_price <= 0 short-circuits and returns the model prediction, because the anchor is unavailable rather than zero",
+]
+answer = """
+    blended = conf * model_prediction + (1 - conf) * source_price
+
+`conf` is the mapping's confidence score. The function clamps it into [0, 1]
+before use, so the two limiting cases are reachable by clamping as well as by
+exact input.
+
+conf = 1.0 gives the model prediction untouched. Read that as "the mapping is so
+good that the model trained on the source domain needs no anchoring", which is a
+strong claim and should make you suspicious of any mapping written at 1.0.
+
+conf = 0.0 gives the source price untouched. That is the pure-analogy forecast:
+this Midnight archetype will price like its TWW counterpart priced last week.
+It is a legitimate baseline in its own right, and worth holding onto, because it
+is the thing a blended forecast has to beat to have earned anything.
+
+The third case is different in kind. `source_price <= 0` means there is no
+recent price for the source archetype at all, so the function returns the model
+prediction rather than blending toward zero. Blending toward a missing value
+would drag every forecast to zero, which is the failure mode the guard exists
+for. In practice this branch is rarely reached from the pipeline, because
+`_fetch_cold_start_blend_data` already drops entries whose source price is
+missing or non-positive, so the archetype simply never enters the blend dict.
+Two layers of the same guard, which is fine: the function is also called
+directly by tests and could be called by future code.
+"""
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "blended = conf × model_prediction + (1 − conf) × source_price"
+
+[[question]]
+id = "m09-q03"
+kind = "predict"
+prompt = """
+A Midnight archetype is flagged cold start. The booster predicts 400 gold. The
+mapped TWW archetype's 7-day quantity-weighted mean is 900 gold, and the mapping
+row has confidence_score = 0.75.
+
+What does the blend return, and what would happen instead if the source
+archetype had no recent normalized observations?
+"""
+answer = """
+0.75 * 400 + 0.25 * 900 = 300 + 225 = 525 gold.
+
+Confidence weights the model, not the anchor. That direction is worth burning
+in, because it is the opposite of the intuition some people bring: "high
+confidence in the mapping" means high confidence that the source archetype tells
+you something, which sounds like it should pull harder toward 900. It does not.
+The confidence here is confidence in the model's ability to handle the target
+domain given that a good analogue exists, so a high number means less anchoring.
+Whether that is the right semantics is a real question, and nothing in the repo
+tests it.
+
+With no recent source price, `_fetch_cold_start_blend_data` never writes an
+entry for that target archetype, so `run_inference` finds no key in the blend
+dict and skips blending entirely. The raw 400 is reported. The archetype is
+still cold start, so the confidence interval is still widened, which means the
+forecast advertises its uncertainty even though the anchor that was supposed to
+reduce it never arrived.
+"""
+options = [
+  { text = "525 gold; with no source price the archetype is absent from the blend dict, so the raw 400 is reported", correct = true },
+  { text = "775 gold; with no source price the archetype is absent from the blend dict, so the raw 400 is reported", note = "775 is 0.25 * 400 + 0.75 * 900, which weights the anchor by confidence instead of the model. The formula puts conf on model_prediction and (1 - conf) on source_price." },
+  { text = "525 gold; with no source price the blend returns 0.0 and the forecast is dropped", note = "Neither half is right. blend_cold_start_prediction returns the model prediction when source_price <= 0, and the pipeline never even calls it, because entries with no source price are filtered out before the dict is built." },
+  { text = "650 gold; the blend is a straight average once a mapping exists", note = "That ignores confidence_score entirely. A straight average is the conf = 0.5 special case, not the general rule." },
+]
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "        source_price <= 0           → returns model_prediction unchanged"
+
+[[question]]
+id = "m09-q04"
+kind = "mcq"
+prompt = """
+`run_inference` blends before it computes the confidence interval, and the
+module docstring calls that ordering out explicitly. What does the order
+actually change?
+"""
+answer = """
+It changes both where the interval sits and, in the common cold-start case, how
+wide it is.
+
+The centre is the obvious part: bounds computed around the raw model output
+would not bracket the number that gets written to `forecast_outputs`, so a
+reader comparing the point estimate against its own interval could find the
+point estimate outside it.
+
+The width matters too, and this is the part people miss. When `rolling_std_7d`
+is available the half-width is `z * rolling_std_7d`, which does not depend on
+the prediction at all, so order would only shift the centre. But a genuinely
+cold-start archetype usually has no 7-day rolling standard deviation, and the
+fallback half-width is 20 percent of `predicted`. The 5 percent floor is also a
+fraction of `predicted`. So in exactly the case cold-start blending exists for,
+the interval width is proportional to whichever number you hand in, and blending
+first is what makes the interval scale with the reported forecast.
+"""
+options = [
+  { text = "The centre always, and the width too whenever the half-width falls back to a fraction of predicted", correct = true },
+  { text = "Only the centre; the interval is a fixed multiple of rolling_std_7d either way", note = "True only when rolling_std_7d exists and is positive. The fallback path uses 20 percent of predicted, and the floor uses 5 percent of predicted, so both depend on which value is passed in." },
+  { text = "Nothing measurable; the same widening multiplier applies either way, so blending after would give an identical interval shifted", note = "The multiplier is the same, but it multiplies a half-width that can itself be a function of predicted. Shifting an interval and rescaling it are not the same operation." },
+  { text = "Only whether classify_ci_quality sees the model output or the blended one", note = "Quality is classified from the final bounds and the prediction that was passed in, so it does follow the ordering, but that is a consequence rather than the reason. The reason is that the interval has to describe the number actually reported." },
+]
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "CI widening is applied AFTER blending so the interval is centred on"
+
+# ── Confidence used twice ─────────────────────────────────────────────────────
+
+[[question]]
+id = "m09-q05"
+kind = "recall"
+prompt = """
+`transfer_confidence` enters the forecast in two separate places. Name both,
+give the direction of each effect, and say why the two numbers are not
+guaranteed to be the same value.
+"""
+rubric = [
+  "In the blend it is the weight on the model prediction, so higher confidence means less anchoring toward the source price",
+  "In the interval it drives widening = 1.5 / confidence, so higher confidence means a narrower interval",
+  "Missing confidence is treated as the worst case: widening 3.0, wider than any positive confidence can produce",
+  "They come from different queries: the blend reads confidence_score keyed by target archetype, the feature column reads MAX(confidence_score) keyed by source archetype",
+]
+answer = """
+Two uses, both monotone in the same direction of trust:
+
+1. Blend weight. `conf` multiplies the model prediction and `1 - conf`
+   multiplies the anchor. Higher confidence, less anchoring.
+2. Interval widening. `widening = 1.5 / transfer_confidence`, applied to the
+   half-width for any cold-start row. Confidence 0.90 gives about 1.67x,
+   confidence 0.60 gives 2.50x, and a null gives a flat 3.0x.
+
+Note the shape of the widening rule. Even a perfect mapping at confidence 1.0
+still widens by 1.5x, so "cold start" carries an irreducible penalty on top of
+whatever the mapping is worth. And 3.0x for a null is chosen so that no positive
+confidence can ever be punished more than having no mapping at all: 1.5 / conf
+exceeds 3.0 only when conf is below 0.5, so a mapping written at 0.4 confidence
+is treated as worse than no mapping. That is arguably correct (a bad analogy is
+worse than an honest shrug) and it is arguably a bug (the widening function is
+not monotone across the null boundary). Either way it is a hand-chosen constant
+with no measurement behind it.
+
+The reason the two numbers can disagree is plumbing, not design.
+`_fetch_cold_start_blend_data` queries `archetype_mappings` and keys its result
+by `target_archetype_id`, because that is the archetype being scored.
+`load_archetype_metadata` LEFT JOINs the same table on `source_archetype_id`, so
+the `transfer_confidence` column in the Parquet describes the archetype as a
+source of transfer, not as a recipient of it. For a Midnight target archetype
+the feature column is null while the blend dict holds a real confidence. The
+consequence is q11 and q12.
+"""
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "transfer_confidence = None  → widening = 3.00× (no mapping at all)"
+see_also = ["wow_forecaster/pipeline/forecast.py", "wow_forecaster/features/archetype_features.py"]
+
+[[question]]
+id = "m09-q06"
+kind = "predict"
+prompt = """
+After blending, `predicted` is 500 gold. The archetype is cold start,
+`rolling_std_7d` is None (too little history), `transfer_confidence` is 0.90,
+`confidence_pct` is 0.80, and `current_price` is 500.
+
+Give the interval and the `ci_quality` label.
+"""
+answer = """
+Step by step:
+
+  rolling_std_7d is None, so ci_half = 0.20 * 500 = 100.
+  is_cold_start, conf 0.90 -> widening = 1.5 / 0.90 = 1.667.
+  ci_half = 100 * 1.667 = 166.67.
+  floor check: 0.05 * 500 = 25, which is smaller, so no change.
+  lower = 500 - 166.67 = 333.33, upper = 500 + 166.67 = 666.67.
+  current_price floor 25 and cap 5000 bind nothing.
+  width = (666.67 - 333.33) / 500 = 0.667, which is in [0.50, 2.00).
+
+So (333.33, 666.67) and "wide".
+
+Note that `z` never appears. The 1.28 lookup multiplies `rolling_std_7d`, and on
+this path there is no rolling standard deviation, so the interval is a flat
+percentage of the prediction with no distributional content at all. Calling the
+result an 80 percent interval is a label, not a claim about coverage.
+
+Now the general result, which is the point of the question. On this path the
+half-width is `0.20 * predicted * (1.5 / conf)`, and conf cannot exceed 1.0, so
+the half-width is at least `0.30 * predicted` and the width is at least 60
+percent. The "good" band requires width under 50 percent. A cold-start forecast
+with no rolling standard deviation can therefore never be classified "good", for
+any mapping confidence whatsoever. That is a structural consequence of three
+constants (0.20, 1.5, 0.50) that were each chosen independently and never
+checked against each other.
+"""
+options = [
+  { text = "(333.33, 666.67) and \"wide\"", correct = true },
+  { text = "(333.33, 666.67) and \"good\"", note = "The quality bands are keyed to width as a fraction of predicted: under 0.50 is good, under 2.00 is wide. This interval is 0.667 wide, which lands in the middle band." },
+  { text = "(287.20, 712.80) and \"wide\"", note = "That applies the 1.28 z-score on top of the 20 percent fallback. z multiplies rolling_std_7d only. When rolling_std_7d is None the fallback half-width replaces the whole z * std term, so z never enters." },
+  { text = "(400.00, 600.00) and \"wide\"", note = "That is the un-widened 20 percent fallback. is_cold_start is True, so the widening branch runs, and 1.5 / 0.90 is applied before the floor check." },
+]
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "_DEFAULT_UNCERTAINTY_FRAC = 0.20"
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m09-q07"
+kind = "mcq"
+prompt = """
+`compute_confidence_interval` re-clamps `lower` to at most `upper` after the
+floor and cap are applied. The module docstring explains that step with a
+parenthetical: "(can only happen if current_price × 0.05 > cap)".
+
+What is wrong with that explanation?
+"""
+answer = """
+The stated condition is impossible. The floor is `current_price * 0.05` and the
+cap is `current_price * 10.0`. Both are multiples of the same positive number,
+so five percent of it can never exceed ten times it. No input satisfies the
+condition as written.
+
+The re-clamp is still needed, because there are two real ways to break
+`lower <= upper`, and both need `predicted` and `current_price` to be orders of
+magnitude apart:
+
+  current_price >> predicted: the 5 percent floor rises above `predicted +
+  ci_half`, so the floor exceeds the upper bound. The inline comment in the
+  function body describes this one.
+
+  predicted >> current_price: the 10x cap falls below `predicted - ci_half`, so
+  the cap is under the lower bound. Neither comment mentions this one, and it is
+  the more likely of the two here, since cold-start blending toward a source
+  archetype from a different expansion can move a prediction a long way from the
+  target's own current price.
+
+In both cases the re-clamp collapses the interval to a single point, and a
+zero-width interval has width 0, which `classify_ci_quality` reports as "good".
+That label then propagates: `tsm_export` filters on `ci_quality = 'good'`, so
+the most degenerate intervals in the system are exactly the ones that survive
+into the TradeSkillMaster import string. Reporting a collapsed clamp as the
+highest quality tier is the kind of bug that only shows up when you trace a
+constant across three files.
+"""
+options = [
+  { text = "current_price * 0.05 can never exceed current_price * 10, so the condition is unsatisfiable; the real triggers are the floor exceeding the upper bound, or the cap falling below the lower bound", correct = true },
+  { text = "Nothing is wrong: floor and cap cross when current_price is very small", note = "They scale together. Halving current_price halves both the floor and the cap, so their order never changes. No value of a positive current_price makes 0.05x greater than 10x." },
+  { text = "It has the direction backwards: only predicted >> current_price can trigger the re-clamp", note = "predicted >> current_price does trigger it through the cap, but current_price >> predicted also triggers it through the floor. And the parenthetical is not a direction error in the first place, since it compares two multiples of the same number." },
+  { text = "The re-clamp is dead code: lower <= upper is guaranteed by construction", note = "It is guaranteed before the floor and cap, since ci_half is non-negative. The floor and cap are precisely what can break the invariant, which is why the re-clamp sits after them and not before." },
+]
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "    width_pct = (ci_upper - ci_lower) / predicted"
+see_also = ["wow_forecaster/reporting/tsm_export.py"]
+
+# ── The mapping record ────────────────────────────────────────────────────────
+
+[[question]]
+id = "m09-q08"
+kind = "recall"
+prompt = """
+`ArchetypeMapping` requires a non-empty `mapping_rationale`. Say what that field
+buys, and say where the guard does not reach.
+"""
+rubric = [
+  "It is required on the pydantic model, validated non-empty after stripping, and NOT NULL in the archetype_mappings DDL",
+  "The stated purpose is to force explicit reasoning about why a mapping is valid, giving an audit trail for when transfer fails",
+  "It is the only place the analogy itself is recorded: confidence_score is a number with no attached argument",
+  "The guard is path-dependent: rows inserted with raw SQL bypass the validator, and the DDL accepts an empty string",
+]
+answer = """
+The field exists so that a confidence score is never the whole record. A
+mapping row without a rationale says "TWW archetype 12 becomes Midnight
+archetype 88 at 0.85" and gives a future reader nothing to argue with. With a
+rationale it says why, and that is the thing you go back and read when the
+transfer forecast is 40 percent off and you need to know whether the analogy was
+wrong or the market was.
+
+That is a genuinely good design instinct and it is worth naming precisely: the
+field turns an unfalsifiable number into a falsifiable claim. "Both are the
+alchemy-crafted raid consumable with a one-hour duration" can be checked against
+Midnight's actual crafting system and found wrong. "0.85" cannot.
+
+Where the guard stops. The validator lives on the pydantic model, so it only
+fires when a row goes through `ArchetypeMapping`. The DDL enforces NOT NULL,
+which rejects a null but happily accepts the empty string, and it has no CHECK
+on length. Every insert into `archetype_mappings` in the test suite is raw SQL,
+so none of them exercise the validator. A model-level invariant that the only
+live insert path bypasses is documentation, not enforcement. Compare the
+`mapping_rationale` guard with the `test_date > train_end` guarantee in
+`backtest/splits.py`: both are design-level promises, and only one of them is
+honest about being one.
+"""
+source = "wow_forecaster/models/archetype.py"
+anchor = "is intentional: it forces the researcher to reason explicitly about *why*"
+see_also = ["wow_forecaster/db/schema.py"]
+
+[[question]]
+id = "m09-q09"
+kind = "mcq"
+prompt = """
+`cold_start_model_slug` can return three different things. A Midnight archetype
+is cold start, a mapping row exists with it as the target, and `run_inference`
+did blend its prediction. What slug does that forecast row get?
+"""
+answer = """
+It gets `_cold`, not `_transfer`.
+
+The three outcomes are: base slug for a warm archetype, `base_cold` for cold
+start with no mapping, `base_transfer` for cold start with a mapping. That is a
+provenance record, and provenance is the reason it exists: `forecast_outputs`
+carries rows produced by three genuinely different processes, and without the
+suffix a query against that table cannot separate a model forecast from a
+blended one. Any future accuracy study that pools them is comparing different
+estimators under one name.
+
+The reason a blended Midnight row still reads `_cold` is that the slug is
+computed from the row's `has_transfer_mapping` feature, which
+`load_archetype_metadata` populates by joining `archetype_mappings` on
+`source_archetype_id`. A Midnight archetype is the target of its mapping, never
+the source, so the flag is False on its row. The slug is derived from a
+feature-build artifact and never sees what inference actually did.
+
+So the provenance field, which exists to record whether transfer happened, is
+wired to a column that does not know. Worth sitting with: the mechanism is
+right, the wiring is wrong, and a green test suite says nothing about it because
+every test that inserts a mapping inserts it for the archetype it then asserts
+against.
+"""
+options = [
+  { text = "base_cold, because the slug reads has_transfer_mapping from the row, and that flag is populated only for archetypes that are the SOURCE of a mapping", correct = true },
+  { text = "base_transfer, because a mapping exists and the blend fired", note = "That is the intent, but the slug function never sees the blend. It takes is_cold_start and has_transfer_mapping as arguments, both read straight off the inference Parquet row, and the second one is false for a target archetype." },
+  { text = "The base slug with no suffix, because blending replaced the model prediction and the row is no longer a model output", note = "The suffix is chosen from the two boolean flags only. is_cold_start is True here, so some suffix is guaranteed; the function has no branch that drops back to the base slug once cold start is set." },
+  { text = "base_cold_transfer, since both conditions hold", note = "The function returns a single suffix. It tests the mapping case first and returns immediately, so the two suffixes are mutually exclusive by construction." },
+]
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "    if is_cold_start and has_transfer_mapping:"
+
+[[question]]
+id = "m09-q10"
+kind = "find"
+prompt = """
+Find every code path in this repo that writes a row into `archetype_mappings`.
+Report what you find and what it implies about the blend path.
+"""
+rubric = [
+  "ArchetypeMappingRepository in wow_forecaster/db/repositories/archetype_repo.py has an insert() method",
+  "Nothing under wow_forecaster/ ever instantiates that class, and no CLI command creates a mapping",
+  "The only INSERT statements into archetype_mappings are raw SQL in test fixtures",
+  "So in production the table is empty, the blend dict is empty, and no forecast has ever been blended",
+]
+answer = """
+There is a repository class with a working `insert()`. Nothing calls it. Grep
+`ArchetypeMappingRepository` across the whole tree and the class definition is
+the only hit. `seed-taxonomy` seeds `item_categories` and
+`economic_archetypes`; it does not seed mappings, and no CLI command does.
+
+The only writes are two raw-SQL fixtures under `tests/`.
+
+The implication is the honest headline of this module. `archetype_mappings` is
+empty in the live database, so `_fetch_cold_start_blend_data` returns `{}` on
+the first query and exits early, `run_inference` receives `cold_start_blend=None`,
+and the blend never runs. `load_archetype_metadata` finds no mapping either, so
+`has_transfer_mapping` is False and `transfer_confidence` is null on every row,
+which sends every cold-start forecast down the 3.0x widening branch and stamps
+every one of them `_cold`.
+
+The transfer layer is built, tested, documented, and inert. That is a specific
+and common failure shape, and it is worth naming as its own category rather than
+as a bug: the code is correct, the tests pass, the docstrings are accurate about
+what the functions do, and the feature does not exist in production because
+nobody wrote the data. It is the same shape as the backtest harness that never
+had the ML model plugged into it. Building the mechanism and operating it are
+separate pieces of work, and only one of them shows up in a test suite.
+
+The cheapest honest fix is not code. It is a seed file of TWW to Midnight
+mappings with rationales, plus a CLI command that loads it through
+`ArchetypeMapping` so the validator actually runs.
+"""
+source = "wow_forecaster/db/repositories/archetype_repo.py"
+anchor = "class ArchetypeMappingRepository(BaseRepository):"
+see_also = ["LESSONS.md"]
+
+# ── The keying asymmetry ──────────────────────────────────────────────────────
+
+[[question]]
+id = "m09-q11"
+kind = "mcq"
+prompt = """
+Suppose one mapping row existed: source_archetype_id = 12 (a TWW archetype),
+target_archetype_id = 88 (a Midnight archetype), confidence_score = 0.85,
+source_expansion = "tww", target_expansion = "midnight".
+
+After `build-datasets`, which rows carry `has_transfer_mapping = True` and
+`transfer_confidence = 0.85`?
+"""
+answer = """
+Rows for archetype 12, the TWW source.
+
+`load_archetype_metadata` builds a subquery that groups `archetype_mappings` by
+`source_archetype_id` and LEFT JOINs it to `economic_archetypes` on
+`ea.archetype_id = am.source_archetype_id`. So the flag answers "is this
+archetype the source of a mapping into the target expansion", not "does this
+archetype have an analogue it can borrow from".
+
+Meanwhile `_fetch_cold_start_blend_data` keys its output dict by
+`target_archetype_id`, because `run_inference` looks up blend data by the
+archetype it is currently scoring. The two halves of the transfer machinery
+therefore index the same table from opposite ends.
+
+Read the feature descriptions in `features/registry.py` and the ambiguity is
+visible in the English: "True if an archetype_mapping exists for this archetype
+(source_expansion to transfer_target)". That sentence is true of both ends of an
+edge, which is how a directional join gets documented as if it were symmetric.
+The lesson generalises past this repo: when a feature is derived from a
+directed relation, the feature name has to say which direction, or the next
+person to consume it will guess.
+"""
+options = [
+  { text = "Rows for archetype 12 only, because the metadata join is on source_archetype_id", correct = true },
+  { text = "Rows for archetype 88 only, because 88 is the archetype that receives the transfer", note = "That is what the blend dict does, and it is what you would want the feature to mean. The metadata query joins on source_archetype_id, so it populates the other end of the edge." },
+  { text = "Rows for both 12 and 88, since the mapping row names both", note = "One LEFT JOIN on one column. Nothing in load_archetype_metadata joins target_archetype_id, so 88 never matches and keeps has_mapping = 0." },
+  { text = "Neither, because the join also filters on expansion and archetype 12 belongs to tww", note = "The expansion filter is on the mapping row's source_expansion and target_expansion columns, which are 'tww' and 'midnight' here, matching config.expansions.active and transfer_target. The join succeeds." },
+]
+source = "wow_forecaster/features/archetype_features.py"
+anchor = "        ) am ON ea.archetype_id = am.source_archetype_id"
+
+[[question]]
+id = "m09-q12"
+kind = "predict"
+prompt = """
+Same setup as q11: the mapping exists, archetype 88 is cold start, and the blend
+dict does contain an entry for 88 with (source_price, 0.85). Inference runs on
+archetype 88's row.
+
+What widening multiplier is applied to its confidence interval, and what suffix
+does its model slug get?
+"""
+answer = """
+Widening 3.0, slug ending `_cold`.
+
+Both come from the same row, and both read columns that describe archetype 88 as
+a source of transfer rather than a recipient of it. `transfer_confidence` is
+null, so `compute_confidence_interval` takes the no-mapping branch and applies
+the flat 3.0x. `has_transfer_mapping` is False, so `cold_start_model_slug`
+returns `_cold`.
+
+The blend still fires, because the blend reads the dict rather than the row. So
+the forecast is anchored at 0.85 confidence while being labelled as having no
+mapping and priced with the widest uncertainty penalty the function can produce.
+Every downstream consumer sees a forecast that claims to be an unanchored
+cold-start guess and is in fact a 0.85-weighted blend.
+
+Two things to take from this. First, the direction of the error is toward
+conservatism, so nothing looks broken from the outside: the intervals are wider
+than intended and the provenance is more pessimistic than the truth. Bugs that
+fail safe are the ones that survive longest. Second, the fix is not in
+`cold_start.py`. The functions there are correct given their arguments. The fix
+is to pass the confidence that inference actually used, which means the blend
+dict and the feature column should be the same value from the same query rather
+than two independent reads of one table.
+"""
+options = [
+  { text = "Widening 3.0, slug suffix _cold", correct = true },
+  { text = "Widening 1.76 (that is 1.5 / 0.85), slug suffix _transfer", note = "That is the intended behavior and it is what the design describes. It does not happen, because the CI reads transfer_confidence off the Parquet row (null for a target archetype) rather than from the blend dict that inference just used." },
+  { text = "Widening 1.0 and the base slug, since the blend already accounted for the transfer", note = "Blending does not clear is_cold_start. The row still carries the flag, so the widening branch runs and some suffix is applied. Nothing in the code treats a blended prediction as warm." },
+  { text = "Widening 3.0, slug suffix _transfer", note = "The two cannot disagree: both are driven by the same pair of row columns. A row with a null transfer_confidence also has has_transfer_mapping = False, so 3.0x and _cold always travel together." },
+]
+source = "wow_forecaster/ml/predictor.py"
+anchor = "            model_slug = cold_start_model_slug(base_slug, is_cold_start, has_transfer)"
+
+# ── What cold start actually means in the data ────────────────────────────────
+
+[[question]]
+id = "m09-q13"
+kind = "recall"
+prompt = """
+The feature registry describes `is_cold_start` as two conditions joined by AND.
+Read `compute_archetype_features` and say what the code actually evaluates, then
+work out what the flag is for an archetype whose items are all TWW.
+"""
+rubric = [
+  "The documented rule is: items in the transfer-target expansion AND total observations below cold_start_threshold",
+  "The code evaluates only target_obs < cold_start_threshold",
+  "cold_start_obs_counts is already scoped to the transfer target, so an archetype with no target-expansion items is absent from the dict and defaults to 0",
+  "0 < 30, so a TWW-only archetype is flagged is_cold_start = True, and the cold_start_expansion argument is accepted but never read in the function body",
+]
+answer = """
+The registry says "True if expansion_slug == transfer_target AND total obs <
+cold_start_threshold". The code is one comparison:
+
+    is_cold_start = target_obs < cold_start_threshold
+
+The first condition is meant to be carried by the dict rather than the
+comparison: `count_obs_per_archetype_realm` filters to items whose
+`expansion_slug` matches the transfer target, so only Midnight-bearing
+archetypes appear in it. But absence and zero are not the same thing, and
+`.get(archetype_id, 0)` collapses them. An archetype with no Midnight items at
+all is missing from the dict, defaults to 0, and 0 is below any positive
+threshold. So it is flagged cold start. `cold_start_expansion` is passed into
+the function and never referenced in the body, which is the tell.
+
+Follow the consequences, because they are larger than the bug looks:
+
+The training feature is close to constant. If most archetypes in the dataset are
+TWW-only, `is_cold_start_int` is 1 nearly everywhere, and a near-constant column
+cannot produce a useful split. The docstring's claim that "the model
+self-regulates via this feature" needs the feature to have contrast, and this
+implementation removes it.
+
+Every archetype at inference takes the widening branch. Combined with q10 (no
+mapping rows exist), `transfer_confidence` is null everywhere, so the widening
+is 3.0x on every forecast the system publishes. The heuristic interval is three
+times its base width for a reason that has nothing to do with any actual cold
+start.
+
+And `ci_quality` follows. A forecast that would have been "good" at base width
+can be pushed into "wide" purely by the misfiring flag, which then excludes it
+from the TSM export.
+
+The general habit worth taking: a default value that stands in for "not present"
+silently converts a missing-data condition into a valid measurement. `0` is the
+worst possible default for a count that feeds a threshold, because it is also a
+legitimate count.
+"""
+source = "wow_forecaster/features/archetype_features.py"
+anchor = "    is_cold_start = target_obs < cold_start_threshold"
+see_also = ["wow_forecaster/features/registry.py", "config/default.toml"]
+
+[[question]]
+id = "m09-q14"
+kind = "find"
+prompt = """
+`archetype_id` is not a model input. Find where that exclusion is recorded and
+the reason given, and explain why it is load-bearing for transfer specifically.
+"""
+rubric = [
+  "The excluded-columns block in the ml/feature_selector.py module docstring names it with the reason",
+  "The reason is that including it would memorise TWW archetypes and prevent cold-start transfer",
+  "One global model is trained across all archetypes, so archetype identity has to be carried by behavior columns instead: category encoding, item count, transfer flags, event features",
+  "realm_slug, obs_date, archetype_sub_tag and the target_price_* columns are excluded too, each for a different stated reason",
+]
+answer = """
+It is in the module docstring of `ml/feature_selector.py`, in the "Excluded
+columns (never model inputs)" block, with a one-line reason per column.
+
+Why it matters here more than in an ordinary model: a Midnight archetype is an
+identifier the training data never contained. If identity were a feature, a new
+archetype would arrive as an unseen value and the model would have nothing
+learned about it, which is the textbook cold-start wall. By excluding identity
+and representing an archetype only through behavior columns, a never-seen
+archetype arrives as a familiar point in feature space, and the model can score
+it because it has seen other archetypes with similar behavior. That is the whole
+mechanism by which "Day 1 predictions for never-seen items" is even coherent,
+and it costs something real: the model cannot learn that this particular
+archetype is systematically pricier than its category, because you have removed
+its ability to tell them apart.
+
+That tradeoff is the same one the blend then tries to buy back. The model gives
+you a behavior-level prediction with no archetype-specific level, and the source
+price supplies a level from the analogous archetype. Read together, the
+exclusion and the blend are two halves of one design: strip identity to make the
+model transferable, then reinject a level from the mapping.
+
+Note the other exclusions while you are in there. `target_price_*` is the
+label, and it is listed alongside the others rather than being handled
+specially, which is a small sign of how the leakage boundary is treated in this
+file compared with `trainer.py`.
+"""
+source = "wow_forecaster/ml/feature_selector.py"
+anchor = "- archetype_id   : Would memorise TWW archetypes; prevents cold-start transfer."
+
+[[question]]
+id = "m09-q15"
+kind = "mcq"
+prompt = """
+The `cold_start.py` docstring says of `is_cold_start_int`: "The model
+self-regulates via this feature." What is the strongest defensible reading of
+that sentence?
+"""
+answer = """
+It is a binary column the booster is allowed to split on, nothing more. If the
+training data contains enough rows on both sides of the flag, and if the split
+reduces loss, the trees can learn a different response for thin series. Both of
+those are conditions, not guarantees, and neither is checked anywhere.
+
+That is worth saying plainly because the sentence reads like a mechanism and is
+actually a hope. There is no per-row learning rate, no sample weighting, no
+separate objective, no regularization keyed to the flag. There is one extra
+column in a list of forty.
+
+And per q13 the column is close to constant in practice, which removes the one
+condition the reading depends on. A booster cannot split on a feature with no
+contrast, so whatever self-regulation the docstring imagines is not happening.
+
+Testing this is easy and nobody has: pull the gain-based feature importance for
+`is_cold_start_int` out of the fitted model. If it is at or near zero, the
+sentence is decoration. That is a fifteen-minute check standing between a claim
+in a docstring and a measured fact, which is roughly the theme of this whole
+track.
+"""
+options = [
+  { text = "It is a binary column the trees may split on, so a different response for thin series is possible if the data has contrast and the split lowers loss; nothing enforces either condition", correct = true },
+  { text = "LightGBM applies a lower learning rate to rows where the flag is set", note = "The learning rate is a single scalar hyperparameter for the whole booster. There is no per-row learning rate in LightGBM and none is configured here." },
+  { text = "The flag is passed as a sample weight, so cold-start rows contribute less to the loss", note = "No weights are passed to lgb.Dataset in this repo. Every training row carries weight 1. Weighting would be a reasonable thing to try, and it is not what is happening." },
+  { text = "The flag makes LightGBM widen the prediction interval for those rows", note = "The booster emits a point prediction. All interval logic lives in cold_start.compute_confidence_interval, downstream of the model and outside it entirely." },
+]
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "   belongs to a thin series.  The model self-regulates via this feature."
+
+# ── Framing and honesty ───────────────────────────────────────────────────────
+
+[[question]]
+id = "m09-q16"
+kind = "recall"
+prompt = """
+Put the cold-start design into standard statistical vocabulary. What kind of
+transfer is this, what is the blend doing statistically, and what would a
+principled version of the blend weight look like?
+"""
+rubric = [
+  "Domain adaptation with a shared feature space: same covariates, different domain (expansion), no labels in the target domain at launch",
+  "It is not fine-tuning or parameter transfer: the model itself is never adapted, one global model is fit on the source domain and its output is post-processed",
+  "The blend is shrinkage toward an anchor, with the shrinkage weight set by hand rather than estimated",
+  "A principled weight comes from relative variances (empirical Bayes or a James-Stein style estimator) or from measured out-of-domain error, not from a judgement call",
+]
+answer = """
+The setting is domain adaptation under covariate shift with a shared feature
+space. The covariates are the same in both domains by construction, because
+`feature_selector` excluded identity precisely so they would be. The target
+domain has essentially no labels at launch, which rules out fine-tuning and
+rules in a transfer scheme that operates on outputs.
+
+That is exactly what this is. Nothing adapts the model. One global booster is
+fit on the source domain, and its prediction is combined with a source-domain
+statistic afterwards. In transfer-learning taxonomy that is closest to
+instance-free, output-level transfer, and it is the cheapest kind. It also
+means the model's own uncertainty about the target domain plays no part in the
+combination.
+
+Statistically the blend is shrinkage. You have a noisy estimate (the model
+prediction on an out-of-domain point) and an anchor (the source archetype's
+recent mean), and you take a convex combination. That is the right instinct: it
+is the same instinct behind James-Stein, ridge, and any empirical-Bayes
+posterior mean. The difference is where the weight comes from. In those methods
+the weight is derived from the relative variance of the estimate and the anchor,
+so it adapts as evidence accumulates and it has an optimality argument behind
+it. Here the weight is `confidence_score`, a number a human typed into a
+rationale-bearing row.
+
+A principled version would need two things this repo cannot produce yet: an
+estimate of the model's error variance on target-domain rows, and an estimate of
+how far the source archetype's level sits from the target's. Both need target
+data. So the honest position is not "the weight is wrong", it is "the weight is
+currently unestimable, and the hand-set value is a placeholder that should be
+labelled as one".
+
+There is also a comparison nobody has run that needs no new theory at all. The
+two endpoints of the blend are both complete forecasters: conf = 0 is the pure
+analogy forecast, conf = 1 is the pure model. Scoring those two against each
+other on target-domain data would tell you which end the weight belongs near
+before any estimator is derived. That is the M1 shape of this work.
+"""
+
+[[question]]
+id = "m09-q17"
+kind = "recall"
+prompt = """
+An interviewer asks: "your README says archetype transfer enables Day 1
+predictions for never-seen items. Is that working?" Give the ninety-second
+answer.
+"""
+rubric = [
+  "The machinery is complete and currently inert: nothing writes archetype_mappings, so the blend dict is empty and no forecast has been blended",
+  "Name the design honestly: identity excluded from features, behavior columns as the representation, output-level shrinkage toward the analogous source archetype",
+  "Name the wiring defects: the source-versus-target keying asymmetry, and is_cold_start defaulting a missing count to zero",
+  "Say what would validate it: target-domain data, then a scored comparison of blended forecast against the analogy-only and model-only endpoints at matched horizons",
+  "Say what it means today: transfer is an architecture, not a result, and the README sentence is a design claim",
+]
+answer = """
+A version that lands:
+
+"The architecture is there and the answer is no, not yet, and I can tell you
+exactly why. The design is sound: we never let the model see archetype identity,
+because a Midnight archetype is an ID the training data has never contained, so
+identity as a feature would be a guaranteed cold-start wall. Archetypes are
+represented only by behavior, which means a never-seen archetype lands as a
+familiar point in feature space. Then, because stripping identity also strips
+the level, we blend the model output toward the recent price of the mapped
+source archetype, weighted by a hand-written mapping confidence. Statistically
+that is shrinkage toward an anchor with a hand-set weight.
+
+What is not working is the data and the wiring. Nothing in the codebase ever
+writes a row into `archetype_mappings`. There is a repository class with an
+insert method and no caller, so the table is empty, the blend dictionary comes
+back empty, and no forecast has ever actually been blended. On top of that there
+are two wiring defects I found reading it back. The transfer feature columns are
+joined on `source_archetype_id` while the blend dictionary is keyed by target,
+so even with mappings loaded, a Midnight forecast would be blended at the right
+weight while being labelled as having no mapping and widened by the maximum
+penalty. And `is_cold_start` defaults a missing observation count to zero, so
+every archetype with no Midnight items is flagged cold start, which makes the
+flag nearly constant and triples every interval we publish.
+
+What would settle it is straightforward and it needs target data, so it is a
+matter of calendar. Once Midnight prices accumulate, score three forecasters on
+the same rows at the same horizons: the blend, the analogy alone, and the model
+alone. The blend has to beat both endpoints or the weight is doing nothing.
+Until that runs, transfer is an architecture, not a result, and I would describe
+that README line as a design claim rather than a measured one."
+
+The reason that answer works is the last sentence. Anyone can describe a
+transfer scheme. Saying which line of your own README is currently unearned is
+the part that reads as a working scientist.
+"""
+see_also = ["README.md", "PLAN.md", "LESSONS.md"]

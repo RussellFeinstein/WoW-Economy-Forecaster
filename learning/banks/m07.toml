@@ -1,0 +1,754 @@
+# M07: The model.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+
+# ── What gradient boosting is ─────────────────────────────────────────────────
+
+[[question]]
+id = "m07-q01"
+kind = "recall"
+prompt = """
+Explain gradient boosting to someone who knows linear regression and decision
+trees but has never used a boosted ensemble. Then answer the follow-up you will
+definitely get: what exactly is each new tree fit to?
+"""
+rubric = [
+  "The prediction is an additive sum of many small trees, built one at a time rather than in parallel",
+  "Each new tree is fit to the gradient of the loss at the current prediction, not to the raw target",
+  "learning_rate shrinks each tree's contribution, so more rounds are needed but each commits less",
+  "Boosting drives down bias sequentially and will overfit without a stopping rule, which is what early_stopping_rounds is for",
+  "Contrast with bagging or a random forest, which averages independent trees to cut variance instead",
+]
+answer = """
+A boosted model is a sum, not a vote. Start with a constant prediction. Fit a
+small tree to the direction the loss says the current prediction is wrong in, add
+a shrunken version of that tree to the running total, recompute the errors, and
+repeat. After 100 rounds the prediction for a row is the initial constant plus
+100 leaf values, one from each tree.
+
+The follow-up is where people get caught. Each tree is fit to the negative
+gradient of the loss with respect to the current prediction, not to the residual.
+For squared loss those are the same thing up to a constant, which is why "fits
+the residuals" gets repeated as if it were the definition. This repo does not use
+squared loss. It uses regression_l1, where the gradient is the sign of the error,
+so every tree is fit to a target of plus or minus one and only the direction of
+the mistake steers the split search. LightGBM then refits the leaf values, since a
+tree grown on signs has no natural magnitude.
+
+learning_rate is the shrinkage on each tree's contribution. At 0.05 with 100
+rounds the ensemble can move a long way in total but no single tree can swing a
+prediction, which is why low learning rates generalize better and cost more
+compute. That is a bias-variance dial, and its partner is the stopping rule:
+boosting is a bias-reduction method that keeps reducing training error forever,
+so something outside the loop has to say when to stop.
+
+The clean contrast: a random forest builds independent deep trees on bootstrap
+samples and averages them, attacking variance. Boosting builds dependent shallow
+trees in sequence, attacking bias. That is why a forest is hard to overfit by
+adding trees and a booster is easy to overfit by adding rounds.
+"""
+source = "config/default.toml"
+anchor = "# Gradient boosting step size; lower = slower convergence but better generalisation"
+
+[[question]]
+id = "m07-q02"
+kind = "mcq"
+prompt = """
+`num_leaves = 31` in `config/default.toml`. What does that number actually
+constrain, given LightGBM's growth strategy?
+"""
+answer = """
+LightGBM grows leaf-wise: at every step it splits whichever leaf in the whole tree
+promises the largest loss reduction, and it keeps going until the tree has
+num_leaves leaves. Depth is a side effect, not a setting. One branch can run ten
+levels deep while its sibling is still a single leaf.
+
+That is the trade the docstring is pointing at when it says leaf-wise growth is
+faster and uses less memory than the level-wise growth XGBoost defaults to. For a
+fixed number of leaves, leaf-wise spends all of them where the loss is worst, so
+it fits faster per leaf. The cost is that the tree is unbalanced by construction
+and can chase a narrow region of the data, which is why num_leaves and
+min_child_samples matter more here than a max_depth would.
+
+Translating 31 leaves into "about depth 5" is only valid for a balanced tree, and
+these are deliberately not balanced. If you want a depth bound in LightGBM you set
+max_depth explicitly, which this project does not.
+"""
+options = [
+  { text = "The total number of leaves per tree; LightGBM splits the highest-gain leaf anywhere in the tree, so depth is uneven and unbounded", correct = true },
+  { text = "The maximum depth of each tree, so every path from root to leaf is at most 31 splits long", note = "Leaves are not levels, and LightGBM does not bound depth by default at all. max_depth is a separate parameter that this config never sets." },
+  { text = "The number of trees in the ensemble", note = "That is n_estimators, set to 100 and passed as num_boost_round. num_leaves is per tree." },
+  { text = "The minimum number of rows required before a leaf can be split further", note = "That is min_child_samples, set to 5 here. It is the other half of the overfitting control, but it is a row count, not a leaf count." },
+]
+source = "wow_forecaster/ml/lgbm_model.py"
+anchor = "Histogram-based leaf-wise growth is faster and uses less"
+
+# ── Why trees, on this data ───────────────────────────────────────────────────
+
+[[question]]
+id = "m07-q03"
+kind = "recall"
+prompt = """
+`lgbm_model.py` argues LightGBM against three alternatives. Reconstruct the
+argument, and say which part of it is about this data specifically rather than
+about tabular modeling in general.
+"""
+rubric = [
+  "vs XGBoost: a speed and memory argument, with accuracy on tabular data treated as roughly a wash",
+  "vs Prophet: Prophet needs roughly 30 or more observations per series and cold-start archetypes have fewer",
+  "vs Prophet, the sharper point: it cannot consume cross-series features like event severity or archetype category",
+  "vs LSTM: needs on the order of 100 timesteps per series, and is harder to deploy at inference time",
+  "The data-specific part is the per-series thinness plus the need for cross-series features; the XGBoost comparison is generic",
+]
+answer = """
+Three comparisons, and only two of them are really about this project.
+
+XGBoost is a wash. The docstring says so plainly: histogram-based leaf-wise growth
+is faster and lighter, and accuracy differences on tabular data are marginal. If
+someone hands you an XGBoost model here, nothing about the design changes. This is
+the generic part of the argument and it is fine that it is generic.
+
+Prophet is the interesting one, and the docstring gives two reasons that sit at
+different levels. The first is sample size: Prophet fits seasonality per series
+and wants roughly 30 or more observations, which cold-start Midnight archetypes do
+not have. The second is structural and matters more: Prophet models one univariate
+series as trend plus seasonality plus holidays, so it has no way to consume event
+severity, archetype category, or transfer confidence. Those cross-series features
+are the whole premise of this system. A model that cannot read them is not a
+weaker version of this design, it is a different design.
+
+LSTM fails on the same sample-size axis, harder. It wants on the order of 100
+timesteps per series before it learns anything, and the repo has a 30-day raw
+retention wall and a data gap. The deployment note is real too: a booster is a
+pickled tree ensemble that predicts on a 40-column float matrix, and that is the
+whole inference contract.
+
+The transferable habit: a model-choice argument that only cites general properties
+of the model family is not an argument about your problem. The two lines worth
+keeping here are "cold-start archetypes have fewer than 30 observations" and
+"cannot consume cross-series features", because both are facts about this data.
+"""
+source = "wow_forecaster/ml/lgbm_model.py"
+anchor = "Prophet cannot consume cross-series features (event severity,"
+
+[[question]]
+id = "m07-q04"
+kind = "mcq"
+prompt = """
+ARIMA is not in the docstring's comparison list. If an interviewer asks why not
+ARIMA, what is the strongest single answer for this dataset?
+"""
+answer = """
+ARIMA is a per-series model. You fit one to each archetype-realm series from that
+series' own past values, which means hundreds of separate fits, each on a thin
+history, none of them able to learn anything from the others. A cold-start
+Midnight archetype has almost no history to identify an order from, so the case
+the entire project exists to serve is the case ARIMA cannot serve at all.
+
+SARIMAX can take exogenous regressors, so "it cannot use features" is not quite
+right as stated. But the regressors go in per series, and the pattern this system
+wants to learn ("consumables spike before a major patch") is a cross-series
+regularity observed a handful of times per series and hundreds of times across the
+panel. Pooling is the point. A per-series model throws the pooling away.
+
+The weaker objections are worth knowing so you do not reach for them. ARIMA is
+built for non-stationary levels, that is what the differencing term is for. And
+ARIMA does not leak anything: it is fit on lagged values only. The leakage in this
+repo comes from how the split was drawn, not from a model family.
+"""
+options = [
+  { text = "It fits one model per series from that series' own history, so it cannot pool across archetypes and has nothing to fit on for a cold-start series", correct = true },
+  { text = "ARIMA requires a stationary series and market prices are never stationary", note = "Differencing is the I in ARIMA, so non-stationary levels are the case it was designed for. Stationarity is an assumption about the differenced series, and this is the objection people raise when they have not thought past the acronym." },
+  { text = "ARIMA would leak future information, because it uses the full series to estimate its coefficients", note = "Coefficient estimation on the training window is not leakage as long as the window ends before the forecast date. This is a split-design property and has nothing to do with the model family." },
+  { text = "ARIMA cannot produce confidence intervals, and every forecast here ships one", note = "Backwards. ARIMA produces model-derived intervals from its own error variance, which is better than what this repo currently does. The intervals in cold_start.py are a heuristic, not model-derived." },
+]
+source = "wow_forecaster/ml/lgbm_model.py"
+anchor = "Needs 100+ timesteps per series; harder to deploy at"
+see_also = ["wow_forecaster/ml/cold_start.py"]
+
+# ── The global model ──────────────────────────────────────────────────────────
+
+[[question]]
+id = "m07-q05"
+kind = "recall"
+prompt = """
+One global model per horizon across every archetype-realm series, rather than one
+model per archetype. Give the argument for pooling on this data, and then name
+what pooling costs.
+"""
+rubric = [
+  "Per-series history is thin: cold_start_threshold is 30 observations and the raw retention wall is 30 days",
+  "Events are rare per series but common across the panel, so only a pooled fit sees enough of them to learn the pattern",
+  "The transfer premise needs a function of market state rather than of series identity, which only pooling can give",
+  "Cost: one functional form and no per-series intercept, so the model must reconstruct each series' price level from its features",
+  "Cost: heterogeneous dynamics get averaged, so a series that behaves unlike the majority is fit badly and nothing reports it",
+]
+answer = """
+The argument for pooling is three-layered and the third layer is the one that
+actually decides it.
+
+Sample size first. Individual archetype-realm series are thin. The cold-start
+threshold is 30 observations, the ToS retention wall caps raw history at 30 days,
+and a real 96-day gap sits in the middle of the record. A per-series booster on
+that would be fitting noise with 31 leaves.
+
+Event structure second. "Consumables spike before a major patch" is observed maybe
+twice per series across a whole expansion. Across hundreds of series it is observed
+hundreds of times. Only the pooled fit has enough instances of the pattern to
+separate it from ordinary volatility.
+
+The premise third, and this is the decider. The target expansion has no history at
+all. A per-archetype model for a Midnight archetype has literally nothing to train
+on. A pooled model that maps market state to next price is applicable to a series
+it has never seen, because it never learned series identities in the first place.
+That is what makes transfer possible rather than aspirational, and it is why
+archetype_id is excluded from the feature list.
+
+The costs are real and this repo does not measure any of them. One functional form
+serves everything, so an archetype whose dynamics differ from the majority is fit
+badly and nothing surfaces it, because errors are only ever reported pooled. There
+is no per-series intercept, so the model has to reconstruct each series' price
+level out of price_mean and the lag columns, which spends model capacity on
+something a per-series fit would get for free. And the honest sequencing point: the
+pooled-versus-per-series question is empirical, the harness to answer it exists in
+backtest/, and the comparison has never been run.
+"""
+source = "wow_forecaster/ml/lgbm_model.py"
+anchor = "ONE global model per forecast horizon across ALL archetype-realm series."
+see_also = ["wow_forecaster/ml/trainer.py", "PLAN.md"]
+
+[[question]]
+id = "m07-q06"
+kind = "mcq"
+prompt = """
+`archetype_id` is deliberately excluded from the feature list. What is the precise
+failure it is being excluded to prevent?
+"""
+answer = """
+An ID is an arbitrary label, so the only thing a tree can do with it is memorize.
+A split like "archetype_id < 187" carves the ID space into two meaningless halves
+that happen to separate the training rows well. That is not a pattern, it is a
+lookup table with a tree-shaped index.
+
+The specific failure is at transfer time. Midnight archetypes carry IDs the model
+has never seen. Every split learned on TWW IDs sends those rows down whichever
+branch the comparison happens to land on, which is arbitrary. The model would not
+just generalize badly, it would have no defined behavior on the population it was
+built for.
+
+Note the word "prevent transfer" in the docstring rather than "overfit". Overfitting
+is the general worry. The concrete one is that the learned function is undefined
+outside the ID range it was trained on, which is a specific property of identifier
+features and not of correlated features generally.
+"""
+options = [
+  { text = "Splits on an ID can only memorize specific TWW archetypes, and new Midnight IDs fall outside every learned split, so the model has no defined behavior on the population it exists to serve", correct = true },
+  { text = "archetype_id has too many distinct values, so training would be slow and memory-hungry", note = "Cost is not the argument. A few hundred categories is nothing for histogram binning, and LightGBM handles high-cardinality categoricals routinely. The argument is transfer, not throughput." },
+  { text = "archetype_id would leak the target, since the ID determines which price series the row came from", note = "The ID is known at prediction time and contains no information from the future, so it is not leakage. It is a generalization failure, and keeping those two categories separate is the whole point of M06." },
+  { text = "archetype_id is a foreign key, and model inputs must not be database keys", note = "There is no such rule. Keys get used as features all the time in recommender systems via embeddings. The reason this one is excluded is specific to needing the model to apply to unseen IDs." },
+]
+source = "wow_forecaster/ml/lgbm_model.py"
+anchor = "archetype_id is deliberately EXCLUDED as a feature — using it would memorise"
+
+[[question]]
+id = "m07-q07"
+kind = "recall"
+prompt = """
+Excluding `archetype_id` removes the identifier. It does not necessarily remove
+identity. Explain how a series can still be identified from the remaining 40
+columns, why `min_child_samples = 5` makes that worse, and how you would test
+whether it is actually happening.
+"""
+rubric = [
+  "price_mean, price_min, price_max and the lag columns pin down a series' price level, which is close to unique across archetypes",
+  "item_count_in_archetype and archetype_category_enc are static per series, so they narrow it further",
+  "min_child_samples = 5 lets a leaf isolate a handful of rows, which is enough to carve out one series",
+  "The exclusion protects against the literal ID, not against identity reconstructed from a feature combination",
+  "The test is a grouped holdout: hold out whole archetypes, not random rows or trailing dates, and see whether error jumps",
+]
+answer = """
+The feature list carries three static columns per series (archetype_category_enc,
+item_count_in_archetype, is_transferable_int) plus a price level that spans orders
+of magnitude across archetypes. A tree with 31 leaves and a five-row minimum can
+combine "category is mat", "item count is 12", and "price_mean between 840 and
+910" into a region that contains one series and nothing else. It never sees the ID
+and it does not need to.
+
+That is not automatically bad. A model that learns "expensive low-volume mats
+behave like this" is doing exactly what you want, and the same split looks
+identical from the outside. The difference is whether the region generalizes to a
+new series with those properties or only fits the one it was carved around, and
+you cannot tell by reading the split.
+
+You tell by changing the holdout. Hold out entire archetypes, train on the rest,
+and score on series the model has never seen. If error on held-out archetypes is
+close to error on held-out dates, the model learned transferable structure. If it
+jumps, it learned series identities through the back door and the exclusion of
+archetype_id bought less than it looks like it bought.
+
+Worth being clear about what the repo does today: neither split exists. The current
+holdout is trailing dates from the same series the model trained on, so it measures
+neither generalization to new dates cleanly (see M06) nor generalization to new
+series at all. Grouped-by-archetype evaluation is the direct test of the transfer
+premise, and nothing in the project runs it.
+"""
+source = "wow_forecaster/ml/feature_selector.py"
+anchor = "- archetype_id   : Would memorise TWW archetypes; prevents cold-start transfer."
+see_also = ["wow_forecaster/backtest/splits.py"]
+
+# ── The loss function ─────────────────────────────────────────────────────────
+
+[[question]]
+id = "m07-q08"
+kind = "recall"
+prompt = """
+The objective is `regression_l1`. Say what quantity an L1-trained model estimates,
+why that choice fits auction prices, and where it sits awkwardly against the rest
+of the pipeline.
+"""
+rubric = [
+  "L1 loss is minimized by the conditional median, so the model predicts a median, not a mean",
+  "That suits right-skewed auction prices, where a few listings at ten times the going rate would drag a mean estimate",
+  "The gradient is the sign of the error, so a miss of 10,000 gold steers the split search exactly as hard as a miss of 1 gold",
+  "For a system whose value is catching spikes, indifference to error magnitude is a real objection, and it has never been tested against L2",
+  "The interval built around the prediction is a symmetric z times sigma construction, which assumes a mean of a symmetric distribution, not a median",
+]
+answer = """
+Minimizing absolute error gives you the conditional median. Minimizing squared
+error gives you the conditional mean. That is the whole difference and everything
+else follows from it.
+
+For auction prices the median is defensible. The distribution is bounded below by
+zero and has a long right tail: a handful of listings priced at ten times the going
+rate are ordinary market noise, not signal. A mean estimator chases them. The
+comment in the code says exactly this, and the normalization layer already flags
+outliers separately, so L1 is the second line of defense rather than the only one.
+
+The cost is that L1 does not care how wrong it is. The gradient is sign(error), so
+every row contributes plus or minus one to the split search no matter whether the
+model missed by one gold or by ten thousand. For a system whose entire economic
+value is catching the spike before a patch, being indifferent to the magnitude of a
+missed spike is a genuine objection. L2 would chase the spikes and also chase the
+noise. Huber loss is the obvious middle, quadratic near zero and linear in the
+tails. None of these has been compared on this data, so the current choice is
+defensible and untested, which is the honest way to describe it.
+
+The awkward seam is downstream. compute_confidence_interval() in cold_start.py
+builds a symmetric interval as a z-score times a rolling standard deviation,
+centred on the prediction. That is a normal-distribution construction, and it
+assumes the centre is a mean of a roughly symmetric distribution. The centre is a
+median of a right-skewed one. Nothing crashes and the interval is a heuristic
+anyway, but the point estimate and the interval around it come from two different
+distributional stories, and only one of them is written down.
+"""
+source = "wow_forecaster/ml/lgbm_model.py"
+anchor = "\"regression_l1\",  # MAE loss — robust to outlier prices"
+see_also = ["wow_forecaster/ml/cold_start.py"]
+
+[[question]]
+id = "m07-q09"
+kind = "recall"
+prompt = """
+The reported metric is MAE in absolute gold, pooled across archetypes whose price
+levels differ by orders of magnitude. PLAN.md flags this for the drift baseline.
+Does the same objection apply to the training objective, and what happens to the
+one metric that would fix it?
+"""
+rubric = [
+  "The reported MAE is scale-dominated: expensive archetypes contribute most of the total regardless of how well they are predicted proportionally",
+  "The training objective is less exposed, because the L1 gradient is the sign of the error, so each row contributes equally to the split search",
+  "So the model is trained roughly scale-neutrally and then scored on a scale-dominated number",
+  "MAPE is computed in _evaluate() and written to the JSON sidecar, but _register_model only stores mae and rmse",
+  "The fix is a relative metric or a per-series skill score against last_value, not a different loss",
+]
+answer = """
+Two different answers for the two halves, which is what makes this worth asking.
+
+The reported number is scale-dominated. Summing absolute gold errors across a
+20-gold reagent and a 20,000-gold crafted item means the second one supplies
+essentially all of the total. A change in the archetype mix moves the metric more
+than a change in model quality does. PLAN.md makes exactly this point about the
+drift baseline in DS-3, and the same objection lands on validation_mae in
+model_metadata.
+
+The objective is less exposed than you would guess, and the reason is the loss
+choice from the previous question. With squared error the gradient is proportional
+to the residual, so a 2,000-gold miss on an expensive series pulls a thousand times
+harder than a 2-gold miss on a cheap one, and the tree structure is decided almost
+entirely by the expensive series. With L1 the gradient is the sign, plus or minus
+one per row, so every row gets one vote in the split search regardless of price
+level. The model is therefore trained roughly scale-neutrally and then scored on a
+scale-dominated number. If you were going to fix one of the two, fix the reporting.
+
+The irritating part is that the fix is half-built. _evaluate() already computes
+MAPE alongside MAE and RMSE, and write_metadata() puts it in the JSON sidecar. Then
+_register_model() inserts only validation_mae and validation_rmse, so the relative
+metric never reaches the database that every report and every drift check reads.
+The scale-free number exists, is computed on every training run, and is dropped at
+the storage boundary.
+
+The better target is a skill score: model error divided by last_value error, per
+series, then aggregated. It is unitless, it is comparable across archetypes, and it
+answers the question the project actually needs answered, which is whether the
+model beats doing nothing.
+"""
+source = "PLAN.md"
+anchor = "gold MAE pooled across archetypes whose price levels differ by orders of"
+see_also = ["wow_forecaster/backtest/models.py", "wow_forecaster/ml/lgbm_model.py"]
+
+# ── Feature handling ──────────────────────────────────────────────────────────
+
+[[question]]
+id = "m07-q10"
+kind = "mcq"
+prompt = """
+`CATEGORICAL_FEATURE_COLS` declares three columns categorical, one of which is
+`event_severity_enc`, encoded as minor=1, moderate=2, major=3, critical=4. What
+does declaring it categorical rather than leaving it numeric actually change?
+"""
+answer = """
+A numeric column gets threshold splits: "severity <= 2 goes left". A declared
+categorical column gets subset splits: LightGBM sorts the categories by their
+accumulated gradient statistics and picks a partition, so it can express "minor and
+critical go left, moderate and major go right".
+
+For severity that trade is a real question rather than an obvious win. The encoding
+is ordinal by construction, and a threshold split already encodes the ordering for
+free. Declaring it categorical throws that ordering away and asks the model to
+rediscover it from data, which costs sample efficiency, in exchange for the ability
+to represent a non-monotone response. Non-monotone severity effects are not absurd
+(a critical event might be pre-announced and priced in while a moderate one
+surprises the market), so the choice is arguable. It is just not documented as a
+choice, and nothing has tested it either way.
+
+The other two declarations are cleaner. day_of_week is genuinely non-ordinal:
+Tuesday reset behaviour has nothing to do with 2 being between 1 and 3.
+archetype_category_enc is a nominal slug encoding where the ordinals are alphabetic
+accident. Those two are exactly what categorical treatment is for.
+"""
+options = [
+  { text = "Splits become subset partitions of the category values instead of thresholds, so the model gains the ability to express non-monotone effects and loses the ordering the encoding already carried", correct = true },
+  { text = "Nothing, because the column is already an integer and LightGBM treats integers as categories automatically", note = "It does not. An integer column is numeric unless declared, and the split type genuinely changes. LightGBM also applies its own smoothing and minimum-data constraints to declared categoricals." },
+  { text = "LightGBM one-hot encodes the column internally, adding one binary column per severity level", note = "One-hot is what you would do by hand for a linear model. LightGBM sorts categories by gradient statistics and searches for a subset split directly, which is why it can handle high-cardinality categoricals without the column blowup." },
+  { text = "It is required, because encode_row() produced the column from a string and string columns cannot enter a numeric matrix", note = "encode_row() already mapped the string to an int through SEVERITY_ENCODING, and build_feature_matrix would happily pass it as a float. The declaration is a modeling decision, not a type requirement." },
+]
+source = "wow_forecaster/ml/feature_selector.py"
+anchor = "# These must be non-negative integers; LightGBM handles non-ordinal splits."
+
+[[question]]
+id = "m07-q11"
+kind = "mcq"
+prompt = """
+Lag and rolling columns are null for the first days of any series, and
+`to_float()` turns those Nones into NaN. What does LightGBM do with a NaN feature
+value at training time?
+"""
+answer = """
+It learns a default direction. At each split, rows with a missing value for the
+split feature are sent to whichever side reduces the loss more, and that direction
+is stored in the tree and reapplied at prediction time. Missingness is therefore a
+piece of information the model can use, not a hole it has to have filled.
+
+This matters for this dataset more than usual. A null price_lag_28d is not a
+recording failure, it means the series does not have 28 days of history, which is
+correlated with exactly the cold-start condition the project cares about. Imputing
+it with a column mean would destroy that signal and invent a lag value that no
+series ever had. The repo's rule, all Parquet Nones become float("nan") and never
+Python None, is what keeps that path open. Passing None into lgb.Dataset would
+produce an object-dtype array rather than a float matrix, which is why to_float()
+exists at all.
+
+The thing to hold onto: "handles missing natively" is not a convenience feature. It
+is a modeling decision that treats absence as a value, and it is only correct when
+absence is informative. It would be the wrong default for data where nulls are a
+logging bug.
+"""
+options = [
+  { text = "Each split routes missing rows to whichever branch reduces the loss, and that learned direction is stored in the tree and reused at inference", correct = true },
+  { text = "The row is dropped from that tree's fit and the remaining trees see it", note = "Nothing is dropped. Dropping rows for a missing feature would silently change the training population per tree, and would make the missingness pattern itself unlearnable." },
+  { text = "The value is imputed with the column mean before binning", note = "LightGBM does not impute. Mean imputation here would be actively harmful, since a null lag means the series is too young to have one, and inventing a plausible value hides the cold-start signal." },
+  { text = "NaN is bucketed with zero, since zero_as_missing defaults to true", note = "zero_as_missing defaults to false, and it would be wrong here anyway: a zero price and an absent price are different states, and conflating them would tell the model a young series is a free one." },
+]
+source = "wow_forecaster/ml/lgbm_model.py"
+anchor = "LightGBM handles NaN natively. All Parquet Nones become float(\"nan\")"
+see_also = ["wow_forecaster/ml/feature_selector.py"]
+
+# ── Predictions from the code as written ──────────────────────────────────────
+
+[[question]]
+id = "m07-q12"
+kind = "predict"
+prompt = """
+The training Parquet covers 2026-06-01 through 2026-07-20 with no gaps.
+`validation_split_days = 14`, `target_horizons_days = [1, 7, 28]`. Targets come
+from a forward lookup into the same date spine, and the spine stops at the last
+date that has data.
+
+`train-model` runs. What lands in `model_metadata` for the 28d model?
+"""
+answer = """
+validation_mae and validation_rmse are NULL, and the model trained all 100 rounds
+with no early stopping.
+
+Follow the target column. target_price_28d for a row at date T is a lookup of the
+price at T + 28 in the spine, and the spine ends 2026-07-20. So every row from
+2026-06-23 onward has a null 28d target. The validation window is the last 14
+dates, 2026-07-07 through 2026-07-20, which sits entirely inside that null region.
+
+fit() then filters both sides on a non-null target. train_valid keeps rows through
+2026-06-22 and is comfortably non-empty, so training proceeds normally. val_valid
+is empty, so the `if val_valid:` branch never runs: no validation Dataset is built,
+the early-stopping callback is never appended, and _val_metrics stays {}.
+_register_model reads val_metrics.get("mae") on an empty dict, gets None, and
+writes NULL.
+
+Two consequences worth carrying. The 28d model's training data ends at 2026-06-22:
+its rows from 2026-06-23 on have no label yet, so it trains on 14 fewer days than
+the 1d model, whose labels run right up to the 2026-07-06 split. And it is the one
+model with no stopping rule at all, so it runs the full boosting budget while its
+shorter-horizon siblings stop early. Nothing logs a warning about either.
+
+This also refines the leakage story from M06. For the 28d model the rows that would
+carry contaminated labels are dropped before LightGBM ever sees them, because those
+labels do not exist yet. What the 28d model has is not a contaminated holdout, it is
+no holdout. The purge fix still matters, and it bites hardest at 7d, where some
+validation rows do survive the null filter.
+"""
+options = [
+  { text = "validation_mae and validation_rmse are NULL, and the model trains the full 100 rounds because early stopping is never wired up", correct = true },
+  { text = "Training raises ValueError for the 28d horizon, because no rows have a non-null target", note = "That guard checks train_valid, not val_valid. Rows through 2026-06-22 have 28d labels, so training data exists and fit() proceeds. Only the validation side is empty." },
+  { text = "The 28d horizon is skipped with a warning about a missing target column", note = "That warning fires when TARGET_COL_MAP has no entry for the horizon. 28 is in the map, so the column exists in the Parquet. The values in it are null, which is a different failure and produces no warning." },
+  { text = "validation_mae is recorded, computed over the 14 validation dates", note = "Those rows are filtered out by the non-null-target check before the feature matrix is built, so there is nothing left to evaluate. An empty val set produces an empty metrics dict, not a metric over zero rows." },
+]
+source = "wow_forecaster/features/lag_rolling.py"
+anchor = "out[f\"target_price_{h}d\"] = price_lookup.get(target_date)"
+see_also = ["wow_forecaster/ml/lgbm_model.py", "wow_forecaster/ml/trainer.py"]
+lab = "lab-01-purge-embargo"
+
+[[question]]
+id = "m07-q13"
+kind = "predict"
+prompt = """
+`IMPACT_ENCODING` maps spike to 1, crash to -1, and None, neutral and mixed all to
+0. `event_archetype_impact_enc` is in `TRAINING_FEATURE_COLS` but not in
+`CATEGORICAL_FEATURE_COLS`.
+
+Someone adds it to `CATEGORICAL_FEATURE_COLS`, reasoning that a three-valued
+direction code is obviously categorical. What happens?
+"""
+answer = """
+Every crash row's value is silently reinterpreted as missing. LightGBM treats
+negative values in a declared categorical feature as missing, so the -1 that exists
+specifically to mark a downward event impact stops being a category and starts
+being an absence. The column is left with two usable values, 0 and 1, and the one
+direction it was built to express is gone.
+
+Nothing raises. LightGBM will warn at most, and the training run completes with a
+plausible-looking model. That is the part worth internalising: the failure is
+silent, and the only symptom is that crash events stop having a distinguishable
+effect on forecasts, which no test in this repo would catch.
+
+Two things follow. First, if you did want this column categorical, you have to
+re-encode first, shifting to 0/1/2 so no value is negative, which is precisely why
+the comment above CATEGORICAL_FEATURE_COLS says the entries must be non-negative
+integers. Second, the column already has a design smell independent of this: None,
+neutral, and mixed all collapse to 0, so "no event at all" and "an event with mixed
+impact" are indistinguishable in that column. event_active_int recovers the
+difference, but only if a tree happens to split on both.
+"""
+options = [
+  { text = "Crash rows (-1) are treated as missing, so the column silently loses the one direction it exists to encode, and nothing raises", correct = true },
+  { text = "LightGBM raises a ValueError, because categorical features must be non-negative", note = "It does not raise. A hard error would be the better outcome here, which is the whole reason the constraint is documented in a comment instead of enforced by the library at the call site." },
+  { text = "Nothing meaningful changes, because a three-value column splits the same way either way", note = "The split type changes from a threshold to a subset partition, and the handling of -1 changes from a value to a missing marker. The second one is the damaging change." },
+  { text = "The column is expanded into three binary indicator columns and the feature matrix gains two columns", note = "LightGBM does not one-hot expand declared categoricals, and the matrix width is fixed by TRAINING_FEATURE_COLS in any case. Categorical handling is a change in split search, not in column count." },
+]
+source = "wow_forecaster/ml/feature_selector.py"
+anchor = "\"crash\":  -1,"
+
+[[question]]
+id = "m07-q14"
+kind = "predict"
+prompt = """
+You add an engineered column to `TRAINING_FEATURE_COLS` and to the training
+Parquet, retrain, and everything looks fine. The inference Parquet writer is not
+updated, so the column is absent there.
+
+What happens on the next `run-daily-forecast`?
+"""
+answer = """
+It runs clean and the forecasts change. Nothing warns.
+
+build_feature_matrix() extracts values with row.get(col), which returns None for a
+column that is simply not in the dict. to_float(None) returns NaN. So the new
+feature arrives at the booster as an all-NaN column of the correct width, the
+matrix shape matches what the model was trained on, and predict() returns numbers.
+Feature names are never compared: the matrix is built positionally from the model's
+stored _feature_cols and handed to LightGBM as a bare numpy array.
+
+Then the missing-value machinery does exactly what it was designed to do, which
+here is the wrong thing. Every row goes down the learned default direction at every
+split on the new feature. If the feature mattered during training, every inference
+row is now being routed as though it were the training rows that lacked it, which
+is a different population.
+
+The one trace is features_hash on each ForecastOutput, which hashes the
+TRAINING_FEATURE_COLS slice of the row, so the hash does move when a column
+disappears. That is provenance working. Nothing reads the hash back or compares it
+across runs, so it records the incident without reporting it.
+
+The general shape: a feature contract that is a Python list in one module and an
+implicit property of two separately written Parquet builders will drift, and the
+drift is undetectable at runtime because the failure mode of a missing column is
+indistinguishable from the failure mode of a legitimately missing value.
+"""
+options = [
+  { text = "No error. The column arrives as all-NaN, every row takes the learned missing-value branch, and the forecasts shift silently", correct = true },
+  { text = "LightGBM raises a feature-name mismatch error when predict is called", note = "It never sees names at inference. build_feature_matrix produces a positional float matrix from the model's stored column list, and lgb.Booster.predict on a numpy array checks width, not labels." },
+  { text = "predict() returns None for every row, so the forecast stage logs zero forecasts", note = "predict() returns Nones only when the model is unfitted or the row list is empty. A missing column does not make the model unfitted." },
+  { text = "The missing column is dropped and the booster predicts on the remaining columns", note = "Nothing drops it. The matrix width is fixed by the trained model's feature list, and a column that cannot be filled becomes NaN rather than disappearing." },
+]
+source = "wow_forecaster/ml/feature_selector.py"
+anchor = "LightGBM propagates NaN as missing — never pass Python None to lgb.Dataset."
+see_also = ["wow_forecaster/ml/predictor.py"]
+
+# ── Reading the model back ────────────────────────────────────────────────────
+
+[[question]]
+id = "m07-q15"
+kind = "recall"
+prompt = """
+`report-feature-importance` prints gain and split count for every feature.
+Distinguish the two, then name the situations where each one misleads you, and say
+what you would use instead if the answer mattered.
+"""
+rubric = [
+  "Gain is the total loss reduction credited to splits on that feature; split count is how many times it was split on",
+  "Both are computed on the training data by the fitted model, so they describe what the model used, not what generalizes",
+  "Correlated features split the credit arbitrarily, and feature_fraction = 0.8 randomizes which one was available at each node",
+  "Split count is biased toward continuous high-cardinality features; a binary flag can be important and still show one or two splits",
+  "Neither gives direction or magnitude of effect; permutation importance on a clean holdout, or SHAP, answers the question these do not",
+]
+answer = """
+Gain is the summed loss reduction over every split that used the feature. Split
+count is the number of such splits. The CLI help states the distinction correctly:
+gain shows which features move predictions, split count shows which features get
+queried often regardless of effect size.
+
+Where gain misleads: correlated features. This feature list has price_mean,
+price_lag_1d, price_roll_mean_7d, and price_roll_mean_14d, all near-identical on a
+stable series. Whichever one a node happens to split on takes the full credit and
+the others look weak. With feature_fraction = 0.8, which of the near-duplicates is
+even available at a node is partly a coin flip, so the ranking among a correlated
+group carries real sampling noise. A low gain means "this column was not needed
+given the others", never "this quantity does not matter".
+
+Where split count misleads: cardinality. A continuous feature offers hundreds of
+usable thresholds and gets split on repeatedly at every depth. A binary flag like
+is_cold_start_int offers exactly one split, so it can be doing a lot of work and
+still show up near the bottom of a split-count ranking. Split counts also inflate
+in the trailing trees of an over-long ensemble, where the model is fitting noise,
+which connects to M06: the stopping round here was chosen against a compromised
+validation set, so those trailing trees exist.
+
+And what neither one gives you: direction, magnitude, or anything causal. Gain does
+not say whether high event severity raises or lowers price. Importance is a
+statement about the fitted model, not about the market.
+
+If the answer mattered, the tools are permutation importance measured on a clean
+holdout, which tells you what the model actually depends on for out-of-sample
+accuracy, and SHAP values, which give per-row signed attributions and let you see
+interactions. Both cost more compute than reading an attribute off the booster, and
+both would need the split fixed first to mean anything.
+"""
+source = "wow_forecaster/cli.py"
+anchor = "gain importance (contribution to reducing prediction error) and split count"
+see_also = ["LESSONS.md"]
+
+[[question]]
+id = "m07-q16"
+kind = "find"
+prompt = """
+Three different places in this repo decide which trained model to use, and they
+can disagree. Find all three, say what each one sorts on, and say which one should
+win.
+"""
+rubric = [
+  "pipeline/forecast.py calls find_latest_model_artifact(), which globs the artifact dir and sorts by filesystem mtime",
+  "cli.py report-feature-importance globs the same directory and takes candidates[-1] from a lexicographic sort",
+  "model_metadata carries is_active, written by _register_model and never read back by any serving path",
+  "They disagree whenever mtime order and filename order differ, for example after copying or restoring artifacts",
+  "The registry should win: it is the only one that records which model was actually registered rather than which file was touched last",
+]
+answer = """
+Three strategies, one authoritative source, and the authoritative one is unused.
+
+The forecast pipeline calls find_latest_model_artifact(), which globs
+lgbm_{h}d_{realm}_*.pkl and sorts by st_mtime. The feature-importance CLI globs the
+same pattern and takes candidates[-1] from a plain sort, with a comment noting that
+an ISO date suffix makes lexicographic order equal chronological order. And
+_register_model writes is_active = 1 on the new row after clearing the flag from
+previous rows for that horizon and realm, so the database knows exactly which model
+was registered. Nothing on the serving path reads it.
+
+They agree right up until they do not. Copy the artifact directory to a new machine
+and mtimes become copy times, in whatever order the copy walked the directory. Two
+training runs on the same day produce the same filename, so the second overwrites
+the first and the DB row is updated in place by the ON CONFLICT clause, leaving no
+record that two models existed. Restore from a backup and the filesystem answer and
+the database answer part company entirely.
+
+The registry should win, because it is the only one that records an event
+(this model was trained and registered) rather than a filesystem side effect (this
+file was touched most recently). PLAN.md OD-2 names this as a live bug rather than
+a hypothetical, and it is the cheapest of the three lifecycle fixes: read
+is_active, resolve artifact_path, load that.
+"""
+source = "wow_forecaster/pipeline/forecast.py"
+anchor = "artifact_path = find_latest_model_artifact(artifact_dir, realm, h)"
+see_also = ["PLAN.md", "wow_forecaster/ml/trainer.py"]
+
+[[question]]
+id = "m07-q17"
+kind = "find"
+prompt = """
+`LightGBMForecaster` scores itself with one function and serves predictions with
+another, and the two do not compute the same thing. Find the difference, and say
+which direction it biases the reported number.
+"""
+rubric = [
+  "predict() clamps every output with max(0.0, float(p)) before returning it",
+  "_evaluate() calls self._booster.predict(X) directly, with no clamp",
+  "So validation_mae describes a function that is not the one served",
+  "Actual prices are non-negative, so clamping a negative prediction can only reduce the absolute error",
+  "The reported metric is therefore pessimistic on exactly those rows, which is the safe direction but still a mismatch",
+]
+answer = """
+predict() returns [max(0.0, float(p)) for p in preds]. _evaluate() calls the
+booster directly and scores the raw output. So the number written into
+model_metadata is the error of a function nobody serves.
+
+The clamp is correct in itself. An auction price cannot be negative, and a tree
+ensemble trained on positive prices can still extrapolate below zero for a row
+whose features sit outside the training range, which is exactly the cold-start case.
+Clipping at zero is the minimal sane post-processing.
+
+The direction of the bias is knowable rather than a mystery, which is the useful
+part. Actual prices are non-negative. If the raw prediction is negative, clamping it
+to zero moves it closer to any non-negative actual, so the absolute error can only
+shrink. The reported validation MAE is therefore at least as large as the served
+model's true error on those rows. That is the safe direction: it understates rather
+than overstates the model. It is still a mismatch, and it is the kind that survives
+for years because it never produces a bad-looking number.
+
+The clean fix is one line: score the clamped predictions, because the served
+function is the model. The habit worth taking: whenever post-processing sits between
+the model output and the consumer, ask whether the metric was computed before or
+after it. Clipping, rounding, currency conversion, and business-rule overrides all
+create this gap, and most of them do not bias in the flattering direction.
+"""
+source = "wow_forecaster/ml/lgbm_model.py"
+anchor = "return [max(0.0, float(p)) for p in preds]"

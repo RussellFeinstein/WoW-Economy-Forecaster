@@ -1,0 +1,856 @@
+# M08: Uncertainty.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+#
+# The through-line: every forecast in this system ships an interval, no interval
+# has ever been scored against an outcome, and the word "80%" in the config is a
+# label rather than a measurement.
+
+# ── What the interval is actually made of ─────────────────────────────────────
+
+[[question]]
+id = "m08-q01"
+kind = "recall"
+prompt = """
+Walk the full path that turns a LightGBM point prediction into the
+`confidence_lower` and `confidence_upper` values stored in `forecast_outputs`.
+Name every step in order, including the ones outside `cold_start.py`.
+"""
+rubric = [
+  "z comes from _Z_LOOKUP keyed on confidence_pct (1.28 at 0.80), falling back to 1.28 for any level not in the table",
+  "half-width = z x price_roll_std_7d, or 20 percent of predicted when the rolling std is None or zero",
+  "cold-start rows multiply the half-width by 1.5 / transfer_confidence, or by 3.0 when no mapping exists",
+  "then a 5 percent-of-predicted floor on the half-width, bounds around predicted, then a 5 percent-of-current floor on lower and a 10x-of-current cap on upper",
+  "predictor.py then applies the drift uncertainty_multiplier and classifies the result with classify_ci_quality",
+]
+answer = """
+Seven steps, and only one of them involves anything the model learned.
+
+1. `z = _Z_LOOKUP.get(confidence_pct, _DEFAULT_Z)`. At the configured 0.80 that
+   is 1.280. Any confidence level not in the five-entry table silently falls back
+   to 1.280, so a config of 0.85 would produce an interval labelled 85 percent
+   and built from the 80 percent z.
+2. `ci_half = z * rolling_std_7d` when `price_roll_std_7d` is present and above
+   zero. That is the rolling standard deviation of the daily `price_mean` over
+   the past seven calendar days: a property of the price series, computed in the
+   feature builder, never a property of the model's errors.
+3. Otherwise `ci_half = 0.20 * predicted`, a flat 20 percent.
+4. Cold start widens: `1.5 / transfer_confidence`, or 3.0 flat with no mapping.
+   At `transfer_confidence = 0.60` that is 2.5x.
+5. Floor the half-width at 5 percent of predicted, then set
+   `lower = max(0.0, predicted - ci_half)` and `upper = predicted + ci_half`.
+6. If `current_price` was passed, raise `lower` to at least 5 percent of current,
+   lower `upper` to at most 10x current, then re-clamp `lower` down to `upper` so
+   the invariant survives.
+7. Back in `predictor.py`, if the drift multiplier is not 1.0, recompute the
+   half-width and centre from the clamped bounds and scale the half-width. Then
+   `classify_ci_quality` labels the width good, wide or unreliable.
+
+The thing to notice is what never appears in that list: the model, its residuals,
+the horizon, and any realized outcome. The interval is a function of recent price
+dispersion and some constants. The module docstring says so plainly rather than
+hiding it, which is the right call, and it is also why this is the weakest part
+of the modeling story in the whole repo.
+"""
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "CIs produced here are HEURISTIC, not model-derived.  They do NOT come from"
+see_also = ["PLAN.md#CEILING"]
+
+[[question]]
+id = "m08-q02"
+kind = "mcq"
+prompt = """
+`ci_half = z * rolling_std_7d`. State precisely what statistical quantity that
+line is treating `price_roll_std_7d` as.
+"""
+answer = """
+It treats the recent dispersion of the price level as if it were the standard
+deviation of the model's h-step-ahead forecast error, and then assumes that error
+is normal, unbiased, and symmetric around the prediction.
+
+Three separate substitutions are packed into one multiplication.
+
+First, dispersion of the level is not dispersion of the error. A series can be
+extremely volatile and still be easy to forecast (a strong weekly cycle), or
+almost flat and still get forecast badly (a slow drift the model does not
+capture). Only residuals tell you which.
+
+Second, the interval is centred on `predicted` and extends symmetrically. Any
+systematic bias in the model shifts the true error distribution off centre, and a
+symmetric interval built from level dispersion cannot see that. If the model runs
+10 percent high on consumables, the interval keeps sitting neatly around the
+biased prediction.
+
+Third, auction house prices are positive and right-skewed. A symmetric interval
+in gold is the wrong shape for that; a symmetric interval on the log price would
+at least respect the support. The `max(0.0, ...)` on the lower bound is the code
+noticing this problem and clipping instead of fixing it.
+"""
+options = [
+  { text = "The standard deviation of the model's h-step forecast error, assumed normal and unbiased", correct = true },
+  { text = "The standard error of the prediction, estimated from the model's residuals", note = "No residual is involved anywhere in this path. compute_confidence_interval never sees an error, an actual, or a prediction from any earlier run. It reads one rolling feature off the inference row." },
+  { text = "The variance of the LightGBM leaf values contributing to this prediction", note = "The default L2 objective produces a point estimate only, and lgbm_model.py never asks for per-leaf or per-tree spread. Nothing in the repo extracts a variance from the booster." },
+  { text = "The spread of a bootstrap resample of the training set", note = "Nothing resamples. The value is price_roll_std_7d, computed once in features/lag_rolling.py from the last seven days of daily price_mean and carried through the inference Parquet." },
+]
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "        ci_half = z * rolling_std_7d"
+
+[[question]]
+id = "m08-q03"
+kind = "predict"
+prompt = """
+An archetype has exactly one observation day inside the trailing 7-day window, so
+`price_roll_std_7d` comes out as 0.0 (see the missing-data notes in
+`features/lag_rolling.py`).
+
+The row is not cold start. `predicted = 1000`, `current_price = 1000`,
+`confidence_pct = 0.80`, drift multiplier 1.0.
+
+What interval is stored, and what `ci_quality` does it get?
+"""
+answer = """
+`(800.0, 1200.0)`, classified `"good"`.
+
+The branch is `if rolling_std_7d is not None and rolling_std_7d > 0`. A std of
+exactly 0.0 fails the second half of that test and drops into the fallback, so
+`ci_half = 0.20 * 1000 = 200`. The 5 percent floor (50) does not bind. The
+current-price floor (50) does not bind on a lower bound of 800, and the 10x cap
+(10000) does not bind on 1200. Width is 400, which over a predicted 1000 is 0.40,
+under the 0.50 threshold, so the label is `"good"`.
+
+The `> 0` guard is the right instinct: a zero std here means "one data point",
+not "this price never moves", and turning that into a zero-width interval would
+be absurd. But look at where the guard lands. The thinnest evidence the system
+can have, a single observation in a week, produces an interval that is labelled
+good and, if this were an item-level forecast, would pass the TSM export filter.
+The fallback is a constant. It cannot encode "we know almost nothing here"
+because it does not depend on anything.
+
+Contrast with a genuinely stable archetype observed all seven days: its std is
+small but positive, `ci_half` collapses toward the 5 percent floor, and it also
+scores `"good"`. Two opposite evidential situations, one label.
+"""
+options = [
+  { text = "(800.0, 1200.0), ci_quality \"good\"", correct = true },
+  { text = "(950.0, 1050.0), ci_quality \"good\"", note = "This is what you get if the zero std flows through as a zero half-width and only the 5 percent floor saves it. It does not: the `> 0` guard sends a std of 0.0 to the 20 percent fallback, and 200 beats the floor of 50." },
+  { text = "(1000.0, 1000.0), ci_quality \"good\"", note = "A zero-width interval is exactly what the `rolling_std_7d > 0` guard exists to prevent. Without it, every thin series would report perfect certainty." },
+  { text = "(800.0, 1200.0), ci_quality \"wide\"", note = "The arithmetic is right but the classification is not. classify_ci_quality compares (upper - lower) / predicted, which is 400 / 1000 = 0.40, and the good threshold is 0.50." },
+]
+source = "wow_forecaster/features/lag_rolling.py"
+anchor = "- A window with exactly one non-None value produces that value for mean and 0.0 for std."
+see_also = ["wow_forecaster/ml/cold_start.py"]
+
+[[question]]
+id = "m08-q04"
+kind = "recall"
+prompt = """
+There is one argument `compute_confidence_interval` does not take, and its
+absence is the single largest defect in the uncertainty story. Name it, say what
+the code does as a result, and say what the interval width should scale with.
+"""
+rubric = [
+  "It takes no horizon argument at all",
+  "run_inference loops over horizons and passes the same price_roll_std_7d on every pass, so the 1d and 28d intervals come out the same width",
+  "Forecast error variance grows with horizon: under a random walk the standard deviation scales like sigma x sqrt(h)",
+  "So the 28d interval should be roughly sqrt(28) times the 1d one, about 5x wider, and it is not",
+]
+answer = """
+`compute_confidence_interval` has no `horizon_days` parameter. Nothing in the
+signature or the body knows whether it is describing tomorrow or four weeks out.
+
+`run_inference` loops `for horizon_days, forecaster in forecasters.items()` and
+calls the same function each time with the same `price_roll_std_7d` off the same
+inference row. The only thing that differs between horizons is `predicted`, and
+that only matters through the 5 percent floor and the 20 percent fallback, both
+of which are proportions of the prediction rather than functions of time. So the
+1d interval and the 28d interval come out essentially the same width, in a system
+whose config sets `target_horizons_days = [1, 7, 28]`.
+
+That is backwards in the most basic way. Forecast error accumulates. For a random
+walk with per-step innovation standard deviation sigma, the h-step-ahead error
+has standard deviation sigma x sqrt(h), so a 28-day interval should be about 5.3
+times a 1-day interval. Under a trending or mean-reverting process the exponent
+differs, but the direction never does: uncertainty about a further-away date is
+larger.
+
+Multiplying by sqrt(h) would be a real improvement and about four lines of work.
+It would still be a heuristic. The honest sequence is: measure coverage per
+horizon first, discover that the 1d intervals are probably too wide and the 28d
+ones far too narrow, and let that measurement decide whether you reach for
+sqrt(h) scaling or for quantile models. Guessing at a correction to an unmeasured
+quantity just moves the guess.
+"""
+source = "wow_forecaster/ml/predictor.py"
+anchor = "    for horizon_days, forecaster in forecasters.items():"
+see_also = ["config/default.toml"]
+
+# ── Coverage: the thing that is never measured ───────────────────────────────
+
+[[question]]
+id = "m08-q05"
+kind = "recall"
+prompt = """
+Define empirical coverage for a set of forecast intervals. Then explain why an
+interval can be honest, useful, and still fail on coverage in two opposite ways.
+"""
+rubric = [
+  "Coverage is the fraction of realized outcomes that fell inside their own stated interval",
+  "A calibrated 80 percent interval covers close to 80 percent over many forecasts, measured after the fact",
+  "Undercoverage (say 55 percent) means the system is overconfident and its risk numbers understate the danger",
+  "Overcoverage (say 98 percent) means the interval is so wide it excludes nothing and carries no information",
+]
+answer = """
+Coverage is measured, not derived. Take every forecast that has matured, look up
+the actual price on its target date, and count the fraction where
+`confidence_lower <= actual <= confidence_upper`. For an interval labelled 80
+percent, calibration means that fraction lands near 0.80 over a large enough
+sample. Nothing about the interval's construction can tell you this. It is a
+property of the pairing between intervals and outcomes.
+
+Two failure directions, and both matter here.
+
+Undercoverage is the dangerous one. If the stated 80 percent intervals actually
+contain the truth 55 percent of the time, then every downstream consumer that
+treats the interval as a risk statement is wrong in the direction that costs
+money. In this repo the scorer derives `uncertainty_pct` from the interval width
+and `determine_risk_level` turns that into low/medium/high/critical, so
+undercoverage means the risk labels are systematically too calm.
+
+Overcoverage is the useless one. An interval from 5 percent of current price to
+10x current price covers almost everything, and correspondingly says almost
+nothing. It would score 99 percent coverage and still be worthless, which is why
+coverage alone is not the whole story: you report coverage alongside interval
+width, and you want the narrowest interval that still hits its nominal rate.
+
+Two numbers, always together. Coverage without width can be gamed by widening.
+Width without coverage is what this repo currently reports.
+"""
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m08-q06"
+kind = "recall"
+prompt = """
+Give the concrete reasons a forecast from this system labelled `confidence_pct =
+0.80` would not cover 80 percent of realized prices. Four is enough. Do not say
+"because it is a heuristic": name mechanisms.
+"""
+rubric = [
+  "It is built from dispersion of the price level, not from forecast error, so model bias is invisible to it",
+  "It does not scale with the horizon, so at minimum the 1d and 28d intervals cannot both be right",
+  "A normal z is used with a sample std from at most 7 daily points; the t value at 6 degrees of freedom is about 1.44, not 1.28",
+  "The floor, the cap and the drift multiplier all move the endpoints for reasons that have nothing to do with a target probability",
+  "And the sign of the total miscalibration is unknown, because nothing has ever measured it",
+]
+answer = """
+Five mechanisms, running roughly from largest to smallest.
+
+**Level dispersion is not error dispersion.** Covered in q02. This is first
+because it means the interval cannot respond to the model being wrong, only to
+the market being jumpy.
+
+**No horizon term.** Covered in q04. Even if the 1d interval happened to be
+calibrated, the 28d one built the same way cannot be.
+
+**z where t belongs, on a tiny sample.** `price_roll_std_7d` is a sample standard
+deviation from at most 7 daily observations, and often fewer. Plugging a sample
+std into a normal quantile understates the spread. At 6 degrees of freedom the
+two-sided 80 percent t value is about 1.44 against z of 1.28, so this alone
+narrows the interval by roughly 11 percent. Small compared to the first two, but
+it is a free correction that was not taken.
+
+**Clamps that answer to presentation, not probability.** The 5 percent floor, the
+10x cap and the drift multiplier each move an endpoint. None of them is derived
+from a target coverage level. Once you multiply an interval by 2.0 because a
+z-score drift check fired, whatever probabilistic claim the interval had is gone,
+and the number 0.80 stored in `confidence_pct` is now just a column value.
+
+**And the direction is unknown.** This is the point that matters most in an
+interview. It is tempting to say "these intervals are surely too narrow", but the
+20 percent fallback and the cold-start widening up to 3x cut the other way, and
+the fallback fires on exactly the thin series where the true uncertainty is
+highest. Whether the net effect is over or undercoverage, and whether it differs
+by horizon or by archetype, is an empirical question nobody has asked.
+"""
+source = "config/default.toml"
+anchor = "confidence_pct = 0.80"
+see_also = ["PLAN.md#CEILING"]
+
+[[question]]
+id = "m08-q07"
+kind = "find"
+prompt = """
+Go looking for the code that measures interval coverage in this repo. Report what
+you find, and say what would have to change structurally before the backtest
+harness could compute it.
+"""
+rubric = [
+  "There is none: no coverage metric exists anywhere in wow_forecaster/",
+  "BacktestMetrics carries mae, rmse, mape, directional_accuracy and no interval field",
+  "PredictionRecord carries actual_price, predicted_price and last_known_price, with no interval bounds, so the harness structurally cannot compute coverage even if a metric were added",
+  "Interval coverage is a planned field of the forecast_realizations ledger, ROADMAP M1 #13",
+]
+answer = """
+Nothing measures it. A grep for `coverage` across `wow_forecaster/` returns
+ingredient coverage in the crafting layer and data-coverage days in the health
+check. Neither has anything to do with intervals.
+
+`backtest/metrics.py` is where you would expect it, and its metric-design
+docstring is careful and well argued about MAE, RMSE, MAPE and directional
+accuracy. It says nothing about intervals, because `BacktestMetrics` has no
+interval field. Go one level up and the reason is structural:
+`PredictionRecord`, the unit the whole harness aggregates over, carries
+`actual_price`, `predicted_price` and `last_known_price` and no bounds at all.
+The baseline models return a single float from `predict()`. So adding a coverage
+metric to `compute_metrics` would not be enough; the record would have to carry
+the interval, and the baselines would have to produce one, before there was
+anything to score.
+
+That is not an oversight so much as a consequence of the DS-2 defect in PLAN.md:
+the backtest harness evaluates four naive baselines against each other, and naive
+baselines do not emit intervals. The production model's intervals live in
+`forecast_outputs` and are never joined to actuals by anything.
+
+The planned fix is the `forecast_realizations` ledger, ROADMAP M1 #13, which
+scores every matured forecast against rollup actuals on MAE, MAPE, directional
+accuracy and interval coverage. It is first in the M1 sequence for a reason:
+around 305 thousand already-matured forecasts become scoreable the day it lands,
+which means the first real coverage number for this system is a query away once
+the table exists, not a year of waiting.
+"""
+source = "wow_forecaster/backtest/metrics.py"
+anchor = "        directional_accuracy: Fraction of correctly predicted price directions."
+see_also = ["docs/ROADMAP.md", "PLAN.md"]
+
+# ── The floor, the cap, and what clamping costs ──────────────────────────────
+
+[[question]]
+id = "m08-q08"
+kind = "recall"
+prompt = """
+The 5 percent floor and the 10x cap arrived together in v1.11.0. What symptom did
+each one remove, and what did adding them cost?
+"""
+rubric = [
+  "Floor: ci_lower was landing at 0.0 whenever ci_half exceeded predicted, because lower is max(0.0, predicted - ci_half)",
+  "Cap: cold-start widening of up to 3x on top of a 20 percent fallback produced upper bounds far above any plausible price",
+  "Both are guards on how the number reads in a report, not statements about probability",
+  "Clamping changes the interval's coverage while leaving confidence_pct at 0.80, so the stated level and the actual behaviour separate further",
+]
+answer = """
+Both were real symptoms, and the fix was aimed at the symptom.
+
+The 0.0 lower bound came from `lower = max(0.0, predicted - ci_half)`. Whenever
+the half-width exceeded the prediction, the subtraction went negative and clipped
+to zero. That is the exact condition the docstring names: it arises when
+`z * rolling_std_7d` is larger than the prediction, which a volatile archetype
+reaches on its own, and cold-start widening pushes more rows over the line (3.0x
+flat with no mapping, and `1.5 / transfer_confidence` with no upper bound when the
+mapping confidence is low). Note the flat 20 percent fallback alone cannot do it:
+`0.20 * 3.0` is 0.60 of predicted, so the fallback path only reaches a zero lower
+bound through the transfer-confidence widening, not the no-mapping case. A report
+saying "we expect 400g, somewhere between 0g and 1040g" reads as broken software,
+and it is not a useful trading input either.
+
+The absurd upper bounds are the same story on the other side. `upper = predicted
++ ci_half`, so a large half-width, or a `predicted` that has wandered far above the
+current market, sends the upper bound past any price the item trades at. The cap
+is written against `current_price` precisely because that is the reference the bad
+rows blow past: it binds when the upper bound climbs above 10x what the item
+currently costs, which is the q09 case where `predicted` sits far from the market.
+
+What it cost: an interval that has been floored or capped no longer has whatever
+probabilistic content it started with, and `confidence_pct` still says 0.80. The
+clamp binds precisely on the forecasts where the model was least certain, which
+are the ones that most needed a wide interval. So the intervals most likely to be
+too narrow are exactly the ones that got narrowed.
+
+This is a fair thing to have shipped and an unfair thing to leave unlabelled. A
+presentation guard is legitimate: nobody wants a zero lower bound in a dashboard.
+The missing half is a flag on the row saying the bound was clamped, so that a
+later coverage study can exclude or separately report them. `ci_quality` looks
+like it might be that flag, and q09 shows why it is not.
+"""
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "        upper = min(upper, current_price * 10.0)"
+see_also = ["PLAN.md#CEILING"]
+
+[[question]]
+id = "m08-q09"
+kind = "predict"
+prompt = """
+A model prediction goes badly wrong for one archetype. `predicted = 100.0`,
+`current_price = 1.0`, `rolling_std_7d = None`, not cold start,
+`confidence_pct = 0.80`, drift multiplier 1.0.
+
+Trace `compute_confidence_interval` and `classify_ci_quality`. What is stored?
+"""
+answer = """
+`(10.0, 10.0)`, classified `"good"`. A zero-width interval on the most obviously
+broken forecast in the run.
+
+The trace:
+
+  ci_half   = 0.20 * 100          = 20.0     (rolling_std is None)
+  min_half  = 0.05 * 100          = 5.0      (floor does not bind)
+  lower     = max(0.0, 100 - 20)  = 80.0
+  upper     = 100 + 20            = 120.0
+  floor     = max(80.0, 1 * 0.05) = 80.0     (does not bind)
+  cap       = min(120.0, 1 * 10)  = 10.0     (binds hard)
+  re-clamp  = min(80.0, 10.0)     = 10.0     (lower dragged down to upper)
+
+  width_pct = (10.0 - 10.0) / 100 = 0.0  ->  "good"
+
+The re-clamp on the last line exists to keep `lower <= upper` so the frozen
+`ForecastOutput` validator does not reject the row, and it does its job. The
+side effect is that when the cap binds below the lower bound, the interval
+collapses to a point, and `classify_ci_quality` reads a point interval as maximum
+confidence.
+
+So the pipeline's response to "the model predicted 100x the market price" is to
+store a forecast of 100 with a certainty label of good. If this were an
+item-level row, `fetch_tsm_export_items` would pick it up: it filters on
+`ci_quality = 'good'`, computes ROI from predicted against current, keeps
+anything above 10 percent, and sorts by ROI descending. This row would rank
+first.
+
+The lesson is about the direction of a derived flag. `ci_quality` is computed
+from the interval after clamping, so it measures the output of the guard rather
+than the condition the guard fired on. A flag derived downstream of a clamp
+reports the clamp, not the problem.
+"""
+options = [
+  { text = "(10.0, 10.0), ci_quality \"good\"", correct = true },
+  { text = "(80.0, 120.0), ci_quality \"good\"", note = "This skips the current-price block. It runs whenever current_price is not None and above zero, which is every archetype row carrying a price_mean. With current_price = 1.0 the cap of 10x binds at 10.0." },
+  { text = "(0.05, 10.0), ci_quality \"good\"", note = "The floor is max(lower, current_price * 0.05), which can only raise the lower bound. lower was already 80.0, so the floor does nothing; it is the cap and then the re-clamp that produce 10.0." },
+  { text = "ValueError from the ForecastOutput validator, because lower (80.0) exceeds upper (10.0)", note = "That is what would happen without the final `lower = min(lower, upper)` line. It exists precisely to keep the invariant, so the row is written rather than rejected, which is the more dangerous outcome: a silent bad row instead of a loud failure." },
+]
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "        lower = min(lower, upper)"
+see_also = ["wow_forecaster/reporting/tsm_export.py"]
+
+[[question]]
+id = "m08-q10"
+kind = "mcq"
+prompt = """
+Suppose you measured coverage on this system tomorrow, separating rows where the
+floor or the cap bound from rows where neither did. What should you expect
+clamping to have done to coverage, and why?
+"""
+answer = """
+Clamping lowers coverage, and it lowers it on the subset that could least afford
+it.
+
+Both clamps shrink the interval: the floor can only raise `lower`, the cap can
+only lower `upper`. A smaller interval contains the actual less often. That is
+arithmetic, not a hypothesis.
+
+The selection effect is the interesting part. Neither clamp binds on a
+well-behaved forecast, because a modest interval around a sane prediction stays
+inside 5 percent to 10x of the current price without trying. The clamps bind on
+wide intervals and on predictions far from the current price, which is to say on
+exactly the rows where the model is least sure and most likely to be far off.
+So the clamped subset combines the widest true uncertainty with the narrowest
+reported interval.
+
+If you ever run this study, split it three ways: unclamped, floor bound, cap
+bound. The pooled number will hide the effect, because unclamped rows are the
+majority and will drag the average toward whatever the base heuristic does.
+"""
+options = [
+  { text = "Lowered it, and most on the forecasts that needed the widest intervals, because the clamps only bind when the interval was already wide", correct = true },
+  { text = "Raised it, because narrower intervals are more precise and precision is what an interval is for", note = "Narrower intervals contain the actual less often, by definition. Precision without calibration is the failure mode, not the goal: a zero-width interval is maximally precise and has zero coverage." },
+  { text = "Left it unchanged, because the floor and the cap move both endpoints together and the interval just shifts", note = "They do not move together and they do not shift the interval. The floor raises lower, the cap lowers upper, and either can bind on its own. Both shrink." },
+  { text = "Affected only cold-start rows, since the clamps exist to contain cold-start widening", note = "Containing cold-start widening was the motivation, but the code applies floor and cap to every row where current_price was passed. The cold-start multiplier is a separate step earlier in the function." },
+]
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "        lower = max(lower, current_price * 0.05)"
+
+[[question]]
+id = "m08-q11"
+kind = "recall"
+prompt = """
+`cold_start.py` names its own replacement. Describe how quantile regression would
+change the interval, what it buys, and the claim it still does not let you make.
+"""
+rubric = [
+  "Train additional LightGBM models with objective=\"quantile\" at alpha 0.10 and 0.90 for an 80 percent interval",
+  "The bounds then come from features and data, so they vary per row and per horizon without any hand-written rule",
+  "It removes the level-dispersion substitution: the quantile models are fit against the actual target, so bias shows up in the bounds",
+  "It is still not a coverage guarantee: quantile models can be miscalibrated, so coverage must be measured either way",
+]
+answer = """
+The mechanics are small. LightGBM supports `objective="quantile"` with an `alpha`
+parameter, so an 80 percent interval means fitting two extra boosters per
+horizon, at alpha 0.10 and 0.90, on the same feature matrix and the same target.
+The prediction from the alpha-0.10 model is the lower bound and the alpha-0.90
+model is the upper. Roughly triple the training cost, no new dependency, no new
+data.
+
+What it buys is that the bounds become a learned function of the features. A thin
+series with a cold-start flag and no recent volume gets a wide interval because
+the model learned that rows like that are hard, not because a constant said 20
+percent. The horizon problem from q04 dissolves for free: the 28d quantile models
+are fit against the 28d target, so they see the larger spread directly. And
+because the quantile models are fit against the actual label, a biased central
+prediction shows up as an asymmetric interval rather than being invisible.
+
+What it does not buy is a guarantee. A quantile model is a fitted model like any
+other, and it can be systematically off: pinball loss minimized on training data
+says nothing about out-of-sample coverage, particularly when the training split
+itself leaks (see M06). You still have to measure. That ordering matters for the
+roadmap: ROADMAP M1 puts the realization ledger (#13) before quantile regression
+(#19), which is the right way round, because #19 without #13 replaces one
+unscored interval with another.
+"""
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "use LightGBM with ``objective=\"quantile\"`` to generate model-calibrated"
+see_also = ["docs/ROADMAP.md", "PLAN.md#CEILING"]
+
+[[question]]
+id = "m08-q12"
+kind = "mcq"
+prompt = """
+PLAN.md's CEILING section names conformal prediction as the end state, above
+quantile regression. What does split conformal prediction actually guarantee?
+"""
+answer = """
+Split conformal gives a finite-sample marginal coverage guarantee at the nominal
+level, assuming exchangeability, using a calibration set held out from training.
+
+The construction: fit any point predictor on the training set, compute
+nonconformity scores (typically absolute residuals) on a separate calibration
+set, take the appropriate empirical quantile of those scores, and build the
+interval as prediction plus or minus that quantile. The guarantee is that over
+repeated draws the interval covers at least the nominal rate, regardless of what
+the underlying model is or whether it is any good. A terrible model still gets
+valid intervals from conformal; they are just very wide, which is the honest
+result.
+
+Two qualifications matter for this repo.
+
+The guarantee is marginal, not conditional. It holds averaged over the
+population of forecasts, not for any particular archetype. Coverage on
+consumables could be 60 percent and on gems 95 percent while the pooled number
+sits at 80. Mondrian or group-conditional conformal partitions the calibration
+set by category to address this, and here the natural partition is
+`category_tag`, which the recommendation layer already carries.
+
+Exchangeability fails for time series. Prices are serially dependent and the
+distribution shifts across patches and expansions, which is the entire premise of
+the project. So plain split conformal is approximate here, and the honest version
+reaches for a time-series variant such as EnbPI or adaptive conformal inference,
+where the quantile is updated online against recent coverage errors. That
+adaptive family is a good fit for this system precisely because it corrects
+itself when a patch shifts the regime.
+"""
+options = [
+  { text = "A finite-sample marginal coverage guarantee at the nominal level, under exchangeability, using a held-out calibration set", correct = true },
+  { text = "That every individual archetype's intervals cover at the nominal rate", note = "That is conditional coverage, which split conformal does not give. Coverage is guaranteed averaged over the population; per-series coverage can be far off in both directions. Group-conditional variants narrow the gap but do not close it." },
+  { text = "That the point forecasts become more accurate, since the calibration step corrects the model", note = "Conformal wraps an existing predictor and never changes its predictions. It only decides how far around them to draw the interval. A bad model stays bad and gets honestly wide intervals." },
+  { text = "Coverage without needing any held-out data, since the method is distribution-free", note = "Distribution-free refers to making no parametric assumption about the error distribution, not to needing no data. Split conformal requires a calibration set disjoint from training; using training residuals instead is exactly how you get overconfident intervals." },
+]
+source = "PLAN.md"
+anchor = "  ceiling is conformal intervals with measured empirical coverage, so the stated"
+
+[[question]]
+id = "m08-q13"
+kind = "mcq"
+prompt = """
+You have one afternoon and can do exactly one of these. Which produces the most
+information about whether this system's uncertainty is any good?
+"""
+answer = """
+Measure coverage of the intervals you already have, per horizon, against realized
+prices. That is one query joining `forecast_outputs` to the daily rollups on
+target date, and the answer is the first fact anyone has ever had about these
+intervals.
+
+Every alternative changes the intervals before knowing anything about them. That
+is the pattern this repo already got burned by: PLAN.md's DS-2 finding is that a
+baseline harness was built and never run, so a stated acceptance bar went
+unmeasured for the project's entire life. Replacing an unmeasured heuristic with
+an unmeasured quantile model is the same shape of mistake with more work
+attached.
+
+There is a practical argument too. Roughly 305 thousand forecasts have already
+matured. The measurement is retrospective and instant. Any modeling change has to
+wait 28 days for its longest horizon to mature before it can be evaluated at all,
+so measuring first also costs you nothing in schedule.
+"""
+options = [
+  { text = "Join forecast_outputs to rollup actuals on target_date and compute the fraction of actuals inside the stored interval, split by horizon", correct = true },
+  { text = "Swap the heuristic for quantile regression at alpha 0.10 and 0.90", note = "A real improvement that you will not be able to defend. With no before number, you cannot say the new intervals are better, only that they are different. Do the measurement first and the same work becomes a result." },
+  { text = "Raise confidence_pct from 0.80 to 0.95, since the intervals are probably too narrow", note = "This changes z from 1.280 to 1.960, widening everything by 53 percent, on a hunch. The sign of the miscalibration is unknown: the 20 percent fallback and the cold-start widening push the other way. Widening a possibly-too-wide interval makes things worse and looks like a fix." },
+  { text = "Remove the 10x cap, since it is the least defensible line in the function", note = "Defensible instinct, wrong order. The cap binds on the worst rows, so removing it changes the reported bounds on exactly the population you understand least, still without telling you whether the base width was right." },
+]
+see_also = ["PLAN.md", "docs/ROADMAP.md"]
+
+# ── Downstream: what consumes the interval ───────────────────────────────────
+
+[[question]]
+id = "m08-q14"
+kind = "recall"
+prompt = """
+`predictor.py` widens the interval by the drift-derived `uncertainty_multiplier`
+after `compute_confidence_interval` returns. Two things about that block are
+subtly wrong. Name them, plus the conceptual objection to the multiplier itself.
+"""
+rubric = [
+  "It recentres on (ci_upper + ci_lower) / 2, which is not the prediction whenever the floor, the cap or the max(0.0, ...) clip made the interval asymmetric",
+  "So widening also translates the interval away from the point forecast, rather than just scaling it",
+  "The current-price floor and the 10x cap are not reapplied afterwards, so widening can push the upper bound back past the cap the previous step just enforced",
+  "And the multiplier is keyed to feature drift severity, not to measured forecast error, so it is an uncertainty proxy stacked on an uncertainty proxy",
+]
+answer = """
+The block computes `ci_half` and `center` from the returned bounds, scales the
+half-width, and rebuilds the interval around that centre.
+
+**It recentres on the wrong point.** The interval returned by
+`compute_confidence_interval` is symmetric around `predicted` only when nothing
+clipped it. `lower = max(0.0, predicted - ci_half)` breaks symmetry whenever the
+half-width exceeds the prediction, and the current-price floor and 10x cap break
+it whenever they bind. In all those cases the midpoint sits above or below the
+prediction, and multiplying the half-width around that midpoint slides the whole
+interval further from the point forecast. Scaling around `predicted` instead
+would be a one-token change.
+
+**It undoes the cap it just applied.** The floor and cap live inside
+`compute_confidence_interval`; the widening happens after the call and reapplies
+only `max(0.0, ...)` on the lower bound. So a CRITICAL drift multiplier of 3.0
+can push `confidence_upper` well past 10x the current price, which is the exact
+bound the previous step existed to enforce. Two guards, opposite directions, no
+one reconciling them.
+
+**And the multiplier answers to the wrong signal.** It comes from
+`monitoring/drift.py` via `adaptive.py`, whose policy table maps drift severity
+to 1.0 / 1.25 / 1.5 / 2.0 / 3.0. Drift there is a z-score on feature
+distributions, plus an error-drift component that PLAN.md's DS-3 shows is
+computed against a pooled blend of all four baselines with no model filter. So
+the widening factor is a guess about degradation, applied to a heuristic that was
+already a guess about spread. Neither guess has been checked against an outcome.
+
+Worth reading `adaptive.py`'s own docstring next to this. It says the multiplier
+is "applied to the uncertainty_penalty component in the recommendation scorer".
+Grep the scorer: it never sees the multiplier. The effect reaches the scorer
+indirectly, through the widened interval that `scorer.py` divides by
+`forecast_price` to get `uncertainty_pct`. The docstring describes the intent one
+step removed from where the code does the work.
+"""
+source = "wow_forecaster/ml/predictor.py"
+anchor = "                center   = (ci_upper + ci_lower) / 2.0"
+see_also = ["wow_forecaster/monitoring/adaptive.py", "PLAN.md"]
+
+[[question]]
+id = "m08-q15"
+kind = "find"
+prompt = """
+`fetch_tsm_export_items` filters on `ci_quality = 'good'` and its docstring says
+that excludes forecasts with extreme CI clamping. Follow the `ci_quality` value
+back to where item-level forecasts are built. What does the filter actually
+exclude?
+"""
+rubric = [
+  "Nothing. Every item-level forecast has ci_quality = 'good'",
+  "_generate_item_forecasts in pipeline/forecast.py constructs ForecastOutput without passing ci_quality",
+  "ForecastOutput declares `ci_quality: CiQuality = \"good\"` as its default, and the forecast_outputs column also defaults to 'good'",
+  "The TSM query restricts to item_id IS NOT NULL AND archetype_id IS NULL, which is exactly the population where the field was never computed",
+]
+answer = """
+The filter excludes nothing.
+
+`classify_ci_quality` is called in exactly one place, `predictor.py`, on
+archetype-level forecasts. Item-level forecasts take a different path:
+`_generate_item_forecasts` in `pipeline/forecast.py` scales the archetype's
+bounds by the item's price ratio and builds a `ForecastOutput` whose keyword list
+ends at `features_hash=None`. `ci_quality` is never passed, so the field takes
+its model default of `"good"`, and the column default in `forecast_outputs` is
+`'good'` as well, so nothing downstream corrects it.
+
+Now read the TSM query's filter conditions together. It selects rows where
+`item_id IS NOT NULL AND archetype_id IS NULL`, which is precisely the population
+that never had `ci_quality` computed, and then filters that population on
+`ci_quality = 'good'`, which every one of those rows satisfies. The condition
+appears twice in the SQL, in the inner grouping and again on the join, and both
+occurrences are no-ops.
+
+Two things worth carrying away.
+
+A defaulted field looks identical to a computed field once it is in the database.
+`SELECT ci_quality FROM forecast_outputs WHERE item_id IS NOT NULL` returns a
+clean column of `good`, and there is no way to tell from the data that no
+classifier ever ran. Making the default `NULL` or `'unknown'` instead of `'good'`
+would have made the gap visible the first time anyone looked, and it matches a
+principle the repo states elsewhere: PLAN.md's DS-3 finding is that
+`drift.py` returning `NONE` for "cannot compute" hides the failure, while
+`health.py` returning `unknown` does not. Same mistake, different module.
+
+And the ratio scaling would in fact have preserved the classification anyway: it
+multiplies `predicted`, `ci_lower` and `ci_upper` by the same factor, so the
+relative width, which is all `classify_ci_quality` looks at, is unchanged. One
+call to `classify_ci_quality` at the bottom of that loop would make the filter
+real.
+"""
+source = "wow_forecaster/pipeline/forecast.py"
+anchor = "                ci_lower = max(0.0, item_current * (arch_fc.confidence_lower / archetype_current))"
+see_also = ["wow_forecaster/reporting/tsm_export.py", "wow_forecaster/models/forecast.py"]
+
+[[question]]
+id = "m08-q16"
+kind = "predict"
+prompt = """
+The last drift check for realm `us` classified drift as HIGH. `ForecastStage`
+reads the multiplier and passes it to `run_inference`. For one archetype,
+`compute_confidence_interval` returned `(900.0, 1100.0)` around a prediction of
+1000.0.
+
+What is stored, and what `uncertainty_pct` and `risk_level` does the scorer
+derive from it?
+"""
+answer = """
+Stored: `(800.0, 1200.0)`. Derived: `uncertainty_pct = 0.40`,
+`uncertainty_penalty = 40.0`, `risk_level = "low"` (assuming volatility does not
+carry it higher).
+
+The policy table in `adaptive.py` maps `"high"` to `(2.00, True)`: multiplier
+2.0, retrain recommended. In `predictor.py`, `ci_half = (1100 - 900) / 2 = 100`
+and `center = (1100 + 900) / 2 = 1000`, which here does equal the prediction
+because nothing clamped this interval. `new_half = 200`, so the bounds become
+800 and 1200.
+
+Then `scorer.py`: `uncertainty_pct = ci_width / forecast_price = 400 / 1000 =
+0.40`, and `uncertainty_penalty = clamp(0.40 * 100, 0, 100) = 40.0`.
+`determine_risk_level` needs 0.50 for medium, so this stays low.
+
+Follow the consequence through the score formula. The uncertainty penalty carries
+a weight of 0.10, the smallest of the five components, so doubling the interval
+width moved the total score by 2 points on a roughly 0 to 100 scale. Meanwhile
+opportunity carries 0.35. A drift level that the policy table describes as
+"substantial drift, model likely stale" barely moves the ranking. `determine_action`
+only forces `avoid` at `uncertainty_pct >= 0.95`, so the recommendation is
+unchanged too.
+
+Whether that is right depends on a number nobody has. If the intervals are
+roughly calibrated, a 0.10 weight on uncertainty is a defensible risk appetite.
+If they are undercovering badly, then the one component that carries risk
+information is both wrong and down-weighted.
+"""
+options = [
+  { text = "(800.0, 1200.0); uncertainty_pct 0.40; risk_level low", correct = true },
+  { text = "(700.0, 1300.0); uncertainty_pct 0.60; risk_level medium", note = "That is the multiplier 3.0, which the policy table assigns to CRITICAL. HIGH maps to 2.00. Reading the table one row off changes the interval by 50 percent." },
+  { text = "(800.0, 1200.0); uncertainty_pct 0.40; risk_level medium", note = "The arithmetic is right and the threshold is not. determine_risk_level needs uncertainty_pct >= 0.50 or volatility_cv >= 0.50 for medium; 0.40 falls through to low." },
+  { text = "(900.0, 1100.0) unchanged; the multiplier is applied to uncertainty_penalty in the scorer, not to the stored interval", note = "This is what adaptive.py's docstring says, and it is not what the code does. The scorer never receives the multiplier; predictor.py applies it to the interval itself and the penalty follows from the widened width." },
+]
+source = "wow_forecaster/monitoring/adaptive.py"
+anchor = "  - 2.0  (HIGH):     Substantial drift.  Doubles uncertainty.  Most"
+see_also = ["wow_forecaster/recommendations/scorer.py"]
+
+[[question]]
+id = "m08-q17"
+kind = "find"
+prompt = """
+There are two separate 5 percent floors inside `compute_confidence_interval`.
+Find both, say what quantity each one bounds, and explain why the module
+docstring only documents one of them.
+"""
+rubric = [
+  "_MIN_CI_FRAC = 0.05 floors the half-width at 5 percent of predicted, before the bounds are formed",
+  "A bare 0.05 literal floors ci_lower at 5 percent of current_price, after the bounds are formed",
+  "Different quantities (half-width vs lower bound) against different references (predicted vs current), sharing the number 0.05 by coincidence",
+  "The docstring's numbered item 4 describes only the current-price floor, so the named constant and the documented floor are not the same thing",
+]
+answer = """
+First floor: `min_half = _MIN_CI_FRAC * predicted`, then
+`ci_half = max(ci_half, min_half)`. This bounds the half-width from below at 5
+percent of the prediction, and it applies unconditionally. On its own it keeps the
+total width at or above 10 percent of predicted, but only until the current-price
+block runs after it. When the 10x cap or the current-price floor binds hard
+against the opposite bound, the final re-clamp can still drive the width to zero
+(q09 is the cap version). So the 10 percent minimum holds only when no current
+price is passed, or when neither the floor nor the cap binds.
+
+Second floor: `lower = max(lower, current_price * 0.05)`, inside the
+`current_price is not None` block. This bounds the lower endpoint from below at 5
+percent of the current market price, and it only runs when a current price was
+passed.
+
+Four differences between them: half-width versus endpoint, predicted versus
+current price, unconditional versus conditional, and named constant versus magic
+literal. They share the number 0.05 and nothing else. If someone tuned
+`_MIN_CI_FRAC` to 0.02 tomorrow, the second floor would not move, and a reader
+who assumed one constant governed both would be wrong about half the function.
+
+The docstring's numbered list documents the second and not the first. Item 4
+says the floor is on `ci_lower` relative to `current_price`, which is accurate
+for the literal and silent about the constant. Meanwhile the comment above the
+constant says "Minimum CI half-width as fraction of predicted price", which is
+accurate about the constant. Both pieces of prose are correct and neither is
+complete, so the only way to know there are two floors is to read the body.
+
+Worth doing this find exercise deliberately rather than reading the answer,
+because it is the ordinary case. Not a bug, not a dramatic defect, just two
+things named the same in a reader's head that the code treats differently. That
+is what most of the confusion in a codebase is made of.
+"""
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "    min_half = _MIN_CI_FRAC * predicted"
+
+[[question]]
+id = "m08-q18"
+kind = "recall"
+prompt = """
+An interviewer says: "you ship a confidence interval with every forecast. How do
+you know it is right?" Give the ninety-second answer.
+"""
+rubric = [
+  "Say plainly that it is not validated: the interval is heuristic and coverage has never been measured",
+  "Describe the construction in one breath: z times a 7-day rolling std of the price level, cold-start widening, a 5 percent floor and a 10x cap",
+  "Name the two structural problems: it uses level dispersion rather than forecast error, and it does not scale with the horizon",
+  "Say what fixes it and in what order: the realization ledger measures coverage first, then quantile regression, then conformal with measured coverage",
+  "Name where the wrong interval propagates: uncertainty_pct feeds the risk level and 10 percent of the recommendation score",
+]
+answer = """
+A version that lands:
+
+"It is not right, and I can tell you exactly how wrong it is allowed to be. The
+interval is a heuristic. We take a z value for the configured 80 percent level,
+multiply it by the 7-day rolling standard deviation of the archetype's daily mean
+price, widen it for cold-start archetypes in proportion to how confident we are
+in the transfer mapping, then floor the half-width at 5 percent of the prediction
+and cap the upper bound at 10 times the current market price so the numbers do
+not read as broken.
+
+Two things are structurally wrong with that. It uses the dispersion of the price
+level as a stand-in for the dispersion of our forecast error, so it cannot see
+model bias at all: a model that runs consistently 10 percent high still gets a
+neat symmetric interval around the biased number. And it takes no horizon
+argument, so our 28-day interval is the same width as our 1-day interval, when
+error variance should be growing roughly with the square root of the horizon.
+
+What I have not done is measure coverage, which is the only thing that would
+settle it: the fraction of realized prices that landed inside their own interval.
+Nothing in the repo computes it today. The backtest harness cannot, because its
+prediction record carries actuals and point predictions and no bounds. That is
+the first item on the model-validation milestone, and it is retrospective, so
+about 305 thousand already-matured forecasts become scoreable the day the ledger
+table lands.
+
+Then the sequence is quantile regression, which makes the bounds a learned
+function of the features and fixes the horizon problem for free, and above that
+conformal intervals, where you get a coverage guarantee instead of an assertion.
+
+The reason I care about the order is that the interval is not decoration. Its
+width becomes `uncertainty_pct`, which sets the risk level on every
+recommendation and carries 10 percent of the ranking score. So an uncalibrated
+interval is not a cosmetic problem, it is a wrong risk label on every row."
+
+The part that separates a good answer from a defensive one is volunteering the
+number you do not have, and saying what would produce it.
+"""
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "CIs produced here are HEURISTIC, not model-derived.  They do NOT come from"
+see_also = ["PLAN.md#CEILING", "docs/ROADMAP.md"]

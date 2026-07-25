@@ -184,7 +184,7 @@ reading = [
   "wow_forecaster/ml/predictor.py",
 ]
 prereqs = ["m06"]
-# lab = "lab-02-lightgbm-backtest"  declared with its brief in Phase 2
+lab = "lab-02-lightgbm-backtest"
 
 [[module]]
 id = "m08"
@@ -345,7 +345,7 @@ reading = [
   "wow_forecaster/backup/durable_backup.py",
   "docs/db-backup.md",
 ]
-# lab = "lab-03-sync-snapshots-drain"  declared with its brief in Phase 3
+lab = "lab-03-sync-snapshots-drain"
 
 # ── Part IV. Proving it and shipping it ───────────────────────────────────────
 
@@ -370,7 +370,7 @@ reading = [
   "wow_forecaster/monitoring/health.py",
   "PLAN.md (Audit findings)",
 ]
-# lab = "lab-04-realization-ledger"  declared with its brief in Phase 4
+lab = "lab-04-realization-ledger"
 
 [[module]]
 id = "m16"

@@ -1,0 +1,596 @@
+# M18: Causal questions.
+#
+# "Did the patch move prices?" is a causal question, not a forecasting one. This
+# bank teaches interrupted time series and difference-in-differences, the
+# assumption each rests on, the placebo check that can falsify it, and why the
+# announced_at / start_date split is the identification backbone rather than a
+# convenience.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+
+# ── The distinction: forecasting vs causal ───────────────────────────────────
+
+[[question]]
+id = "m18-q01"
+kind = "recall"
+prompt = """
+The forecaster answers "what will the price of this archetype be in 28 days?"
+M5 asks "did the season-start patch move consumable prices, and by how much?"
+Both touch the same series and the same events. What makes the second question
+causal rather than a forecasting question, and why does a low forecast MAE
+around a patch not answer it?
+"""
+rubric = [
+  "A causal question is about a counterfactual: what would prices have done had the event not happened",
+  "A forecast is about the observed future, not a counterfactual that never occurs",
+  "Low MAE means the model tracked the realized path; the realized path already contains the event",
+  "Prediction accuracy has no control condition, so it cannot separate the event's effect from everything else moving at once",
+]
+answer = """
+A causal question is defined by a counterfactual. "Did the patch move prices"
+means: compare the prices that happened against the prices that would have
+happened had the patch not shipped. That second world is never observed, so the
+whole job is estimating it from a control or a pre-trend.
+
+A forecast has no counterfactual in it. It predicts the future that actually
+occurs, and that future already contains the patch. A model that nails the price
+path across a season start has learned the shape of the realized series,
+including whatever the event did. It has said nothing about how much of that
+shape the event caused versus what would have happened anyway (a new raid tier,
+a token price shift, a weekly reset, seasonal demand).
+
+This is why a low MAE around a patch is not evidence of an effect size. MAE
+measures fit to the observed path. An event study measures the gap between the
+observed path and an estimated counterfactual. Different quantity, different
+machinery. The repo's whole event-feature layer feeds the forecaster; none of it
+estimates an effect, which is exactly what M5 is for.
+"""
+source = "docs/ROADMAP.md"
+anchor = "difference-in-differences designs measure how patch events move prices"
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m18-q02"
+kind = "recall"
+prompt = """
+Sketch an interrupted time series (ITS) design for one patch event, say the
+Season 2 start, on a single archetype's daily price series. Name the model form,
+what plays the role of the counterfactual, and the one threat this design cannot
+rule out on its own.
+"""
+rubric = [
+  "Segmented regression on the daily series: an intercept and pre-trend, plus a level-shift term and a slope-change term switched on at the intervention date",
+  "The counterfactual is the pre-intervention trend extrapolated forward",
+  "The estimated effect is the gap between the observed post-period and that extrapolated pre-trend",
+  "The threat it cannot rule out is a contemporaneous shock (history): anything else that changed at the same date is absorbed into the effect",
+]
+answer = """
+ITS on one series is a segmented regression against time. You fit a baseline
+level and a pre-intervention slope, then add two terms that turn on at the
+intervention date: a level shift (immediate jump) and a slope change (a bend in
+the trend). The pre-period estimates the counterfactual, which is simply the
+pre-trend carried forward as if nothing happened. The effect is the distance
+between what actually happened after the date and that extrapolated line.
+
+The design's strength is that it needs only the one treated series plus a clean
+intervention date, which is all this repo has for a global event. Its weakness is
+that it attributes everything that changes at the intervention date to the event.
+If a new raid opened the same week, or Blizzard adjusted the token, or it was
+simply the start of a high-demand season, ITS folds those into the estimated
+jump. It has no control for "what else was going on". That is the exact gap
+difference-in-differences is built to close, by borrowing a control series that
+felt the same background shocks but not the treatment.
+
+One practical note specific to this data: autocorrelation in daily prices makes
+the naive OLS standard errors too small, so an honest ITS uses Newey-West or an
+ARIMA error structure. The point estimate is the easy part; the interval is where
+a daily financial series will embarrass you.
+"""
+
+[[question]]
+id = "m18-q03"
+kind = "recall"
+prompt = """
+A difference-in-differences design needs a treated group and a control group. In
+THIS data, what is the natural control dimension, why is it not "a different
+realm", and what does the seed data give you to pick a control?
+"""
+rubric = [
+  "The control dimension is archetype / category, not geography",
+  "Commodity AH is region-wide and all seed events are scope = GLOBAL, so every realm is treated at once: there is no untreated realm",
+  "The control is a category the event is not expected to move (impact_direction neutral, or simply no impact record)",
+  "The treated group is a category the seed marks as spiking or crashing for that event",
+]
+answer = """
+The control dimension here is the item category, not the realm. Commodity
+auctions are region-wide, and every seed event is scope = GLOBAL, so a patch
+lands on all realms simultaneously. There is no untreated geography to compare
+against. A "US vs EU" DiD is not available from a single region of global events,
+which is why PLAN lists panel data across regions as a ceiling item rather than
+something you can do today.
+
+So the control has to come from the cross-section of what the event touches. The
+event impact seeds already encode a prior about that: for a given event, some
+archetype categories are marked spike or crash and some are neutral or have no
+impact record at all. A category the event is not expected to move is a candidate
+control; a category it is expected to move is the treated group. Season-start
+raid consumables spike while, say, an unrelated cosmetic reagent should not, so
+one is treated and one is control.
+
+The honest caveat: those seed labels are hand-authored guesses, so using them to
+choose treatment and control is assuming part of what you are trying to measure.
+The disciplined version picks the control on structural grounds (a category with
+no plausible causal link to raid progression) rather than on the seed's own
+direction guess, then checks parallel pre-trends to justify it.
+"""
+source = "wow_forecaster/features/event_features.py"
+anchor = "- All seed events are ``scope = GLOBAL``.  Realm-specific scoping is not yet"
+
+[[question]]
+id = "m18-q04"
+kind = "recall"
+prompt = """
+State the parallel trends assumption as it applies to a category-vs-category DiD
+here, then give two concrete ways to probe whether it holds, using data you
+actually have.
+"""
+rubric = [
+  "Parallel trends: absent the event, the treated and control category prices would have moved by the same amount (their difference would have stayed constant)",
+  "It is an assumption about the unobserved counterfactual, so it can never be proven, only made credible",
+  "Probe 1: plot / regress the pre-event trends and check they move in parallel before the intervention date",
+  "Probe 2: an event-study specification with pre-period lead terms whose coefficients should be indistinguishable from zero",
+]
+answer = """
+Parallel trends says: if the event had not happened, the treated category and the
+control category would have drifted by the same amount, so the gap between them
+would have stayed flat. DiD estimates the effect as the change in that gap after
+the event. If the gap was already widening for reasons unrelated to the event,
+DiD blames the event for a divergence it did not cause.
+
+It is an assumption about a world you never see, so you cannot prove it. You make
+it credible. Two probes you can run on this data:
+
+First, look at the pre-period directly. Plot the two category series (or their
+difference) over the weeks before the intervention date and check they track each
+other. A visibly diverging pre-gap kills the design before you run it.
+
+Second, run an event-study specification: instead of one post-treatment dummy,
+include a series of lead and lag indicators relative to the event date. The lead
+(pre-event) coefficients are the test. If parallel trends holds, they should be
+statistically indistinguishable from zero, because nothing has happened yet. A
+significant pre-trend lead is the diagnostic that the two groups were already
+moving apart. This is also where the announced_at date earns its keep: if prices
+move on the announcement, the "pre-event" leads relative to the effective date are
+not zero by design, and you have to date the intervention at announcement to read
+them honestly.
+"""
+
+[[question]]
+id = "m18-q05"
+kind = "recall"
+prompt = """
+A placebo check is the cheapest credibility test in the event-study toolkit.
+Describe one you could run here, and state precisely what a "failed" placebo (an
+effect where there should be none) would falsify about your main estimate.
+"""
+rubric = [
+  "A placebo assigns treatment where none exists: a fake intervention date with no event, or an outcome/category the event should not touch",
+  "You then run the identical model and expect to find no effect",
+  "Finding an effect falsifies the claim that your main estimate is caused by the event",
+  "It points instead to a confound the design does not control: seasonality, autocorrelation, a co-occurring shock, or a mis-specified counterfactual",
+]
+answer = """
+A placebo test deliberately applies your design where the answer should be zero.
+Two forms fit here. A placebo-in-time: pick a date in a quiet stretch with no
+event, pretend it was the intervention, and run the same segmented regression or
+DiD. A placebo-in-outcome: run the design on a category that has no causal link to
+the event (a trade good unrelated to raiding, say) and expect a null.
+
+The logic is a proof by contradiction. Your main estimate claims: the jump at the
+real date is the event. If a fake date with no event also produces a jump, or a
+category the event cannot plausibly touch also moves, then whatever machinery
+produced your "effect" fires without an event present. That falsifies the causal
+reading. It does not tell you the true effect is zero; it tells you your estimator
+is picking up something other than treatment, and you no longer know how much of
+the real-date estimate is event and how much is that same background artifact.
+
+What it usually catches: seasonality that both real and placebo dates share,
+autocorrelation that manufactures apparent level shifts, a control group that was
+never comparable, or an ITS counterfactual (the extrapolated pre-trend) that was
+already wrong. A design that survives a battery of placebos is not proven correct,
+but a design that fails one is proven suspect, which is cheaper information.
+"""
+
+# ── The identification backbone: two dates ───────────────────────────────────
+
+[[question]]
+id = "m18-q06"
+kind = "recall"
+prompt = """
+WoWEvent stores announced_at (a datetime) and start_date (a date) as separate
+columns. Explain why an event study needs both, naming the distinct role each
+date plays and the market behavior that makes collapsing them into one column a
+bug.
+"""
+rubric = [
+  "announced_at is when the information became public; start_date is when the effect mechanism (the patch going live) begins",
+  "Markets are forward-looking, so prices can move on the announcement, before the effective date",
+  "The forecasting leakage guard keys on announced_at (what was knowable); the causal treatment date is the effective date, with the announcement window modeled separately",
+  "Collapsing them puts anticipation (pre-event run-up) inside your 'pre' period, biasing the estimated jump toward zero or the wrong sign",
+]
+answer = """
+The two dates answer two different questions. announced_at is when the
+information entered the market: the moment a trader could have acted on it.
+start_date is when the causal mechanism actually operates: the patch goes live,
+new recipes exist, raid demand turns on. For a slow, purely mechanical effect the
+two coincide. For anything markets can anticipate, they do not.
+
+That gap matters because auction prices are forward-looking. If a season start is
+announced three weeks before it goes live, speculators buy consumable mats on the
+announcement and the price has already climbed before the effective date. The repo
+models exactly this: the impact seeds carry negative lag_days for pre-event
+run-up, and is_pre_event_window flags the seven days before a major event.
+
+Now the reason two columns is not a convenience. The forecasting leakage guard
+must key on announced_at, because that is what a forecaster could legitimately
+know (is_known_at). But a causal design that dates the intervention at the
+effective start_date, while prices already moved on the announcement, puts the
+anticipation run-up inside its own pre-period baseline. The pre-trend is
+contaminated, the estimated level shift at the effective date is measured against
+an already-elevated baseline, and the effect is biased toward zero or flips sign.
+Separate columns let you use announced_at for the leakage guard and place the
+causal intervention wherever the design demands (often at announcement, or model
+both windows), which a single "event date" column cannot support.
+"""
+source = "wow_forecaster/models/event.py"
+anchor = "announced_at: datetime | None = None"
+see_also = ["docs/events.md"]
+
+[[question]]
+id = "m18-q07"
+kind = "recall"
+prompt = """
+The summary calls announced_at plus is_known_at() the "identification backbone"
+of the event study. But is_known_at() is a look-ahead-bias guard for forecasting.
+Explain what it does and does not do for causal identification, and why the two
+timestamped columns are nonetheless what makes a credible design possible.
+"""
+rubric = [
+  "is_known_at() only answers 'was this knowable at time T', preventing future info from entering a feature",
+  "It does not identify a causal effect, choose a control, or establish a counterfactual",
+  "The backbone is having two accurately timestamped dates, which lets you place the intervention and reason about anticipation",
+  "Without a trustworthy announcement/effective split, neither the leakage guard nor any credible event-study timing is possible",
+]
+answer = """
+is_known_at(as_of) does one thing: it returns whether the event was publicly
+announced at or before as_of, so a feature computed for an observation date never
+reflects information from the future. That is a look-ahead-bias guard. It keeps
+the forecaster honest about what it could know. It does not, by itself, identify
+anything causal. It picks no control group, extrapolates no counterfactual, and
+makes no parallel-trends claim. You could have a perfect leakage guard and still
+have zero ability to say the patch moved prices.
+
+So why call the two dates the backbone? Because identification in an event study
+lives or dies on getting the timing right, and the timing needs exactly this
+structure: a precise announcement instant (a datetime, so a 17:00 UTC reveal is
+distinguishable from next-day) and a separate effective date. That split is what
+lets you place the intervention where the design requires, detect and model the
+anticipation window between the two, and run the pre-trend leads against the right
+zero. The leakage guard and the causal design are two consumers of the same
+carefully-dated substrate. The guard is what you have built; the causal design is
+what M5 will build on top of the same columns. Calling the columns the backbone is
+saying: the hard, easy-to-get-wrong part (accurate, separated event timing) is
+already in the schema, and everything causal is downstream of it.
+"""
+source = "wow_forecaster/models/event.py"
+anchor = "def is_known_at(self, as_of: datetime) -> bool:"
+
+[[question]]
+id = "m18-q08"
+kind = "recall"
+prompt = """
+Read against PLAN's ceiling: today the model consumes event_impact_magnitude,
+event_archetype_impact, and the other event features. Where do those values come
+from, and why does that make the current event layer a set of assumptions rather
+than measurements? What does the M5 loop change?
+"""
+rubric = [
+  "The impact values are hand-authored in config/events/tww_event_impacts.json (impact_direction, typical_magnitude, lag_days)",
+  "They are human priors about how each category reacts, not effects estimated from data",
+  "So the forecaster is being told the answer to the causal question rather than measuring it",
+  "M5 estimates event effects causally (ITS / DiD) and feeds the measured effects back, replacing the hand-authored records",
+]
+answer = """
+Every event feature that carries a magnitude or direction traces back to
+config/events/tww_event_impacts.json: a human wrote impact_direction (spike /
+crash / neutral), typical_magnitude (a fractional price change like +0.40), and
+lag_days for each event-category pair. The feature builder reads those seeds and
+attaches them to rows. They are priors. Nobody measured that a season start moves
+consumables +40 percent; someone estimated it and typed it in.
+
+That has a sharp consequence. The system is currently telling the forecaster the
+answer to the very question M5 exists to ask. If the hand-authored magnitude is
+wrong, the feature is wrong in a way no amount of model tuning detects, because
+there is no ground-truth effect to compare against. The event layer looks
+data-driven and is actually assumption-driven.
+
+M5 closes that loop. It estimates each event's effect from the price series with
+ITS and DiD, with placebo checks, and then the measured effects replace the
+hand-authored impact records as model inputs. At that point the feature says what
+the data showed rather than what a researcher guessed, and the two-date schema
+that made the leakage guard possible is the same substrate the causal estimates
+run on. Until then, read event_impact_magnitude as a labeled hypothesis, not a
+finding.
+"""
+source = "PLAN.md"
+anchor = "measured effects become model inputs rather than hand-authored"
+see_also = ["docs/events.md"]
+
+# ── Multiple choice ──────────────────────────────────────────────────────────
+
+[[question]]
+id = "m18-q09"
+kind = "mcq"
+prompt = """
+You want a difference-in-differences estimate of the Season 2 start's effect on
+raid consumables. Which control group is defensible given how this data and these
+events are structured?
+"""
+answer = """
+The control has to be another slice of the cross-section that shares the
+background shocks but is not driven by the treatment. In this single-region,
+global-event data, that means a different item category with no plausible link to
+raid progression. Geography is not available as a control axis here.
+"""
+options = [
+  { text = "An archetype category with no causal link to raiding (e.g. an unrelated trade good), checked for parallel pre-trends", correct = true },
+  { text = "The same consumables on a different realm, left untreated as a control", note = "There is no untreated realm. Commodity AH is region-wide and every seed event is scope = GLOBAL, so the patch treats all realms at the same instant. This control does not exist in the data." },
+  { text = "The same consumables during the previous expansion, used as a historical control", note = "A different expansion is a different market regime with different supply, recipes, and player base. It does not satisfy parallel trends with the current period; it is a different world, not a contemporaneous control." },
+  { text = "Whatever category the seed file marks impact_direction = neutral for this event", note = "Tempting, but the seed direction is a hand-authored guess. Choosing the control from the same labels you are trying to validate assumes part of the answer. Pick the control on structural grounds, then verify pre-trends." },
+]
+
+[[question]]
+id = "m18-q10"
+kind = "mcq"
+prompt = """
+In an event-study specification you include lead indicators for the four weeks
+before the effective date. Two of the pre-event lead coefficients come back
+clearly positive and significant. What is the right reading?
+"""
+answer = """
+Nonzero pre-event leads mean the two groups were already diverging (or the effect
+started before your intervention date). Either way the clean-baseline assumption
+is violated as specified, and here the most likely benign cause is anticipation:
+prices moved on the announcement, ahead of the effective date.
+"""
+options = [
+  { text = "The pre-trends diverge relative to this intervention date; parallel trends is suspect, and the likely cause is anticipation, so re-date the intervention to the announcement", correct = true },
+  { text = "The event has a large effect; significant leads confirm the treatment is strong", note = "Leads are the pre-treatment period. A significant lead is evidence against the design, not for the effect. By construction nothing should have happened yet at a lead; that it did means your zero is wrong." },
+  { text = "The model is overfit; drop the lead terms and report only the post dummy", note = "Removing the diagnostic does not fix the problem, it hides it. The leads are what tell you the baseline is contaminated; deleting them just lets you report a biased effect with a clean-looking table." },
+  { text = "Nothing to worry about; pre-trends are expected to be noisy", note = "Noise is not the same as clearly positive and significant. Two consistent, significant leads is a signal, not noise, and the standard response is to investigate anticipation and re-date, not to wave it off." },
+]
+
+[[question]]
+id = "m18-q11"
+kind = "mcq"
+prompt = """
+What does interrupted time series on a single global-event series specifically
+fail to rule out, that a difference-in-differences design is built to handle?
+"""
+answer = """
+ITS on one series attributes everything changing at the intervention date to the
+event, including contemporaneous shocks that hit all series. DiD subtracts a
+control that felt those same shocks, differencing them out.
+"""
+options = [
+  { text = "A contemporaneous shock (history): anything else that changed at the same date is absorbed into the ITS effect estimate", correct = true },
+  { text = "Look-ahead bias: ITS could accidentally use future information in its features", note = "Look-ahead bias is handled upstream by announced_at / is_known_at, and is a feature-construction issue, not what distinguishes ITS from DiD. Both designs share the same leakage guard." },
+  { text = "Autocorrelation in the daily price series", note = "Autocorrelation afflicts both ITS and DiD standard errors and is handled by the error model (Newey-West, ARIMA errors), not by switching to DiD. It is orthogonal to the history threat." },
+  { text = "Measurement error in the recorded prices", note = "Noisy price observations are a data-quality problem present in both designs. DiD's advantage over ITS is a control for common time shocks, not cleaner measurement." },
+]
+
+[[question]]
+id = "m18-q12"
+kind = "mcq"
+prompt = """
+Someone reports: "the forecaster's MAE on consumables is only 6 percent across
+the Season 2 start, so the model clearly captured the event's price effect."
+What is wrong with using that as evidence of a causal effect?
+"""
+answer = """
+Fit to the realized path is not an effect estimate. Low MAE says the model
+tracked what happened; it says nothing about the counterfactual, and there is no
+control condition anywhere in a forecast accuracy number.
+"""
+options = [
+  { text = "MAE measures fit to the observed series, which already contains the event; a causal effect is the gap to an unobserved counterfactual, which MAE never estimates", correct = true },
+  { text = "6 percent is too high to claim any effect was captured", note = "The magnitude of the MAE is beside the point. Even a 0 percent MAE would not be causal evidence, because perfect tracking of the realized path still has no counterfactual and no control." },
+  { text = "The claim is fine, but only if the 28d horizon was used instead of 1d", note = "No horizon turns a forecast into a causal estimate. Changing the horizon changes what path you fit, not whether you have a counterfactual to compare against." },
+  { text = "It is valid as long as the event features were leakage-safe", note = "Leakage-safety makes the forecast honest about what it knew; it does not convert prediction accuracy into an effect size. A clean forecast is still not a counterfactual comparison." },
+]
+
+[[question]]
+id = "m18-q13"
+kind = "mcq"
+prompt = """
+The impact seed for a season start uses lag_days = -3 for enchants. In causal
+terms, what is that negative value asserting, and why does it depend on the
+announcement/effective split existing?
+"""
+answer = """
+Negative lag_days means the price effect begins before the event's effective
+start_date: a pre-event run-up. That only makes sense if the information (the
+announcement) predates the effective date, which is exactly what the two-column
+split records.
+"""
+options = [
+  { text = "The effect starts 3 days before start_date (anticipation run-up), which is only coherent because the announcement predates the effective date", correct = true },
+  { text = "The event's data was recorded 3 days late and lag_days corrects the timestamp", note = "lag_days is a modeling parameter for when the price impact begins relative to the event, not a data-entry correction. It is about market timing, not clock skew." },
+  { text = "The effect lasts 3 days; negative just encodes a short duration", note = "Duration is duration_days, a separate field. lag_days is the offset of the impact's onset from start_date, and negative means before it, not shorter." },
+  { text = "It flags the event as unannounced, so is_known_at returns False", note = "Announcement status is announced_at (null-or-not), handled in a different table. A negative lag_days says nothing about whether the event was announced; it places the impact's onset before the effective date." },
+]
+
+# ── Predict ──────────────────────────────────────────────────────────────────
+
+[[question]]
+id = "m18-q14"
+kind = "predict"
+prompt = """
+An event has announced_at = 2024-08-19T17:00:00+00:00. Feature computation runs
+for a row with obs_date = 2024-08-19. Per compute_event_features, as_of is set to
+23:59:59 UTC on the obs_date. Is the event known for this row, and what would
+change if the code used midnight (00:00:00) instead?
+"""
+answer = """
+Known. is_known_at checks announced_at <= as_of, and 2024-08-19 17:00 is <=
+2024-08-19 23:59:59, so the same-day announcement counts. The end-of-day boundary
+is deliberate: it means an event revealed at any hour of the observation day is
+treated as knowable by the end of that day, which matches how a trader could act
+on it.
+
+If as_of were midnight (00:00:00) at the start of the day, the 17:00 announcement
+would be after as_of, so is_known_at would return False and the event would be
+wrongly excluded from that day's features. The row would silently drop a fact the
+market already had. This is the one-line design choice the module docstring calls
+out, and getting it wrong shifts every same-day announcement by a day.
+"""
+options = [
+  { text = "Known (17:00 <= 23:59:59); with a midnight boundary the same-day announcement would be excluded until the next day", correct = true },
+  { text = "Not known, because the announcement is on the same day as the observation and same-day events are held out to be safe", note = "The opposite is true. End-of-day as_of is chosen precisely so a same-day announcement IS included. It is knowable by day's end; excluding it would understate what the market knew." },
+  { text = "Known either way; the boundary hour does not affect a 17:00 announcement", note = "The hour matters. Against a midnight (00:00) as_of, 17:00 is later, so is_known_at would return False. The 23:59:59 choice is exactly what makes the same-day case land as known." },
+  { text = "Known, and a midnight boundary would include it a day earlier", note = "A midnight boundary is earlier in the day, so it would exclude the 17:00 announcement, not include it sooner. It can never make a same-day 17:00 reveal known before its own timestamp." },
+]
+source = "wow_forecaster/features/event_features.py"
+anchor = "an event announced on the same calendar day as an observation is correctly"
+
+[[question]]
+id = "m18-q15"
+kind = "predict"
+prompt = """
+A researcher adds a Midnight expansion event to the seed file but leaves
+announced_at as null (unknown announcement date). build-events and build-datasets
+run. What happens to that event in the feature layer, and what does
+days_until_major_event report for rows before its start_date?
+"""
+answer = """
+The event vanishes from every feature. load_known_events filters on
+announced_at IS NOT NULL at the SQL level, so a null-announcement event is never
+even loaded (Layer 1). Even if it somehow reached Python, is_known_at returns
+False for a null announced_at (Layer 2), so it would be filtered again. It
+contributes to nothing: not event_active, not severity, not impact magnitude.
+
+Consequently days_until_major_event for rows before its start_date does not count
+it. If that event was the only upcoming major event, days_until_major_event stays
+null and is_pre_event_window stays False, exactly as if the event did not exist.
+This is the conservative default: an event with no known announcement date is
+treated as unknowable rather than guessed at, which is safe for forecasting but
+means a mis-entered null silently erases an event you meant to include.
+"""
+options = [
+  { text = "Excluded entirely (Layer 1 SQL filter drops it); days_until_major_event ignores it, staying null if it was the only upcoming major event", correct = true },
+  { text = "Included with announced_at treated as its start_date, so it becomes known on the day it starts", note = "No such fallback exists in code. load_known_events filters null-announcement rows out at the SQL WHERE clause. The docs suggest using start_date as announced_at when seeding, but that is a manual authoring step, not automatic." },
+  { text = "Included but flagged low-confidence; is_pre_event_window still fires within 7 days", note = "There is no low-confidence path. A null announced_at is a hard exclude at two layers. The event cannot drive is_pre_event_window because it is never loaded." },
+  { text = "build-events fails validation because announced_at is required", note = "announced_at is nullable on WoWEvent (datetime | None = None). A null is valid and simply means unknown; it does not fail the build, it silently removes the event from features." },
+]
+source = "wow_forecaster/features/event_features.py"
+anchor = "WHERE announced_at IS NOT NULL"
+
+[[question]]
+id = "m18-q16"
+kind = "predict"
+prompt = """
+You run an ITS but date the intervention at start_date (the effective date). The
+event was announced three weeks earlier and consumable prices climbed steadily
+across those three weeks. The pre-period baseline for your ITS is fit over the
+month before start_date. What does the estimated level shift at start_date look
+like, relative to the true announcement-driven effect?
+"""
+answer = """
+Biased toward zero, and possibly negative. Your pre-period baseline is fit over
+the three weeks where prices were already running up on the announcement, so the
+extrapolated pre-trend is steep and starts from an already-elevated level. By the
+effective date, most of the price move has already happened and is baked into the
+baseline. The "jump" at start_date is measured against that inflated counterfactual,
+so it looks small, flat, or even like a slight fall as the run-up plateaus or
+mean-reverts.
+
+The fix is to date the intervention at the announcement, or to model both the
+announcement window and the effective date as separate segments. This is the whole
+reason announced_at and start_date are stored separately: dating the intervention
+at the wrong one silently absorbs the anticipation into the baseline and hides the
+effect you are trying to measure.
+"""
+options = [
+  { text = "Attenuated toward zero (or even wrong-signed): the anticipation run-up is inside the pre-period baseline, so little effect remains to measure at start_date", correct = true },
+  { text = "Correctly estimated; ITS extrapolates the pre-trend, so the run-up is handled automatically", note = "Extrapolating a pre-trend that already contains the effect is the bug, not the fix. The counterfactual line inherits the run-up and predicts the elevated level, leaving no gap for the effect to show." },
+  { text = "Overstated, because the steep pre-trend makes the post-period look even higher", note = "A steep upward pre-trend raises the extrapolated counterfactual, which shrinks the gap to the observed post-period. It biases the estimate down, not up." },
+  { text = "Unaffected, because the level-shift term only cares about the value at start_date, not the pre-trend", note = "The level shift is measured relative to the fitted counterfactual at start_date, which is the pre-trend extrapolated forward. A contaminated pre-trend moves that reference, so the shift is very much affected." },
+]
+
+# ── Find ─────────────────────────────────────────────────────────────────────
+
+[[question]]
+id = "m18-q17"
+kind = "find"
+prompt = """
+Find the assumption the event-feature module states about event scope, and
+explain in one or two sentences what it forces on a difference-in-differences
+design built on this data.
+"""
+rubric = [
+  "Locate the 'All seed events are scope = GLOBAL' note in event_features.py (Assumptions section)",
+  "GLOBAL scope plus region-wide commodity AH means every realm is treated simultaneously",
+  "So there is no untreated geographic control; the control must be a different item category",
+  "Realm-specific scoping is called out as not yet implemented",
+]
+answer = """
+It is in the "Assumptions & simplifications" block of event_features.py: all seed
+events are scope = GLOBAL, and realm-specific scoping is not yet implemented.
+
+For a DiD, that removes geography as a control axis. A global event on a
+region-wide commodity market treats every realm at the same instant, so you cannot
+hold out an untreated realm. The control group has to come from the cross-section
+of item categories instead: a category the event does not touch stands in as the
+counterfactual for one it does. It also means any future region-level panel design
+(EU/KR, per-realm BoE auctions) is net-new data work, which is why PLAN files it as
+a ceiling item rather than a current option.
+"""
+source = "wow_forecaster/features/event_features.py"
+anchor = "- All seed events are ``scope = GLOBAL``.  Realm-specific scoping is not yet"
+
+[[question]]
+id = "m18-q18"
+kind = "find"
+prompt = """
+Find the single line in event_features.py that sets the per-row knowledge
+boundary, and explain why the end-of-day choice (rather than midnight) is the
+correct one for both the forecasting guard and any causal timing that keys on the
+announcement.
+"""
+rubric = [
+  "Locate the Layer 2 comment / as_of construction in compute_event_features (23:59:59 UTC on obs_date)",
+  "End-of-day means an event announced at any hour of the obs_date is treated as known for that day",
+  "Midnight would exclude same-day announcements, understating what the market knew",
+  "The precise timestamp (datetime, not date) is what lets a 17:00 reveal be distinguished and dated correctly",
+]
+answer = """
+The boundary is set in compute_event_features, where each row builds
+as_of = datetime(obs_date, 23, 59, 59, tzinfo=UTC) under the comment naming it the
+Layer 2 per-row is_known_at guard. is_known_at then compares announced_at <= as_of.
+
+End-of-day is correct because an announcement can land at any hour of the
+observation day, and by the day's close a trader could have acted on it. Setting
+as_of to midnight at the start of the day would mark a 17:00 reveal as unknown for
+its own day, understating the information set and shifting every same-day
+announcement one day late. That matters for the forecasting guard (features would
+omit fresh news) and for any causal design that dates the intervention at the
+announcement: the datetime precision, not a bare date, is what lets you place a
+17:00 reveal on the right side of the boundary and separate anticipation from the
+effective-date effect.
+"""
+source = "wow_forecaster/features/event_features.py"
+anchor = "# Layer 2: per-row is_known_at guard using end-of-day boundary."

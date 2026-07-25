@@ -1,0 +1,734 @@
+# M15: Measuring whether it works.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+
+# ── The loop that was never closed ───────────────────────────────────────────
+
+[[question]]
+id = "m15-q01"
+kind = "recall"
+prompt = """
+The `forecast_realizations` ledger is the keystone of M1. Describe its grain:
+what is one row? Then define maturity for a forecast, and say what has to be
+true beyond "the date passed" before a forecast can be scored.
+"""
+rubric = [
+  "One row per matured forecast: the grain is a forecast_id, not an archetype or a day",
+  "A forecast matures when its target_date is in the past",
+  "And an actual price exists for that (archetype or item, realm, target_date)",
+  "The row stores the scored comparison: actual, absolute error, percentage error, direction correct, whether the interval contained the actual",
+  "It is durable and written once, not recomputed at read time",
+]
+answer = """
+One row is one matured forecast scored against what actually happened. The grain
+is `forecast_id`, which is what makes the ledger joinable back to everything the
+forecast already carries: `run_id`, `model_slug`, `features_hash`,
+`forecast_horizon`, and the interval bounds. Choosing the archetype-day as the
+grain instead would collapse the horizons together and destroy the ability to ask
+"is the 28d model worse than the 7d model on the same series".
+
+Maturity has two conditions and only the first is obvious. The target date must
+be in the past, and an actual price for that series on that date must exist. The
+second condition fails more often than you would think here: an archetype with no
+observations on the target date (a thin series, a missed capture hour, an outage)
+produces a forecast that can never be scored. A ledger has to represent that
+explicitly rather than silently dropping the row, because "not scoreable" and
+"scored well" are different states and only one of them is good news.
+
+The reason this is the keystone rather than a nice-to-have: over 300,000 forecasts
+have been written to `forecast_outputs` and not one has been compared to what the
+price did. Everything downstream (significance testing in M16, paper-trading P&L
+in M2, the promotion gate in the plan's Phase 5) needs a scored history to operate
+on. The ledger is the one piece of work that turns an existing pile of predictions
+into evidence, in a single backfill pass, without waiting for new wall clock.
+"""
+source = "wow_forecaster/monitoring/health.py"
+anchor = "    # For each forecast where target_date < today, find the average actual"
+see_also = ["docs/ROADMAP.md", "PLAN.md"]
+
+[[question]]
+id = "m15-q02"
+kind = "recall"
+prompt = """
+Both `drift.py` and `health.py` compute `baseline_mae` the same way, and the
+audit calls it broken in four separate ways. Name all four.
+"""
+rubric = [
+  "No model_name filter, so the reference is a pooled blend of all four baselines",
+  "It takes whichever backtest ran last, with no staleness check on that run",
+  "It is an absolute gold MAE pooled across archetypes with wildly different price levels",
+  "Backtest horizons are 1 and 3 while forecasts are 1, 7, and 28, so the 7d and 28d ratios can never be computed",
+]
+answer = """
+The query is `SELECT AVG(abs_error) FROM backtest_fold_results WHERE
+backtest_run_id = ? AND horizon_days = ?`, and every defect is visible in that
+one line.
+
+1. No `model_name` filter. `backtest_fold_results` holds one row per fold, per
+series, per model, and the backtest runs four baselines. So the average blends
+`last_value`, the mean-reversion model, the seasonal-naive model, and the
+volatility model into a single number that corresponds to no model at all. A
+ratio against it answers "how do we compare to the average of four naive
+approaches", which is not a question anyone asked.
+
+2. It takes the most recent `backtest_run_id` by descending id, with no check on
+when that run happened. A backtest from three months and one expansion patch ago
+is used with the same confidence as one from last night.
+
+3. It is an absolute MAE in gold, pooled across archetypes whose prices differ by
+orders of magnitude. See q03: that makes the ratio move with the archetype mix
+rather than with model quality.
+
+4. `backtest.horizons_days = [1, 3]` while `features.target_horizons_days =
+[1, 7, 28]`. The `horizon_days = ?` predicate therefore returns nothing for 7 and
+28, so `baseline_mae` is None and the ratio does not exist for two of the three
+production models.
+
+There is a fifth problem that belongs to `drift.py` alone rather than to the
+baseline query, and it is the worst one: a None ratio is classified as
+`DriftLevel.NONE`. That is q04.
+"""
+source = "wow_forecaster/monitoring/drift.py"
+anchor = "                    SELECT AVG(abs_error) AS baseline_mae"
+see_also = ["PLAN.md", "config/default.toml"]
+
+[[question]]
+id = "m15-q03"
+kind = "mcq"
+prompt = """
+`live_mae` and `baseline_mae` are both absolute errors in gold, averaged over
+every archetype that happened to have evaluable rows. Why does that ratio move
+when nothing about the model has changed?
+"""
+answer = """
+Because an average of absolute gold errors is dominated by whichever expensive
+archetypes are in the pool, and the pool changes every run.
+
+Work it through. Suppose two archetypes: cheap reagents trading around 5 gold,
+where the model is off by 0.5 gold, and rare crafted gear trading around 5,000
+gold, where the model is off by 500 gold. Both are 10 percent errors, so the
+model is equally good at both. Pool them and the MAE is about 250 gold, and that
+number is almost entirely the gear. Now a week goes by, the gear archetype gets
+thin, its rows drop out of the join, and the pooled MAE collapses toward 0.5 gold.
+The ratio against a fixed baseline swings by two orders of magnitude and the model
+did not change at all.
+
+This is why the metrics module documents MAPE as the cross-archetype metric: a
+percentage error is comparable whether the item costs 10 gold or 10,000. The fix
+the plan names is MAPE or a per-series skill score against `last_value`, computed
+per series and then aggregated, rather than pooling raw gold errors and averaging
+once at the end. Aggregate after normalizing, not before.
+"""
+options = [
+  { text = "Absolute gold errors scale with price level, so the pooled average tracks which archetypes are in the pool rather than how accurate the model is", correct = true },
+  { text = "MAE weights large errors more heavily than small ones, so expensive archetypes dominate", note = "That is RMSE, which squares errors before averaging. MAE weights every error equally. The domination here comes from the price level of the series, not from the shape of the loss function." },
+  { text = "The join to normalized observations averages over a different number of observations per day, so the mean is noisy", note = "Observation counts do vary, and that adds noise to each day's actual. But it does not produce the systematic mix effect: even with a perfectly stable observation count per series, changing which series are present still swings a pooled gold MAE." },
+  { text = "Outlier rows inflate the mean, and is_outlier filtering is applied inconsistently", note = "Both the live query and the rollup restrict to is_outlier = 0, so the filtering is consistent. Outliers are a real hazard for a mean, but they are not what makes this ratio mix-dependent." },
+]
+source = "wow_forecaster/backtest/metrics.py"
+anchor = "  Normalizes MAE by the actual price, enabling cross-archetype comparison."
+see_also = ["PLAN.md"]
+
+# ── unknown versus none ──────────────────────────────────────────────────────
+
+[[question]]
+id = "m15-q04"
+kind = "recall"
+prompt = """
+`_classify_error_drift(None)` returns `DriftLevel.NONE`. `_classify_health(None)`
+returns `"unknown"`. Only one of those is right. Explain why the difference
+matters operationally, not just semantically.
+"""
+rubric = [
+  "A None ratio means the check could not be computed, not that the model is fine",
+  "NONE is an all-clear: it maps to uncertainty_multiplier 1.0 and retrain_recommended False",
+  "So the pipeline actively behaves as healthy in exactly the state where the monitor is blind",
+  "The conditions that produce None (no backtest, horizon mismatch, no matured pairs) are the same conditions a broken system sits in",
+  "The repo already states the principle for the cloud gap guard: a floor the failure mode can satisfy hides the failure",
+]
+answer = """
+The distinction is between "I measured, and it is fine" and "I could not measure".
+Collapsing the second into the first is how a monitor becomes decorative.
+
+Operationally, `NONE` is not an inert label. It flows into `evaluate_policy`,
+which returns `uncertainty_multiplier = 1.0` and `retrain_recommended = False`.
+That multiplier is written to `drift_check_results.uncertainty_mult` and read back
+by `ForecastStage` to widen confidence intervals. So a monitor that cannot compute
+anything does not merely stay quiet: it emits a positive all-clear that keeps the
+intervals at their narrowest and the retrain advisory off.
+
+Then look at what actually produces a None ratio. No backtest has ever run for
+this realm. The last backtest ran at horizons that do not include this one. No
+forecast has matured yet. The normalized actuals for the target date were pruned
+before anyone looked. Every one of those is a state a neglected or broken system
+sits in for months. The monitor is therefore quietest exactly when it should be
+loudest, which is the same failure shape as the 105-day silent outage.
+
+The project already states this principle in another context. The cloud capture
+gap guard keeps its floor at 20 distinct hours on purpose, because a floor the
+failure mode can satisfy hides the failure. `health.py` got it right by returning
+`unknown`. The fix in `drift.py` is not to invent a new concept, it is to make
+drift agree with health.
+"""
+source = "wow_forecaster/monitoring/drift.py"
+anchor = "        mae_ratio:  live_mae / baseline_mae.  None → NONE (can't detect)."
+see_also = ["PLAN.md", "docs/cloud-capture.md"]
+
+[[question]]
+id = "m15-q05"
+kind = "predict"
+prompt = """
+A fresh install. Ingestion has been running for a week and `run-daily-forecast`
+has written forecasts every day. `backtest_runs` is empty because nobody has run
+a backtest. Prices have been calm, so no series trips the z-score threshold and
+no major event is active.
+
+You run `check-drift`. What does it report, and what does the pipeline do with
+that verdict?
+"""
+answer = """
+It reports no drift, at every level, and the pipeline treats that as a clean bill
+of health.
+
+The chain: `backtest_runs` is empty, so the baseline lookup returns no row and
+`baseline_mae` stays None. `mae_ratio` requires both sides, so it stays None.
+`_classify_error_drift(None)` returns `DriftLevel.NONE`. Data drift is genuinely
+NONE because prices are calm, and `shock_active` is False, so
+`_overall_drift_level` takes the max of NONE and NONE and returns NONE. Then
+`evaluate_policy(NONE)` returns `uncertainty_multiplier = 1.0` and
+`retrain_recommended = False`, both of which are persisted to
+`drift_check_results` and read back by the forecast stage.
+
+The output is indistinguishable from a system that has been carefully measured and
+found healthy. Nothing in the report says "the error check did not run". You would
+have to notice that `n_evaluated` and `baseline_mae` are both empty in the log line
+and know what that implies, which is a lot to ask of an alert at 3am.
+
+Note that this state also survives every test in the suite, because the code does
+exactly what it was written to do. It is a design defect, not a bug.
+"""
+options = [
+  { text = "Overall level NONE, uncertainty multiplier 1.0, retrain not recommended, with no indication the error check could not be computed", correct = true },
+  { text = "Overall level NONE for data drift, but the error drift report is omitted because no baseline exists", note = "The report is always constructed. `check_error_drift` returns an `ErrorDriftReport` with `live_mae` and `baseline_mae` as None and a NONE level, so the field is present and reads as reassuring rather than absent." },
+  { text = "The baseline query raises and the drift step fails, so the orchestrator logs a non-fatal error", note = "The lookup is wrapped in try/except and a missing row is the normal path, not an exception: `fetchone()` returns None and the code moves on. Nothing raises." },
+  { text = "Overall level LOW, because the adaptive policy defaults to widening intervals when it has no evidence", note = "There is no such default. `_POLICY` maps \"none\" to a 1.00 multiplier, and the lookup fallback for an unrecognized key is also (1.0, False). Absence of evidence produces the narrowest intervals, not the widest." },
+]
+source = "wow_forecaster/monitoring/adaptive.py"
+anchor = "  - 1.0  (NONE):     Model performing normally.  No adjustment."
+
+# ── What the live query actually measures ────────────────────────────────────
+
+[[question]]
+id = "m15-q06"
+kind = "mcq"
+prompt = """
+The live MAE query joins `forecast_outputs` to `market_observations_normalized`
+on `n.archetype_id = f.archetype_id`. Since v1.12.0, most rows in
+`forecast_outputs` are item-level forecasts, which set `item_id` and leave
+`archetype_id` NULL.
+
+What happens to those rows?
+"""
+answer = """
+They are dropped, silently. In SQL, `NULL = NULL` evaluates to NULL rather than
+true, so an equality join on a NULL column matches nothing. Every item-level
+forecast fails the join condition and never reaches the average.
+
+That means the live MAE that both `drift.py` and `health.py` report is computed
+over archetype-level forecasts only, while the majority of what the system
+actually produces (the item-level rows that feed the crafting advisor, the ROI
+column in the recommendations export, and the TSM export) is never evaluated at
+all. Nothing logs this. `n_evaluated` just comes back smaller than you expect, and
+you would only catch it by comparing that count against `SELECT COUNT(*) FROM
+forecast_outputs`.
+
+This is a good example of why a ledger with an explicit grain beats a join written
+inline in a monitoring module. A ledger row per `forecast_id` forces you to decide
+what happens to an item-level forecast, because you have to write the row or
+explain its absence. An inline join lets the decision be made accidentally, by the
+NULL semantics of a language you were not thinking about at the time.
+"""
+options = [
+  { text = "They never match, because NULL = NULL is not true in SQL, so item-level forecasts are excluded from every live MAE the system reports", correct = true },
+  { text = "They match every normalized row with a NULL archetype_id, inflating n_evaluated with meaningless pairs", note = "That would require NULL = NULL to be true, which it is not. The normalized table also populates archetype_id since v1.3.4, so there is no pool of NULL rows on the other side either." },
+  { text = "They are matched through item_id, since the join also carries realm_slug and the target date", note = "The join has three conditions: archetype_id, realm_slug, and the date. item_id appears nowhere in it. Adding an item_id branch is part of what the ledger work has to do." },
+  { text = "They are counted with actual_price NULL, so they land in n_evaluated but contribute no error", note = "An inner join drops non-matching rows entirely rather than producing NULL-filled ones. That would be the behaviour of a LEFT JOIN, which would at least make the omission visible in the counts." },
+]
+source = "wow_forecaster/monitoring/drift.py"
+anchor = "                ON  n.archetype_id = f.archetype_id"
+
+[[question]]
+id = "m15-q07"
+kind = "recall"
+prompt = """
+Both live-MAE paths read actuals from `market_observations_normalized`. The
+retention pruner deletes normalized rows along with their parent raw rows at 30
+days. What does that imply for scoring, and what should the ledger read instead?
+"""
+rubric = [
+  "Normalized observations are FK children of the raw table and are pruned with it at 30 days",
+  "So a forecast can only be scored from that table within roughly 30 days of its target date",
+  "Anything older is permanently unscoreable from normalized data, including the whole existing backlog",
+  "Daily rollups are explicitly not pruned and are the durable actuals layer",
+  "So the ledger scores against rollup actuals, which is also what the backtest already uses",
+]
+answer = """
+The pruner deletes normalized rows together with the raw rows they descend from,
+because keeping per-observation API data past the 30-day window would defeat the
+Terms of Service requirement it exists to enforce. Its docstring is explicit that
+the durable derived artifacts (daily rollup tables, Parquet features, model
+weights) are the layer that survives.
+
+The consequence for measurement is sharp. A live-MAE query against
+`market_observations_normalized` has a hard scoring window: roughly 30 days from
+the target date, after which the actual is gone for good. `evaluate-live-forecast`
+defaults to a 14-day window, which fits inside that, but only because it is run
+by hand and only ever looks at the recent tail. The existing backlog of forecasts,
+from long before the retention wall, cannot be scored from that table at any price.
+
+That is why M1 specifies scoring against rollup actuals. `daily_rollup_archetype`
+carries `price_mean` per series per day and is never pruned, which makes it both
+the only source that can support a backfill and the same source the walk-forward
+backtest already uses for its `actual_price`. Using one actuals definition for the
+backtest and a different one for live monitoring would reintroduce the
+comparability problem the ratio already suffers from.
+
+The generalizable point: when a retention policy governs your raw data, any
+measurement you want to keep has to be computed and stored before the window
+closes, or derived from something that outlives it. A metric you can recompute on
+demand is not the same as a metric you can recompute on demand forever.
+"""
+source = "wow_forecaster/governance/pruner.py"
+anchor = "artefacts (daily rollup tables, Parquet features, model weights) are NOT"
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m15-q08"
+kind = "find"
+prompt = """
+Exactly one command in this repo compares issued forecasts against actual prices.
+Find it. Say what it writes, and say how often it runs.
+"""
+rubric = [
+  "`evaluate-live-forecast` in cli.py, backed by compute_health_summary in monitoring/health.py",
+  "It writes model_health_snapshots rows via persist_health_to_db and a model_health_{realm}_{date}.json report",
+  "It loops over config.features.target_horizons_days, so 1d, 7d and 28d",
+  "It is not called by run_daily.bat, run_hourly.bat, or any registered scheduled task, so it runs only when someone types it",
+  "The dashboard's health tab tells you to run it, which is how the gap surfaces",
+]
+answer = """
+`evaluate-live-forecast`. It calls `compute_health_summary` once per configured
+horizon, persists each result to `model_health_snapshots`, prints a per-horizon
+table, and writes `model_health_{realm}_{date}.json` into the monitoring output
+directory.
+
+How often it runs: never, unless you run it. `run_daily.bat` runs
+`check-data-health`, `build-datasets`, and `run-daily-forecast`. `run_hourly.bat`
+drives the ingest orchestrator, which does call `DriftChecker.run_all` as a step.
+`run_healthcheck.bat` runs `check-data-health`. None of the four registered
+scheduled tasks touches `evaluate-live-forecast`. The dashboard's health tab, when
+it finds nothing, prints a message telling you to run it, which is the closest
+thing to a prompt the system offers.
+
+Worth sitting with the shape of that. The pipeline health monitoring in this repo
+is genuinely strong: coverage gaps, stale locks, retention sentinels, backup
+freshness, a dead-man alarm on the cloud capture. All of it answers "did the
+plumbing run". The one command that answers "were the predictions any good" is the
+one thing nobody scheduled. That asymmetry is the module in a sentence, and it is
+also the honest thing to say about it in an interview: the ops instincts were
+sound and got applied to the ops layer only.
+"""
+source = "wow_forecaster/monitoring/health.py"
+anchor = "When no forecast-vs-actual pairs can be evaluated (because target dates"
+
+[[question]]
+id = "m15-q09"
+kind = "recall"
+prompt = """
+`ModelHealthSummary` has both `live_dir_acc` and `baseline_dir_acc`, and
+`model_health_snapshots` has columns for both. One of them is always NULL. Which,
+why, and what would have to change to populate it?
+"""
+rubric = [
+  "live_dir_acc is always None; the loop computes absolute errors and never assigns it",
+  "Directional accuracy needs the price at the time the forecast was made, and forecast_outputs does not store it",
+  "baseline_dir_acc is populated because backtest_fold_results stores direction_correct per row",
+  "So the CLI's DirAcc column always prints N/A, and a schema column is permanently NULL",
+  "The fix is to record last_known_price with the forecast, or reconstruct it from the rollup at forecast time",
+]
+answer = """
+`live_dir_acc` is never assigned. The loop over live rows appends absolute errors
+and carries a comment saying directional accuracy is skipped because the price at
+the time the forecast was made is not stored. `baseline_dir_acc` is populated,
+because `backtest_fold_results` has a `direction_correct` column that the backtest
+writes per row, using `last_known_price` from the fold's training window.
+
+So the health table prints `N/A` in its DirAcc column on every run, and
+`model_health_snapshots.live_dir_acc` is a column that is always NULL. This repo's
+own code standard calls that out: a column that is always NULL is a misleading
+schema, and should either be populated or removed.
+
+The fix is small and belongs in the ledger design. Directional accuracy is
+`sign(predicted - last_known) == sign(actual - last_known)`, so you need one extra
+number per forecast: the price the series was at when the forecast was issued.
+Either store it on the forecast row at write time, which is cheap since
+`ForecastStage` already has it in hand, or reconstruct it from
+`daily_rollup_archetype` on the forecast's creation date, which works for the
+backfill of existing rows too.
+
+The reason to care rather than shrug: directional accuracy is the metric that maps
+onto the product. Recommendations are buy, hold, and sell. A model with an
+acceptable MAE that gets the direction wrong is worse than useless, because the
+system will confidently tell you to buy something on its way down. Of the metrics
+this system could report, this is the one closest to money, and it is the one that
+has never been computed on live output.
+"""
+source = "wow_forecaster/monitoring/health.py"
+anchor = "                # forecast was made.  We don't store that directly; we skip"
+see_also = ["wow_forecaster/backtest/metrics.py"]
+
+[[question]]
+id = "m15-q10"
+kind = "mcq"
+prompt = """
+Which definition of directional accuracy is the one this repo uses, and what does
+it do with ties?
+"""
+answer = """
+`sign(predicted - last_known) == sign(actual - last_known)`, with ties excluded
+from the denominator.
+
+The reference point is the last known price, not the prediction and not zero. That
+is what makes the metric about movement: both the prediction and the actual are
+measured as a change from where the series already was. Get that wrong and you are
+measuring something else entirely.
+
+Ties are excluded rather than counted either way. If the actual price did not move,
+there is no direction to have called correctly, and scoring it as a win would
+inflate the metric on exactly the flat, illiquid series where a forecast adds no
+value. Excluding them means the denominator `n_directional` is smaller than
+`n_evaluated`, which is why the metrics dataclass reports both. A directional
+accuracy computed over five non-tied observations is not the same evidence as one
+computed over five hundred, and the two counts sitting side by side are what let
+you tell.
+
+The interpretation guide in the docstring is worth memorizing because it is the
+part people get wrong under questioning: 0.5 is random, and 0.7 or better is a
+meaningful signal. A directional accuracy of 0.55 on a few dozen observations is
+noise, not skill.
+"""
+options = [
+  { text = "sign(predicted - last_known) == sign(actual - last_known), with ties dropped from the denominator", correct = true },
+  { text = "sign(predicted - last_known) == sign(actual - last_known), with ties counted as correct", note = "Counting ties as correct inflates the score on flat series, which are precisely the ones where a directional call carries no information. The metrics module excludes them instead, and reports n_directional separately so the smaller denominator is visible." },
+  { text = "sign(predicted - actual), which is positive when the model overpredicts", note = "That is the sign of the error, which tells you about bias, not direction. It says nothing about whether the price went up or down, so it cannot support a buy or sell decision." },
+  { text = "The fraction of predictions falling inside the confidence interval", note = "That is interval coverage, a different metric measuring calibration rather than direction. Nothing in this repo computes it today, which is its own finding." },
+]
+source = "wow_forecaster/backtest/metrics.py"
+anchor = "  Computed as: sign(predicted - last_known) == sign(actual - last_known)."
+
+# ── Intervals nobody checked ─────────────────────────────────────────────────
+
+[[question]]
+id = "m15-q11"
+kind = "predict"
+prompt = """
+Every row in `forecast_outputs` carries `confidence_lower`, `confidence_upper`,
+and `confidence_pct` defaulting to 0.80. Over the 300,000-plus forecasts already
+issued, what fraction of actual prices fell inside their stated 80 percent
+interval?
+"""
+answer = """
+Nobody knows, and nothing in the repo can tell you. Grep for coverage across
+`wow_forecaster/` and the only hits are `ingredient_coverage_pct` in the crafting
+code, which is an unrelated concept. The intervals are written, stored, exported
+to Power BI, and consumed by the recommendation scorer as an uncertainty penalty
+computed from `ci_width`. They are never compared to an outcome.
+
+The 80 percent is not a measured property, it is a construction. `cold_start.py`
+takes a z-score of 1.28 from a lookup table, multiplies a heuristic width by it,
+applies a transfer-confidence widening factor, then a floor at 5 percent of the
+current price and a cap at 10 times it. Its own docstring says outright that the
+intervals are heuristic, not model-derived, and that quantile regression or
+conformal prediction would be the real version.
+
+So the honest description of `confidence_pct = 0.80` today is: a label on a
+heuristic width, not a claim that has been tested. `ci_quality` does not rescue it
+either, since that classifies the interval by its width relative to the predicted
+price, which is a statement about the interval and not about whether it was right.
+
+Interval coverage is the cheapest thing the ledger unlocks. It is one boolean per
+row, `lower <= actual <= upper`, and averaging it over a few hundred thousand
+matured forecasts gives an empirical coverage number the same day the ledger
+lands. If that number comes back at 40 percent, the intervals are decorative and
+every uncertainty-weighted score built on them is suspect. If it comes back near
+80, a heuristic turned out to be well calibrated and you can say so with evidence.
+Either answer is worth more than the label.
+"""
+options = [
+  { text = "Unknown. No code computes interval coverage anywhere in the repo, and the intervals are heuristic rather than model-derived", correct = true },
+  { text = "About 80 percent, since the interval is built from the z-score for an 80 percent two-sided normal interval", note = "That is what the construction assumes, not what the data shows. The z-score is applied to a heuristic width, then widened by a transfer-confidence factor and clamped by a 5 percent floor and a 10x cap. None of those steps preserves a nominal coverage level, and none has been checked against outcomes." },
+  { text = "It is reported per forecast in the ci_quality field, which classifies coverage as good, wide, or unreliable", note = "ci_quality classifies the interval's width relative to the predicted price. A narrow interval that misses every actual would still be labelled good. Width and coverage are different properties and only one of them is measured." },
+  { text = "Roughly 50 percent, because the intervals are centred on the point forecast and prices are close to a random walk", note = "This confuses coverage with the probability of the actual landing on one side of the point forecast. A symmetric interval of any nonzero width covers considerably more than half the distribution, and in any case the number is unmeasured, not inferable." },
+]
+source = "wow_forecaster/ml/cold_start.py"
+anchor = "CIs produced here are HEURISTIC, not model-derived.  They do NOT come from"
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m15-q12"
+kind = "recall"
+prompt = """
+You are designing the `forecast_realizations` table. Beyond the scored error
+itself, name the fields it needs in order to be worth more than re-running the
+join, and say what property makes the nightly update safe to run twice.
+"""
+rubric = [
+  "forecast_id as the key, so everything on the forecast row joins back without duplication",
+  "The actual price, and the price at forecast time so directional accuracy is computable",
+  "Per-row metrics: absolute error, percentage error, direction correct, interval hit",
+  "The source of the actual and when it was scored, so a rescored row is distinguishable from a fresh one",
+  "A uniqueness constraint on forecast_id so the nightly job upserts and the backfill is idempotent",
+]
+answer = """
+Key it on `forecast_id` with a uniqueness constraint. That single decision gives
+you two things: every attribute of the prediction (model slug, features hash,
+run id, horizon, interval bounds, creation date) is one join away and never needs
+copying, and the nightly job becomes an upsert that can be run twice, interrupted
+halfway, or replayed over the whole history without producing duplicates. The
+repo already uses this pattern in `crafting_margin_snapshots`, which carries a
+UNIQUE on recipe, realm, and date for exactly the same reason.
+
+Store the actual, and store the price at forecast time. The second is the one
+people forget and it is what makes directional accuracy computable at all, per q09.
+
+Store the metrics per row rather than only in aggregate: absolute error,
+percentage error, direction correct, and the interval hit boolean. Per-row is not
+an optimization, it is a requirement for what comes next. M16's paired significance
+tests need per-fold or per-series error differences, not summary means, because you
+cannot test a difference between two averages. Slicing by category, by horizon, by
+event window, or by `ci_quality` also only works if the grain survives.
+
+Store provenance: which actuals source was used and when the row was scored. A
+value scored from a rollup that was later backfilled is a different fact from one
+scored the morning after, and a system that has already lived through a 105-day
+outage and two data-corruption events should be able to tell those apart.
+
+What not to store: anything derivable by a join. Denormalizing model_slug into the
+ledger creates a second copy that can disagree with the first, and this repo
+already has three disagreeing model-selection strategies. One is plenty.
+"""
+see_also = ["PLAN.md", "docs/ROADMAP.md"]
+
+# ── Making the comparison mean something ─────────────────────────────────────
+
+[[question]]
+id = "m15-q13"
+kind = "mcq"
+prompt = """
+Phase 5 replaces the pooled baseline. Which replacement actually answers "is the
+deployed model degrading?"
+"""
+answer = """
+Compare against a named baseline at the matching horizon, on the same rows, and
+express it as a skill score: `1 - MAE_model / MAE_baseline`, where the baseline is
+`last_value` scored over the identical set of matured forecasts.
+
+Three properties make that work. Same rows means the archetype mix cancels: if
+expensive series drop out of the pool this month, they drop out of both numerator
+and denominator. Same horizon means you are comparing predictions of the same
+difficulty, since a 28-day forecast is not competing with a 1-day one. And a named
+baseline means the reference is reproducible: `last_value` scored on today's
+actuals is a thing anyone can recompute, unlike "the average of four models from
+whichever backtest ran last".
+
+It also separates the two questions that the current ratio confuses. A skill score
+falling toward zero means the model has stopped beating a random walk, which is a
+model problem. Both errors rising together means the market got harder to predict,
+which is a market condition and not a reason to retrain. The pooled absolute ratio
+cannot distinguish those, and treats the second as if it were the first.
+"""
+options = [
+  { text = "A skill score against last_value at the same horizon, scored over the same matured forecasts", correct = true },
+  { text = "The same ratio but with RMSE instead of MAE, so large misses are weighted properly", note = "RMSE is still an absolute gold error, so it carries the same archetype-mix dependence, and squaring makes it more sensitive to the expensive series, not less. Changing the loss function does not fix a comparability problem." },
+  { text = "Compare this week's live MAE to the trailing 30-day live MAE of the same model", note = "A self-referential baseline detects sudden change but not slow decay, because the reference degrades along with the model. It also cannot answer whether the model was ever any good, which is the open question here. Useful as a second signal, not as the baseline." },
+  { text = "Keep the pooled baseline and raise the ratio thresholds so normal mix variation stops tripping alarms", note = "This treats a systematic bias as noise and tunes the alarm until it stops firing. The mix effect can swing the ratio by orders of magnitude, so any threshold high enough to absorb it is too high to catch a real degradation." },
+]
+source = "wow_forecaster/monitoring/drift.py"
+anchor = "    Why K=1.5 for LOW?  Normal market noise moves MAE ±20%; a 50% increase"
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m15-q14"
+kind = "find"
+prompt = """
+Trace what the drift verdict actually changes downstream. Start at
+`_overall_drift_level` and follow the value until it affects a number a user
+sees. Then say what a wrongly reported NONE costs.
+"""
+rubric = [
+  "_overall_drift_level feeds evaluate_policy in monitoring/adaptive.py",
+  "which returns uncertainty_multiplier and retrain_recommended",
+  "both are persisted to drift_check_results (uncertainty_mult column)",
+  "ForecastStage reads uncertainty_mult back and widens confidence intervals with it",
+  "So a wrong NONE keeps intervals at their narrowest and leaves the retrain advisory off, in the exact state where the system is blind",
+]
+answer = """
+The chain is short and it is real, which is what makes the defect matter.
+`_overall_drift_level` takes the max across data drift, error drift, and event
+shock, bumping one tier when a shock is active. `run_all` passes that into
+`evaluate_policy`, which looks up `_POLICY` and returns a multiplier and a retrain
+advisory. `DriftCheckResult` carries both, the monitoring reporter persists them to
+`drift_check_results` including the `uncertainty_mult` column, and `ForecastStage`
+reads that column on the next forecast run to widen the confidence intervals it
+writes. Those intervals then feed the recommendation scorer's uncertainty penalty,
+which moves the score, which moves the ranking a user reads.
+
+So a NONE that should have been "cannot compute" costs you the widest part of the
+safety margin. Intervals stay at their narrowest, `risk_level` stays lower than it
+should, borderline recommendations stay BUY instead of flipping to HOLD, and the
+retrain advisory never fires. The system does not merely fail to warn. It quietly
+asserts more confidence than it has earned.
+
+This is also why "just return unknown" is a real fix rather than a cosmetic one.
+An `unknown` level needs its own policy row, and the honest choice for it is a
+multiplier above 1.0: if you cannot tell whether the model is degrading, the
+correct posture is wider intervals, not narrower ones.
+"""
+source = "wow_forecaster/monitoring/adaptive.py"
+anchor = "  1. uncertainty_multiplier — applied to the uncertainty_penalty component"
+
+[[question]]
+id = "m15-q15"
+kind = "recall"
+prompt = """
+Suppose you fix every defect in q02: filter to a named baseline, check staleness,
+normalize the metric, and align the horizon lists. The ratio still would not tell
+you the deployed model is degrading. Why not?
+"""
+rubric = [
+  "backtest_fold_results only ever contains the four naive baselines",
+  "LightGBM is never run through the backtest harness, so it has no rows there",
+  "So the reference is a naive model's error on a different partition, not the deployed model's own historical error",
+  "The ratio answers 'how far are we from a naive model today', which conflates model quality with market difficulty",
+  "Degradation is a change in the model's own error over time, which needs a scored history of that model: the ledger",
+]
+answer = """
+Because the table you are comparing against does not contain the model. The
+backtest stage calls `all_baseline_models()` and nothing else, so every row in
+`backtest_fold_results` belongs to one of the four naive baselines. LightGBM has
+never been run through the harness at all.
+
+Fix all four defects and the ratio becomes "the deployed model's live error over
+`last_value`'s backtested error at the same horizon", which is a well-formed
+number but not a degradation signal. It moves for two reasons that cannot be told
+apart: the model got worse, or the market got harder, in which case both errors
+would have risen together if only you had measured both on the same period.
+
+Degradation is a statement about one model's error changing over time. That
+requires the model's own scored history, which is precisely what the ledger is.
+Once realizations exist, the monitor asks two separate questions with two separate
+answers: is this model worse than it was last month (its own error series over
+time), and is it still worth running at all (its skill score against `last_value`
+on the same rows, today). The first is degradation, the second is the acceptance
+bar `backtest/models.py` stated and nobody ever measured.
+
+That dependency is why the plan schedules the prediction-monitoring phase after
+M1's ledger rather than fixing drift first. Fixing the four defects in isolation
+would produce a cleaner number that still answers the wrong question.
+"""
+source = "wow_forecaster/monitoring/drift.py"
+anchor = "                    SELECT AVG(abs_error) AS baseline_mae"
+see_also = ["LESSONS.md", "PLAN.md"]
+
+[[question]]
+id = "m15-q16"
+kind = "mcq"
+prompt = """
+`check_error_drift` takes a `horizon_days` argument. `run_all` calls it one way,
+and `run_all` is the only entry point anything uses. What is the practical
+consequence?
+"""
+answer = """
+`run_all` hardcodes `horizon_days=1`, and both callers in the codebase (the
+`check-drift` CLI and the hourly orchestrator's drift step) go through `run_all`.
+So error drift is only ever evaluated for the 1-day model. The 7d and 28d models
+have no error monitoring at any time, under any configuration, and no flag turns
+it on.
+
+Notice how this interacts with the horizon mismatch from q02. Aligning
+`backtest.horizons_days` to `[1, 7, 28]` makes a 7d and 28d baseline computable,
+and it still would not produce a 7d or 28d error-drift verdict, because nothing
+asks for one. Two independent defects that look like one from a distance, and
+fixing the config alone would leave you believing the monitoring got better when
+nothing changed.
+
+The 28-day model is also the one you would most want watched. It is the input the
+crafting windows and the longer-horizon recommendations are built on, it is the
+one whose training split leaked most severely, and its errors take a month to
+mature, so a degradation that starts today is invisible for four weeks even once
+someone starts looking.
+"""
+options = [
+  { text = "Error drift is only ever computed at horizon 1; the 7d and 28d models are unmonitored regardless of config", correct = true },
+  { text = "Error drift is computed for every horizon in features.target_horizons_days, since run_all loops over the config", correct = false, note = "That is what `evaluate-live-forecast` does, and it is a different command that nothing schedules. `run_all` makes exactly one call with a literal 1." },
+  { text = "The horizon defaults to 1 but the check-drift CLI exposes a --horizon flag to override it", note = "The CLI calls `run_all(target_realm)` and passes no horizon. The `horizon_days` parameter on `check_error_drift` is reachable only from a direct call that nothing in the codebase makes." },
+  { text = "It computes horizon 1 and then falls back to the longest available horizon when no 1d forecasts have matured", note = "There is no fallback. When no 1d pairs mature, `live_mae` stays None, the ratio stays None, and the level reports NONE, which is the failure from q04 rather than a retry at another horizon." },
+]
+source = "wow_forecaster/monitoring/drift.py"
+anchor = "        error_report = self.check_error_drift(realm_slug, horizon_days=1)"
+
+[[question]]
+id = "m15-q17"
+kind = "recall"
+prompt = """
+Interview question: "You have a forecasting system that has been running for
+months. How do you know it works?" Give the ninety-second answer for this repo,
+honestly.
+"""
+rubric = [
+  "Say plainly that it has not been demonstrated: 300K+ forecasts, none scored against actuals",
+  "Name the monitoring that exists and why it does not close the loop (pooled baseline, absolute MAE, horizon mismatch, cannot-compute reported as no-drift)",
+  "Name the design: a durable realization ledger keyed on forecast_id, scored against rollup actuals, backfilled in one pass",
+  "Name the metrics it makes possible: MAPE, directional accuracy, interval coverage, skill score against last_value",
+  "Close on what it would take to change your mind, rather than on a promise",
+]
+answer = """
+A version that lands:
+
+"Right now I do not, and that is the most interesting thing about the project.
+We have issued something over three hundred thousand forecasts and not one has
+been compared to what the price actually did. The pipeline monitoring is good:
+coverage gaps, stale locks, retention sentinels, a dead-man alarm on the cloud
+capture. All of that answers whether the plumbing ran. None of it answers whether
+the predictions were any good.
+
+There is a prediction monitor, and auditing it is what convinced me it had to be
+rebuilt rather than patched. It divides live MAE by a baseline pulled from the
+last backtest run, but that baseline has no model filter, so it is the average of
+four naive models blended together. It is an absolute gold error pooled across
+archetypes whose prices differ by orders of magnitude, so the ratio moves when the
+archetype mix changes rather than when the model does. Backtest horizons are 1 and
+3 while production forecasts 1, 7, and 28, so two of the three ratios can never be
+computed. And when it cannot compute, it reports no drift rather than unknown,
+which means the monitor is quietest exactly when it is blindest.
+
+The fix is a realization ledger: one durable row per matured forecast, keyed on
+forecast id, scored against daily rollup actuals rather than the raw observations,
+because those get pruned at thirty days under the API terms. It backfills the
+entire existing history in one pass, and it gives me MAPE, directional accuracy,
+interval coverage against the stated eighty percent, and a skill score against
+last-value on identical rows. Then the significance testing has something to
+operate on.
+
+What would change my mind about the model: if the skill score against last-value
+comes back at or below zero, the model is a random walk with extra steps and the
+right call is to say so and simplify."
+
+The last paragraph is the one that separates a candidate who instrumented a system
+from one who is prepared to learn something unwelcome from it.
+"""
+see_also = ["PLAN.md", "LESSONS.md", "docs/ROADMAP.md"]
