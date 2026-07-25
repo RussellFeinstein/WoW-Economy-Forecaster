@@ -10,6 +10,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 - Taxonomy counts in the docs corrected to match the enums. `EventType` is 28, documented in three places as 26, and `ArchetypeTag` is 40, documented in three places as 36. Six stale references fixed across `README.md` (the taxonomy table, the archetype-mapping walkthrough, and the schema listing), `CLAUDE.md` (the key-files line), and `docs/events.md` (the event schema table). The numbers had drifted as tags and event types were added over time without the doc counts being re-swept
 
+## [2.11.1] - 2026-07-24
+
+### Added
+- The learning track's remaining nineteen modules, filling in every part after the M06 pilot that shipped in 2.11.0. 328 new questions across M01 to M05, M07 to M20, each with a one-page lesson, plus the three remaining lab briefs (LightGBM into the backtest loop, the cloud snapshot drain, and the realization ledger). The track now covers the whole system: the domain and the data pipeline, features and the model and the statistics under them, the failure history and operations, and the work still ahead for validation, paper trading, causal inference, and publishing
+- `wowfc learn validate --module <id>`, which checks one bank's citations in isolation. Useful while authoring, and load-bearing when several banks are written at once, since an unscoped check fails for everyone the moment one bank is half-written
+
 ## [2.11.0] - 2026-07-24
 
 ### Added

@@ -1,0 +1,576 @@
+# M20: The path forward. Two roadmaps and why each is ordered the way it is.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path (a substring is enough; the guard does an `in` check). Never a
+# line number. tests/test_learning/test_bank_integrity.py fails if an anchor
+# stops matching, so editing the cited prose forces the question to be updated in
+# the same PR. Run `wowfc learn validate --module m20` while authoring.
+#
+# This module cites the two planning docs, docs/ROADMAP.md (research arc, GitHub
+# issue numbering) and PLAN.md (lifecycle and legibility arc), because the
+# material here is the sequencing argument, not a code path.
+
+# ── The dependency graph ──────────────────────────────────────────────────────
+
+[[question]]
+id = "m20-q01"
+kind = "recall"
+prompt = """
+Reconstruct the milestone dependency graph from memory: what gates everything,
+what hangs directly off that gate, and the single chain that runs M1 -> M2 -> M3
+-> M4. Where does M5 sit, and what does M6 wait on?
+"""
+rubric = [
+  "M0 gates everything; nothing else can proceed until operations are restored and hardened",
+  "M0.5, M1, and M5 all branch directly off M0 (M0.5's #41-#42 may even precede the M0 runbook)",
+  "M1 -> M2 -> M3 -> M4 is a single dependency chain: realizations, then paper trading, then warehouse, then BI",
+  "M5 is an independent filler that can run any time after M0, parallel to the M2-M4 chain",
+  "M6 (publish) waits on M3 marts and the M1/M2 numbers, so it is last",
+]
+answer = """
+M0 is the root: restore ingestion, harden the wrappers, gate the daily forecast
+on freshness. Everything downstream reads the data M0 keeps flowing, so it gates
+the whole tree.
+
+Three things branch straight off M0. M0.5 (unattended capture) is so
+independent that its design and fetcher, #41 and #42, touch nothing local and
+can start before the M0 runbook even runs. M1 (the realization ledger) branches
+off M0 and starts the one long chain: M1 -> M2 (paper trading) -> M3 (warehouse)
+-> M4 (BI). M5 (the event study) also branches off M0 and is deliberately
+independent of the M2-M4 chain, so it runs as filler whenever the main line is
+blocked on wall clock.
+
+M6 sits at the bottom because it needs the M3 marts to read from and the M1/M2
+measured numbers to publish. Publishing before the numbers exist would just ship
+an empty dashboard, which is the exact failure the plan calls out (the current
+Streamlit demo shows "no data" on every tab). The graph is not a nicety: it is
+what tells you that #41 can start today while M0 is still mid-restore, and that
+M6 cannot start no matter how much time you have.
+"""
+source = "docs/ROADMAP.md"
+anchor = "M0 (gates everything)"
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m20-q02"
+kind = "mcq"
+prompt = """
+In the dependency graph, M6 (publish) is drawn last. What does it actually
+depend on, and why can it not be pulled forward?
+"""
+answer = """
+M6 needs the M3 marts to read from and the M1/M2 numbers to report. Publishing is
+not a modeling step; it is a presentation step, and it has nothing to present
+until accuracy (M1) and P&L (M2) exist and the warehouse (M3) can serve them.
+
+The graph line states it directly: publish needs M3 marts and M1/M2 numbers.
+Pulling M6 forward would produce exactly what the audit found already live on the
+public repo: a dashboard with no data and a README with no results. The order is
+not aesthetic. It is the difference between a demo that works and one that shows
+"no data" on every tab.
+"""
+options = [
+  { text = "The M3 marts to read from and the measured M1/M2 numbers to report; without them it would publish an empty dashboard", correct = true },
+  { text = "Only M0.5 unattended capture, since publishing just needs fresh snapshots flowing", note = "Capture keeps data arriving but produces no accuracy or P&L result. A public dashboard with live snapshots and no measured numbers is the empty-demo failure the plan is trying to avoid, not the goal." },
+  { text = "M4 BI dashboards, because the public Streamlit app is built on top of the Power BI report", note = "M6's public Streamlit app reads the Supabase marts directly, not the Power BI report. M4 and M6 are two different surfaces over the same warehouse; M6 depends on M3, not on M4." },
+  { text = "M5 event study, because the published case study is built around event impact", note = "M5 is an independent filler that M6 does not wait on. The publish milestone is gated on M3 marts and M1/M2 numbers; the event study can land before or after without changing that." },
+]
+source = "docs/ROADMAP.md"
+anchor = "M6 (publish; needs M3 marts and M1/M2 numbers)"
+
+[[question]]
+id = "m20-q03"
+kind = "find"
+prompt = """
+Open the dependency graph in docs/ROADMAP.md. Name the milestones shown
+branching directly off M0, and find the one milestone annotated as able to begin
+before even the M0 runbook. Why is that possible for that milestone specifically?
+"""
+rubric = [
+  "M0.5, M1, M5, and M6 are all drawn at the top +-> level under M0",
+  "M6 carries a needs-M3-marts-and-M1/M2-numbers annotation, so only M0.5, M1, M5 are genuinely independent branches",
+  "M0.5 carries the note that #41-#42 may even precede the M0 runbook",
+  "Because the cloud design (#41) and fetcher (#42) touch nothing local: no database, no restored pipeline",
+  "Only the catch-up path #43 needs the restored pipeline, so the capture half can start against cloud storage while M0 is mid-restore",
+]
+answer = """
+The graph draws M0.5, M1, M5, and M6 at the top level under M0. M6 carries the
+annotation that it needs M3 marts and M1/M2 numbers, so of the four it is not
+truly independent: the genuinely independent branches are M0.5, M1, and M5. M0.5
+carries the parenthetical that #41-#42 may even precede the M0 runbook.
+
+That is possible because the cloud fetcher writes to private object storage, not
+to the local database, so it has no dependency on the wedged pipeline being
+unstuck. The urgency is real: the Blizzard API serves only the current snapshot,
+so every hour the fetcher is not running is an hour lost for good. Starting it
+before the runbook stops the permanent loss immediately, and the local
+catch-up path (#43), which is the only part that needs the restored pipeline,
+drains the backlog later once the desktop is healthy. The lesson is that "gates
+everything" is about the local operational state, and a component that never
+touches that state is not actually gated by it.
+"""
+source = "docs/ROADMAP.md"
+anchor = "M0.5 (unattended capture; #41-#42 may even precede the M0 runbook)"
+
+# ── Why CI/CD is a slice of a late phase ──────────────────────────────────────
+
+[[question]]
+id = "m20-q04"
+kind = "mcq"
+prompt = """
+Suppose you moved CI/CD into weeks 3 and 4 of the plan, an early phase, the way
+most project plans do. According to the sequencing rationale, what would that
+actually buy, and what would it cost?
+"""
+answer = """
+It would buy a coverage badge, and it would cost a month with the leak and the
+broken demo live on a public repo.
+
+The rationale's argument is specific: CI already runs ruff and pytest on two
+Python versions, PR-gated, behind branch protection with no bypass actors, with
+Dependabot automerge gated on green CI. There is very little left to add before a
+container and a lockfile exist. So an early CI/CD phase is motion without a
+result, while the two things a reader actually sees, the invalid methodology and
+the demo that shows "no data," stay broken. That is why CI/CD is folded into
+Phase 4, where a built image and a pinned lockfile finally give it something to
+act on.
+"""
+options = [
+  { text = "It would buy a coverage badge while the leak and broken demo stayed live on a public repo for a month", correct = true },
+  { text = "It would catch the train/validation leak earlier, since CI is where methodology bugs surface", note = "CI runs the existing tests, and the leak is not caught by any current test (that is the point of Lab 01). A coverage gate does not detect a label-leaking split; a purge regression test does. Moving CI earlier would not surface DS-1." },
+  { text = "Nothing, because CI is already complete and adding a phase for it is pure waste", note = "It is not nothing: Phase 4 does add real CI work (image build, coverage gate, artifact publishing). The point is timing, not value. Those additions need a container and lockfile to exist first, which is why they are late, not skipped." },
+  { text = "It would unblock the orchestrator migration, which depends on green CI", note = "The orchestrator migration (Phase 2) depends on the stage classes, not on new CI. CI is already green and PR-gating today; the migration is not waiting on a coverage badge." },
+]
+source = "PLAN.md"
+anchor = "do not deserve early phases, because both are largely"
+
+[[question]]
+id = "m20-q05"
+kind = "recall"
+prompt = """
+State the general principle behind putting CI/CD late in this specific repo, and
+name the sibling concern that gets the same treatment for the same reason.
+"""
+rubric = [
+  "The obvious order (CI/CD early) is wrong here because CI/CD is already largely built",
+  "Effort should go where a reader sees a result this month, not where the work is already done",
+  "Pipeline health monitoring is already strong, so like CI/CD it does not earn an early phase",
+  "The one genuine gap is prediction monitoring, which is broken (DS-3) and depends on M1's ledger, so it is scheduled in Phase 5 where its dependency exists",
+]
+answer = """
+The principle: sequence by marginal value, not by convention. A textbook plan
+front-loads CI/CD and monitoring. Here both are already built to a decent
+standard, so an early phase spent on them adds a badge while the leak and the
+broken demo sit live on a public repo. Phase 1 leads instead because it is the
+only phase that changes what a reader sees this month.
+
+Monitoring gets the identical treatment. Pipeline health monitoring is already
+strong (coverage, gap detection, a stale-lock sentinel, a retention sentinel,
+scheduled alerting, a cloud gap guard doubling as a dead-man alarm), so it does
+not deserve an early slot either. The one genuine gap is prediction monitoring,
+which is broken (DS-3, the pooled baseline that cannot track degradation) and
+whose fix needs the M1 realization ledger. That is why it lands in Phase 5, where
+its dependency exists, rather than being hoisted early because "monitoring" sounds
+foundational.
+"""
+source = "PLAN.md"
+anchor = "do not deserve early phases, because both are largely"
+see_also = ["docs/ROADMAP.md"]
+
+# ── Why paper trading precedes the warehouse ──────────────────────────────────
+
+[[question]]
+id = "m20-q06"
+kind = "recall"
+prompt = """
+M2 (paper trading) is placed before M3 (the PostgreSQL + dbt warehouse). Give the
+one-sentence data-modeling reason from the roadmap, and explain what "retrofitted"
+would have meant if the order were reversed.
+"""
+rubric = [
+  "Coming after M2, realizations and trade facts land in the marts in one pass instead of being retrofitted",
+  "The warehouse's best marts are exactly the realization and paper-trade facts M1 and M2 produce",
+  "Building M3 first would mean modeling the star schema, then reopening it later to add trade fact tables",
+  "One pass means the dbt models are authored once against the full fact set, not amended after the fact",
+]
+answer = """
+The roadmap states it plainly: coming after M2 means realizations and trade facts
+land in the marts in one pass instead of being retrofitted. The warehouse exists
+to make results legible, and the most valuable facts it can hold are precisely
+what M1 and M2 generate: scored forecasts (realizations) and simulated P&L (paper
+trades).
+
+If M3 came first, you would design and test a star schema, generate its docs,
+publish it to Supabase, and then reopen all of it to graft in the trade and
+realization fact tables once M1 and M2 finished. That is the retrofit: a second
+pass of dbt modeling, schema tests, and doc regeneration for facts you could have
+included from the start. Sequencing M2 before M3 collapses two passes into one.
+The warehouse is built knowing its full contents.
+"""
+source = "docs/ROADMAP.md"
+anchor = "Coming after M2 means realizations and trade facts land in the marts in one pass instead of being retrofitted."
+
+[[question]]
+id = "m20-q07"
+kind = "predict"
+prompt = """
+The roadmap says M2 runs directly after M1 "for two reasons." Name both. For the
+one about wall clock, say what it implies you should do the moment M2 starts.
+"""
+answer = """
+The two reasons the roadmap gives are the live A/B clock and presentation order.
+(The data-modeling one-pass argument is a different placement: it is why M3 comes
+after M2, not why M2 comes after M1.)
+
+The wall-clock reason is the live A/B test (#33). It needs weeks of wall clock to
+accumulate enough matured pairs to be significant, so its clock has to start early
+and run in the background while M3 and M4 proceed. The implication: kick off #33
+at the very start of M2 so the maturation window overlaps the warehouse and BI
+work instead of being paid serially at the end.
+
+The second reason is presentation order: the make-gold answer should exist before
+infrastructure and dashboards are built to showcase it. You do not want to build a
+warehouse and a Power BI report and only then discover the recommendations lose to
+buy-everything.
+"""
+options = [
+  { text = "The live A/B (#33) needs weeks to mature, so its clock starts early and runs in the background during M3/M4; start #33 as soon as M2 begins", correct = true },
+  { text = "M2 needs the M3 warehouse to store trade facts, so they must run back to back", note = "Reversed. M2 does not depend on M3; M3 depends on M2. Paper trades are stored in SQLite and later synced to the warehouse. The wall-clock reason is about the A/B maturation window, not a storage dependency." },
+  { text = "The Diebold-Mariano significance tests from M1 can only run once P&L exists", note = "The DM and Wilcoxon tests are M1 work against the four baselines' forecast errors; they do not wait on paper-trading P&L. The wall-clock reason is the live A/B in #33, a separate maturation clock." },
+  { text = "Paper trading must precede M5 so event effects can be priced into the simulator", note = "M5 is an independent filler with no ordering tie to M2's placement. The second reason the roadmap gives is the A/B maturation clock, not anything about the event study." },
+]
+source = "docs/ROADMAP.md"
+anchor = "This runs directly after M1 for two reasons:"
+
+# ── The ceiling: what it would replace ────────────────────────────────────────
+
+[[question]]
+id = "m20-q08"
+kind = "recall"
+prompt = """
+Name three items from the CEILING section and, for each, say precisely what
+current mechanism it would replace. The point of the exercise is that each
+ceiling item names the weaker thing it supersedes.
+"""
+rubric = [
+  "Conformal prediction replaces the heuristic CI in cold_start.py (the 5% floor / 10x cap intervals)",
+  "Hierarchical forecasting with reconciliation replaces the trend-ratio heuristic in crafting_advisor that stitches item and archetype forecasts",
+  "An online feature store replaces the current feature-vector echo, making /predict a genuine real-time prediction rather than a passthrough",
+  "Event effects estimated causally replace the hand-authored impact records in config/events/",
+  "A derived-aggregate archive replaces reliance on the 30-day raw retention wall for long-horizon evaluation (any three suffice)",
+]
+answer = """
+The ceiling is written as replacements, which is what makes it honest rather than
+a wishlist. Any three of:
+
+Conformal prediction replaces the heuristic confidence intervals in cold_start.py,
+the 5-percent floor and 10x cap, so that a stated 80 percent actually means 80
+percent measured empirical coverage. The plan calls the current intervals the
+weakest part of the modeling story.
+
+Hierarchical forecasting with reconciliation (MinT or OLS) replaces the trend-ratio
+heuristic in crafting_advisor that stitches item and archetype forecasts together.
+Reconciliation would make item-level forecasts coherent with their parents by
+construction rather than by a scaling trick.
+
+An online feature store replaces the feature-vector echo that /predict would
+otherwise be. The rollup tables are already an offline store; an online store keyed
+by archetype would let the API serve real predictions from live state.
+
+Causally estimated event effects replace the hand-authored impact records in
+config/events/, closing the loop so M5's measurements feed back as model priors.
+
+Each names the lesser thing it supersedes, which is the discipline: a ceiling item
+that does not say what it replaces is a feature, not a ceiling.
+"""
+source = "PLAN.md"
+anchor = "Hierarchical forecasting with reconciliation."
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m20-q09"
+kind = "mcq"
+prompt = """
+The ceiling names conformal prediction as an upgrade. What exactly does it
+replace, and how does it relate to the M1 roadmap work?
+"""
+answer = """
+Conformal prediction replaces the heuristic confidence intervals in cold_start.py:
+the ones with a 5-percent floor and a 10x cap. The plan flags those as the weakest
+part of the modeling story, because a floor-and-cap heuristic makes no promise
+about coverage. A stated 80-percent interval might contain the true value 60
+percent of the time or 95 percent; nothing measures it.
+
+It extends M1 rather than replacing that work. ROADMAP M1 #19 adds quantile
+regression with measured coverage, which is already a real improvement over the
+heuristic. The ceiling goes one step further: conformal intervals come with a
+finite-sample coverage guarantee, so the 80 means 80 by construction. Quantile
+regression is the roadmap version; conformal is the ceiling version on top of it.
+"""
+options = [
+  { text = "The heuristic 5%-floor / 10x-cap intervals in cold_start.py; it is the ceiling extension of M1 #19's quantile regression", correct = true },
+  { text = "The LightGBM point forecasts, replacing them with an interval-only model", note = "Conformal prediction wraps a point forecast to produce calibrated intervals; it does not replace the point model. The booster stays; conformal adds coverage-guaranteed bounds around its predictions." },
+  { text = "The walk-forward backtest, since conformal methods provide their own validation", note = "Conformal prediction is about interval calibration, not model evaluation. The backtest (M1) and the intervals (cold_start.py) are separate concerns; conformal replaces the interval heuristic, not the evaluation harness." },
+  { text = "The drift detection baseline, giving it a coverage-based reference", note = "The drift baseline is a separate broken thing (DS-3, the pooled cross-baseline MAE). Conformal prediction targets the confidence intervals in cold_start.py, not the drift reference in monitoring." },
+]
+source = "PLAN.md"
+anchor = "Conformal prediction replacing the heuristic intervals."
+
+[[question]]
+id = "m20-q10"
+kind = "find"
+prompt = """
+Find the ceiling item about the binding data constraint. What is the constraint,
+why is it called binding, and what two-part fix does the ceiling propose?
+"""
+rubric = [
+  "The constraint is the 30-day raw retention wall (Blizzard ToS section 2.r permits 30 days of raw retention)",
+  "It is binding because long-horizon evaluation is structurally limited no matter how good the engineering is",
+  "Fix part one: a derived-aggregate archive designed from the start to be ToS-clean and to outlive the raw window",
+  "Fix part two: an independent historical source for backfill",
+]
+answer = """
+The item is "Escaping the 30-day retention wall," and the plan calls it the
+binding data constraint. Binding is the operative word: the ToS permits only 30
+days of raw retention, so no amount of modeling or infrastructure skill can extend
+how far back long-horizon evaluation reaches. Every other ceiling item improves
+something you already have; this one removes a hard ceiling on what can ever be
+measured.
+
+The proposed fix has two parts. First, a derived-aggregate archive designed from
+the start to be ToS-clean and to outlive the raw 30-day window, so aggregates
+persist even as raw snapshots are pruned. Second, an independent historical source
+for backfill, to fill the span the ToS window can never cover. The two parts are
+complementary: one preserves what you capture going forward, the other recovers
+what you never captured. This is also why the durable-backup work already
+excludes the two raw observation tables: the derived aggregates are the part
+worth keeping.
+"""
+source = "PLAN.md"
+anchor = "Escaping the 30-day retention wall."
+see_also = ["docs/ROADMAP.md"]
+
+# ── M5 as designated filler, and the two-roadmap structure ────────────────────
+
+[[question]]
+id = "m20-q11"
+kind = "recall"
+prompt = """
+M5 (the event study) is described as the "designated filler." What makes it
+eligible to be filler, and what is the standing rule that tells an agent when to
+pull it forward?
+"""
+rubric = [
+  "M5 needs only rollups and events, so it has no dependency on M1-M4 outputs",
+  "That independence is exactly what lets it run parallel to the main chain any time after M0",
+  "The standing rule: when the lowest open milestone's remaining issues are waiting on wall clock, advance and circle back",
+  "So M5 fills weeks blocked on #11 verification days or #33 A/B maturation instead of idling",
+]
+answer = """
+M5 is eligible because its inputs are already on hand: it needs only the daily
+rollups and the seed events, nothing from M1's ledger, M2's trades, or the
+warehouse. That is why the graph draws it branching straight off M0, parallel to
+everything else.
+
+The standing rule sits at the end of the work order: when the lowest open
+milestone's remaining issues are waiting on wall clock, advance to the next
+milestone and circle back. Two named clocks force this: #11's verification days
+and #33's A/B maturation both make you wait calendar time you cannot compress. M5
+is the designated place to spend that wait productively, because it can start and
+finish without touching the blocked chain. The design turns idle wall-clock into
+a shippable milestone rather than dead time.
+"""
+source = "docs/ROADMAP.md"
+anchor = "M5 (#34-#36) formally sits here but is the designated filler"
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m20-q12"
+kind = "find"
+prompt = """
+Find the paragraph in the CEILING that says what the ceiling should NOT include.
+Name the three infrastructure choices it rules out, and quote the two size facts
+it gives as the reason.
+"""
+rubric = [
+  "Excluded: Kubernetes, multi-node training, and a distributed scheduler",
+  "Reason 1: durable state is around 100 MB",
+  "Reason 2: the largest table is under 10 GB",
+  "Conclusion: single box for compute is the correct architecture; reaching for cluster infra is a portfolio tell in the wrong direction",
+]
+answer = """
+The exclusion paragraph rules out Kubernetes, multi-node training, and a
+distributed scheduler. The two size facts are the whole argument: durable state is
+around 100 MB and the largest table is under 10 GB. At that scale a single box is
+not a compromise, it is the correct architecture, and the plan says so directly.
+
+The subtlety worth taking away: reaching for cluster infrastructure here would be
+a portfolio tell in the wrong direction. An MLOps reviewer who knows the data is
+100 MB and sees a Kubernetes manifest concludes the author reaches for heavy tools
+by reflex, which is the opposite of the signal you want. A ceiling that adds
+scope for its own sake is weaker than one that names its own limits. The
+restraint is the credential.
+"""
+source = "PLAN.md"
+anchor = "include: Kubernetes, multi-node training, or a"
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m20-q13"
+kind = "mcq"
+prompt = """
+Why does the plan insist single-box compute is correct here and treat a
+distributed scheduler as out of scope, rather than as a future upgrade?
+"""
+answer = """
+Because the data does not justify it and the wrong signal is worse than no signal.
+Durable state is roughly 100 MB and the largest table is under 10 GB, so single
+box for compute is the correct architecture, not a temporary limitation waiting to
+be outgrown.
+
+The plan frames cluster infrastructure as a portfolio tell in the wrong direction.
+An MLOps reviewer reads a Kubernetes manifest over a 100 MB database as evidence
+the author cannot size a solution to a problem. So distributed scheduling is not a
+"someday" item deferred for time; it is deliberately excluded because adopting it
+would make the portfolio weaker, not stronger. Capture and durability are already
+distributed (GitHub Actions, a Cloudflare Worker, two R2 buckets); it is compute,
+specifically, that stays on one box.
+"""
+options = [
+  { text = "The data is tiny (state ~100 MB, largest table <10 GB), so single box is correct and cluster infra would be a portfolio tell in the wrong direction", correct = true },
+  { text = "The desktop's known instability means a distributed scheduler is too risky to run", note = "The instability argues for treating the container image as the deployment unit, not against distribution per se. The actual reason distribution is excluded is scale: the data is too small to justify it, independent of hardware reliability." },
+  { text = "A distributed scheduler is deferred to a later phase once the warehouse can feed it", note = "It is not deferred, it is excluded on purpose. The plan lists it under what the ceiling should NOT include, with a scale argument, not under future phases waiting on a dependency." },
+  { text = "The Blizzard ToS forbids distributing the raw data across nodes", note = "The ToS constrains raw-data retention (30 days), not how compute is arranged. Nothing in it speaks to schedulers or node counts; the exclusion is a scale-and-signal call." },
+]
+source = "PLAN.md"
+anchor = "Single box for compute is the correct architecture, and reaching for"
+
+[[question]]
+id = "m20-q14"
+kind = "recall"
+prompt = """
+The repo carries two planning documents: docs/ROADMAP.md and PLAN.md. What does
+each own, and why is the interlock between them deliberately one-directional?
+"""
+rubric = [
+  "ROADMAP.md owns the research arc and the GitHub issue numbering (M0-M6)",
+  "PLAN.md owns the lifecycle and legibility arc (orchestration, serving, packaging, the methodology fixes)",
+  "PLAN names the M1 issues it overlaps but does not renumber or restate them",
+  "The interlock is one-directional: the roadmap does not reference PLAN, so neither goes stale when the other moves",
+]
+answer = """
+ROADMAP.md is the source of truth for the research arc and for issue numbering:
+M0 through M6, every GitHub milestone, every issue number. PLAN.md owns the
+lifecycle and legibility arc: orchestration, serving, packaging, IaC, and the
+three methodology defects the 2026-07-24 audit surfaced. They cover different
+axes of the same project.
+
+The interlock is one-directional on purpose. PLAN references the specific M1
+issues it overlaps (Phase 1 is the minimum version of #14-#17, Phase 5 is blocked
+on #13) but does not renumber or restate them. The roadmap, in turn, does not
+reference PLAN at all. That asymmetry is the point: if each document pointed at
+the other, moving one would stale the other, and two cross-linked planning docs
+drift into contradiction. By making PLAN depend on ROADMAP and not the reverse,
+ROADMAP can move freely and only PLAN needs reconciling, deliberately, not as a
+side effect.
+"""
+source = "PLAN.md"
+anchor = "the roadmap does not reference this document, so"
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m20-q15"
+kind = "mcq"
+prompt = """
+OD-2 recommends MLflow with a local backend, and part of its case is that fixing
+model selection also fixes a live bug. What is the live bug in how the serving
+path picks a model today?
+"""
+answer = """
+There are three model-selection strategies in the repo and they can disagree, and
+the authoritative one is the one nobody reads. model_metadata carries is_active,
+the flag that should decide which model serves. But forecast.py picks the model by
+filesystem mtime glob and cli.py picks it lexicographically, so is_active is
+written and never read.
+
+The plan calls model_metadata write-only: nothing reads it back. That is the live
+bug. MLflow's registry stage transitions replace the ignored is_active flag with a
+selection the serving path actually consults, which is why OD-2 argues it fixes a
+bug rather than adding ceremony. Selecting by mtime ties serving to a local
+filesystem layout and can silently serve the wrong booster the moment two
+artifacts land out of the expected order.
+"""
+options = [
+  { text = "model_metadata.is_active is write-only; serving ignores it and globs the newest artifact by filesystem mtime instead", correct = true },
+  { text = "The registry has no is_active column, so there is no way to mark a model current", note = "It does have is_active, and the right columns generally. The bug is not a missing column, it is that the serving path never reads the column that exists. That distinction is why OD-2 says the fix is wiring, not schema work." },
+  { text = "Serving reads is_active correctly but the training path never sets it", note = "Reversed. The training path sets is_active (it promotes the new model); the serving path is the one that ignores it and globs by mtime. The write happens; the read does not." },
+  { text = "The model is selected correctly but retraining overwrites the artifact in place", note = "Retraining writes a new artifact and unconditionally promotes it, which is a separate concern (no promotion gate). The selection bug here is that mtime globbing, not is_active, decides which artifact serves." },
+]
+source = "PLAN.md"
+anchor = "Serving ignores it and globs by mtime"
+
+[[question]]
+id = "m20-q16"
+kind = "recall"
+prompt = """
+Phase 1 (DS legibility and the methodology fix) is sequenced first, ahead of the
+orchestration and portability work that everything else depends on. Give the three
+reasons the plan states for leading with it.
+"""
+rubric = [
+  "It is days of work, not weeks, so it is cheap to front-load",
+  "It is what applications going out now depend on (the visible portfolio surface)",
+  "Two of its items are live defects on a public repo (the invalid split and the broken demo)",
+  "It is the only phase that changes what a reader sees this month, whereas Phase 2 is invisible until it finishes",
+]
+answer = """
+The plan gives three reasons, and they are about cost, urgency, and visibility.
+
+First, DS legibility is days of work, not the weeks the orchestration migration
+needs, so leading with it is cheap. Second, it is what applications going out right
+now depend on: a reviewer clicks the repo this week, not after Phase 2 lands.
+Third, two of its items are live defects on a public repo. The invalid
+train/validation split (DS-1) and the Streamlit demo showing "no data" on every
+tab are not future risks; they are wrong on the page a hiring manager sees today.
+
+That third reason is what breaks the obvious order. Normally you build the
+foundation (portability) first. But a foundation is invisible until it is done,
+and this repo has visible defects live now. Fixing what a reader sees this month
+outranks unblocking work whose payoff is a month out. Phase 2 is still the thing
+everything depends on; it just is not the thing to do first.
+"""
+source = "PLAN.md"
+anchor = "DS legibility leads because it is days of work, it is"
+see_also = ["docs/ROADMAP.md"]
+
+[[question]]
+id = "m20-q17"
+kind = "predict"
+prompt = """
+Follow the standing rule at the end of the work order. It is a given week: M1's
+#11 verification is still counting down its wall-clock days, and M2's #33 A/B has
+been started but has not accumulated enough matured pairs to test. Both are the
+lowest open items. What does the rule say to do, and what is the concrete next
+action?
+"""
+answer = """
+The rule says: when the lowest open milestone's remaining issues are waiting on
+wall clock, advance to the next milestone and circle back. #11's verification days
+and #33's A/B maturation are the two named wall-clock waits, so this is exactly the
+situation the rule is written for.
+
+The concrete action is to pull M5 forward. M5 needs only rollups and events, has
+no dependency on the blocked chain, and is explicitly the designated filler. So you
+start the event study now, let #11 and #33 keep counting in the background, and
+return to them when their clocks have run. You do not sit idle waiting, and you do
+not try to force a significance test on too few pairs.
+"""
+options = [
+  { text = "Advance and circle back: pull M5 (the event-study filler) forward while #11 and #33 keep maturing", correct = true },
+  { text = "Wait for #11 and #33 to mature before starting any new milestone, to keep the sequence strict", note = "The standing rule exists precisely to avoid idling on wall clock. Strict sequence would waste the maturation window; the rule says advance to independent work and circle back." },
+  { text = "Re-run the #33 A/B test now on the pairs available to get an early read", note = "Testing on too few matured pairs produces an underpowered, misleading result. The rule is to spend the wait on independent work (M5), not to force an early significance test." },
+  { text = "Jump ahead to M6 publish, since it is independent of the blocked items", note = "M6 is not independent; it is gated on M3 marts and M1/M2 numbers, which the blocked items are still producing. M5 is the independent filler; M6 is the most-blocked milestone, not a candidate to pull forward." },
+]
+source = "docs/ROADMAP.md"
+anchor = "When the lowest open milestone's remaining issues are waiting on wall clock"
+see_also = ["PLAN.md"]

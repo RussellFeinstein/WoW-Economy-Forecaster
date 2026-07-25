@@ -1,0 +1,750 @@
+# M05: Baselines and what good means.
+#
+# Citation rule: `source` is a path, `anchor` is a verbatim single-line snippet
+# from that path. Never a line number. tests/test_learning/test_bank_integrity.py
+# fails if an anchor stops matching, so editing the cited code forces the
+# question to be updated in the same PR. Run `wowfc learn validate` while
+# authoring.
+
+# ── The four baselines: backtest/models.py ────────────────────────────────────
+
+[[question]]
+id = "m05-q01"
+kind = "recall"
+prompt = """
+Name the four baseline models and, for each, the hypothesis about the WoW market
+it tests. Then say why the docstring frames them as hypotheses rather than as
+"simple models to compare against".
+"""
+rubric = [
+  "last_value: the market is a random walk, so the best prediction is the current price. Tests whether any signal exists at all",
+  "rolling_mean: prices revert to a recent average, so short-term noise should be smoothed. Tests whether mean reversion beats the random walk",
+  "day_of_week: WoW markets are weekly-seasonal (Tuesday reset, weekend demand). Tests whether weekly seasonality is exploitable",
+  "simple_volatility: turbulence persists, so yesterday's volatile market is tomorrow's. Tests whether instability is predictable",
+  "Framing them as hypotheses means each result is informative on its own, not only as a number the ML model has to clear",
+]
+answer = """
+Four models, four claims about how this market behaves:
+
+  last_value        the market is a random walk. Best guess is today's price.
+  rolling_mean      prices revert to a recent mean, so smoothing helps.
+  day_of_week       the week has structure: Tuesday reset, weekend demand.
+  simple_volatility turbulence is persistent and therefore forecastable.
+
+The hypothesis framing earns its keep because it makes a losing baseline
+informative. If rolling_mean does not beat last_value, that is a finding about the
+market (no exploitable mean reversion at a 7-day window) and not just a row in a
+table. If day_of_week beats both, the weekly cycle is real and worth a feature. A
+plain "simple comparison model" framing throws that reading away and leaves you
+with only "did the fancy model win".
+
+It also constrains what a good result means. Beating a random walk on a price
+series is genuinely hard, which is why last_value sits first: it is the check for
+whether there is anything to model. The other three ask what shape the signal
+takes if there is one.
+"""
+source = "wow_forecaster/backtest/models.py"
+anchor = "  LastValueModel       → \"The market is a random walk; best prediction is"
+
+[[question]]
+id = "m05-q02"
+kind = "mcq"
+prompt = """
+`all_baseline_models()` builds `RollingMeanModel(window=7)` and
+`SimpleVolatilityModel(window=7)`, both with the default `min_rows=3`. What do
+their rows in a `summary.csv` look like relative to each other?
+"""
+answer = """
+They are identical. Both take the last 7 training rows, drop nulls, require at
+least 3 prices, and return the mean. `SimpleVolatilityModel.predict()` returns
+`self._mean` and nothing else, so for every fold and every series the two models
+emit the same number and therefore the same MAE, RMSE, MAPE and directional
+accuracy.
+
+The volatility model's distinct output is `predicted_volatility_pct`, the rolling
+std over rolling mean. That is a real second thing to forecast, and it is the one
+piece of the model that is not a duplicate. But `PredictionRecord` has no field
+for it, so the evaluator has nowhere to put it, and nothing outside the unit tests
+ever reads the property.
+
+The practical consequence: the results table advertises four baselines and carries
+three distinct price predictors, one of them printed twice. If you report "the
+model beat all four baselines", two of those four were the same baseline. Worth
+either wiring the volatility output into the record or giving the two models
+different windows so they are actually testing different hypotheses.
+"""
+options = [
+  { text = "Identical on every metric, because both predict the 7-row rolling mean and the volatility output is never recorded", correct = true },
+  { text = "Similar but not identical, because the volatility model widens its prediction when the window is turbulent", note = "It does not. It computes a volatility figure and exposes it as a property, but `predict()` returns the plain mean. Nothing in the class adjusts the point forecast." },
+  { text = "Different, because the volatility model uses population standard deviation to weight recent prices more", note = "The standard deviation is computed but never enters the prediction. There is no weighting anywhere in the class: the mean is unweighted." },
+  { text = "Different, because simple_volatility abstains more often on thin series", note = "Both use the same `min_rows=3` floor over the same `rows[-7:]` tail, so they abstain on exactly the same folds." },
+]
+source = "wow_forecaster/backtest/models.py"
+anchor = "    For price prediction, this model behaves like RollingMeanModel — it predicts"
+
+[[question]]
+id = "m05-q03"
+kind = "find"
+prompt = """
+Grep the repo for `predicted_volatility_pct`. Where is it consumed, and what
+would have to change for a backtest run to report it?
+"""
+rubric = [
+  "It is only touched in tests/test_backtest/test_models.py; no pipeline or reporting code reads it",
+  "PredictionRecord has no field for a predicted volatility, so the evaluator cannot carry it",
+  "run_backtest() calls model.fit() then model.predict() and reads only model.name off the object besides, so an extra output has nowhere to go",
+  "Reporting it needs a field on PredictionRecord, a write in the evaluator, a column in backtest_fold_results, and a metric that scores a volatility forecast (the current metrics only score price)",
+]
+answer = """
+Only the unit tests read it. `run_backtest()` calls `fit()` and `predict()`, and
+the only other thing it touches on the model object is `model.name` for the
+record label. That is exactly the minimal protocol `backtest/models.py`
+documents, so a model with an extra output has no way to surface it.
+
+Making it real is a four-part change, and the fourth part is the interesting one:
+
+1. A `predicted_volatility_pct` field on `PredictionRecord`.
+2. The evaluator reading it via `getattr(model, ..., None)` so other models stay
+   protocol-compatible.
+3. A column in `backtest_fold_results` and the reporter CSV.
+4. A metric that scores a volatility forecast. MAE against what? Realized
+   volatility on the test date is not a single observation, it is a statistic over
+   a window, so you would have to define the realized target before you could
+   score the prediction.
+
+That last point is why this stayed dormant, and it is the honest reason rather
+than an oversight. A prediction with no defined target is not evaluable, and
+shipping the number without the target would put an unscored column in a results
+table, which is worse than leaving it out.
+"""
+source = "wow_forecaster/backtest/models.py"
+anchor = "    Its additional value is the ``predicted_volatility_pct`` property: the"
+see_also = ["wow_forecaster/backtest/evaluator.py"]
+
+[[question]]
+id = "m05-q04"
+kind = "predict"
+prompt = """
+The evaluator sets `last_known_price` from the price lookup at `fold.train_end`,
+falling back to the last non-null price in the training rows.
+`LastValueModel.fit()` records the last non-null `price_mean` in those same
+training rows.
+
+What directional accuracy does `last_value` report over a fold set where prices
+do move?
+"""
+answer = """
+Exactly 0.0. Not near chance: zero.
+
+Follow the two values. `last_known_price` and `LastValueModel`'s prediction are
+derived from the same row, so they are equal on every record. `_direction(pred,
+last)` is therefore 0 on every record.
+
+Now the denominator filter. `directional` keeps records where `actual_price !=
+last_known_price`, so every surviving record has an actual direction of +1 or -1.
+The correctness test is a chained comparison: `dir(pred) == dir(actual) != 0`,
+which Python reads as `dir(pred) == dir(actual)` and `dir(actual) != 0`. With
+`dir(pred)` pinned at 0 and `dir(actual)` never 0, the first clause is false
+everywhere. Zero correct out of n.
+
+Two things follow. First, the "0.5 = random" interpretation line in the metrics
+docstring does not apply to this baseline: a model that predicts no change is not
+guessing, it has no direction, and the code scores it as wrong rather than
+excluding it. Ties are dropped from the denominator when the *actual* is flat, but
+not when the *prediction* is flat, and that asymmetry is what produces the 0.0.
+
+Second, and this is the part that matters for the acceptance bar: beating
+`last_value` on directional accuracy is trivial. Any model that ever predicts a
+nonzero change gets some of them right by chance. So directional accuracy against
+this particular baseline is not a meaningful hurdle, while MAE against it very
+much is. Read the two columns differently.
+
+The one escape: if no record survives the filter, `n_directional` is 0 and the
+metric is None rather than 0.0.
+"""
+options = [
+  { text = "0.0 exactly, because its prediction always equals last_known_price so its predicted direction is always 0", correct = true },
+  { text = "Around 0.5, because a random walk gets direction right half the time", note = "That would be true of a model that guessed up or down. This one predicts no change, and no change never matches a nonzero actual direction under the equality test." },
+  { text = "None, because a flat prediction is excluded from the denominator", note = "Only actual ties are excluded. The filter tests `r.actual_price != r.last_known_price` and says nothing about the prediction, so flat predictions stay in the denominator and count as misses." },
+  { text = "Undefined, because the evaluator does not populate last_known_price for the last_value model", note = "It populates it for every record from the price lookup at train_end, independent of which model made the prediction. The field is on PredictionRecord, not on the model." },
+]
+source = "wow_forecaster/backtest/metrics.py"
+anchor = "        and r.actual_price != r.last_known_price"
+see_also = ["wow_forecaster/backtest/evaluator.py"]
+
+[[question]]
+id = "m05-q05"
+kind = "recall"
+prompt = """
+Why are ties excluded from the directional-accuracy denominator, and what would
+break if they were counted as correct or as incorrect instead?
+"""
+rubric = [
+  "A tie has no direction, so there is no right answer to score against",
+  "Counting flat actuals as correct rewards a model for predicting no change on days nothing happened, which inflates the metric on quiet archetypes",
+  "Counting them as incorrect penalizes a model for a day where nothing was there to get right, which deflates the metric on the same archetypes",
+  "Either choice makes the number depend on how often prices are flat, which varies by archetype and by season rather than by model skill",
+  "The exclusion is only on the actual side: a flat prediction against a moving actual still counts, and counts as wrong",
+]
+answer = """
+A day where the actual price did not move has no direction to predict. Scoring it
+either way makes the metric depend on how often the series is flat, which is a
+property of the archetype and the calendar and not of the model.
+
+Concretely: a thin archetype with three trades a week is flat most days. Count
+flat days as correct and any model that hedges toward "no change" posts a high
+directional accuracy on that archetype while telling you nothing. Count them as
+wrong and the same archetype drags every model down, so the model that is
+genuinely better at the days that moved loses to one that is better at nothing.
+Excluding them makes the denominator "days the market actually did something",
+which is the population the recommendation engine cares about anyway.
+
+`n_directional` is reported alongside the accuracy for exactly this reason. A
+directional accuracy of 0.71 over 12 records is not a result, and the count is what
+tells you.
+
+The asymmetry to hold onto: the exclusion is applied to the actual only. A flat
+prediction against a moving actual stays in the denominator and scores as a miss.
+That is defensible (the model failed to call a move that happened) but it has the
+side effect covered in q04, where the random-walk baseline scores a structural
+zero.
+"""
+source = "wow_forecaster/backtest/metrics.py"
+anchor = "  Ties (no change in either direction) are excluded from the denominator."
+
+# ── The four metrics: backtest/metrics.py ─────────────────────────────────────
+
+[[question]]
+id = "m05-q06"
+kind = "mcq"
+prompt = """
+The metrics docstring says: "RMSE > MAE implies occasional large misses." You are
+reading a summary row where RMSE is 118g and MAE is 112g. What have you actually
+learned?
+"""
+answer = """
+Almost nothing, and the docstring line is slightly too strong. RMSE is greater
+than or equal to MAE for *any* set of errors: it is the quadratic mean against the
+arithmetic mean of the same absolute values, and the two are equal only when every
+absolute error is identical. So `RMSE > MAE` is not evidence of anything. It is
+arithmetic.
+
+What carries information is the ratio. RMSE/MAE at 1.05 says the error
+distribution is nearly uniform in magnitude, which is what a systematically biased
+but stable model looks like. At 3.0 it says a small number of records dominate the
+squared sum, which is the catastrophic-miss case the docstring is really pointing
+at: the flask predicted at 200g that traded at 1000g.
+
+For a lower bound on the spread, note that RMSE squared equals MAE squared plus
+the variance of the absolute errors. So the gap between the two is a direct read
+on how much the size of your errors varies, not on how big they are.
+
+Practical habit for this repo: put both in the table and read the ratio, and when
+the ratio jumps between horizons, look at `by_category.csv` before concluding
+anything about the model. A single volatile archetype can move a pooled RMSE and
+leave MAE flat.
+"""
+options = [
+  { text = "Very little: RMSE >= MAE always holds, so only the ratio (here about 1.05, meaning errors are similar in size) is informative", correct = true },
+  { text = "That the model has occasional large misses, as the docstring states", note = "The inequality holds for every possible error set, so its presence cannot distinguish a model with large misses from one without. At a ratio of 1.05 the evidence points the other way: errors are tightly clustered." },
+  { text = "That the errors are approximately normally distributed, since RMSE and MAE are close", note = "Run the arithmetic the other way: zero-mean normal errors give an RMSE/MAE ratio of sqrt(pi/2), about 1.25, so 1.05 is evidence against normality rather than for it. The ratio bounds the spread of the absolute errors and says nothing about shape or sign. A model that is uniformly 112g too high gives a ratio of exactly 1.0, and that distribution is a point mass." },
+  { text = "That the model is well calibrated, because RMSE and MAE agree to within 6 percent", note = "Calibration is about whether stated uncertainty matches realized error, which needs interval coverage, not point-error metrics. A badly calibrated model can produce any RMSE/MAE ratio." },
+]
+source = "wow_forecaster/backtest/metrics.py"
+anchor = "  Interpretation: RMSE > MAE implies occasional large misses."
+
+[[question]]
+id = "m05-q07"
+kind = "recall"
+prompt = """
+Why does MAPE enable cross-archetype comparison when MAE does not? Give the
+concrete version using two archetypes at different price levels, then name the
+place in this repo where the absence of that normalization is a live defect.
+"""
+rubric = [
+  "MAE is in gold, so its scale is the price level of the series it was computed over",
+  "A 50g error on a 10,000g item and a 50g error on a 100g item are the same MAE and wildly different outcomes",
+  "MAPE divides by the actual, so 5 percent means the same thing at both price levels",
+  "The live defect: the drift and health baselines pool absolute gold MAE across archetypes, so the ratio moves when the archetype mix changes rather than when the model degrades",
+]
+answer = """
+MAE inherits the units and therefore the scale of whatever it was computed over. A
+50g mean absolute error on a flask that trades at 100g is a 50 percent error and
+the forecast is useless. The same 50g on a 10,000g weapon is a 0.5 percent error
+and is excellent. Averaging those two into a pooled MAE gives a number that means
+neither thing, and the number moves whenever the composition of the pool changes
+even if every individual forecast is unchanged.
+
+MAPE divides each error by its own actual, so every record is on the same scale
+before averaging. "Off by 5 percent" is a claim you can compare across archetypes,
+across horizons, and across time as the archetype mix shifts.
+
+The live defect: `monitoring/drift.py` and `monitoring/health.py` both compute
+`baseline_mae` as `AVG(abs_error)` over `backtest_fold_results` and compare it
+against a live MAE. That is absolute gold pooled across archetypes whose price
+levels differ by orders of magnitude, so the ratio drifts when the mix of
+archetypes with data changes. PLAN.md files this as DS-3. Read what it prescribes
+carefully, though: the fix it actually names is narrower, make `drift.py` report
+`unknown` on a missing ratio the way `health.py` already does. The scale problem
+is described there and left without a remedy, and the remedy is this module's
+lesson. A scale-free reference (MAPE, or a per-series skill score against
+`last_value`) is what makes the ratio mean the same thing in two different months.
+
+The costs of MAPE, since it is not free: it is undefined at zero, unstable near
+zero (which is what `MAPE_EPSILON` exists for), and asymmetric between over- and
+under-prediction. See q08 and q09.
+"""
+source = "wow_forecaster/backtest/metrics.py"
+anchor = "  Normalizes MAE by the actual price, enabling cross-archetype comparison."
+see_also = ["PLAN.md", "wow_forecaster/monitoring/drift.py"]
+
+[[question]]
+id = "m05-q08"
+kind = "mcq"
+prompt = """
+Two models are scored on the same records. Model A over-predicts by 100 percent on
+every record. Model B predicts zero on every record. Compare their MAPE.
+"""
+answer = """
+Model A scores 1.0. Model B also scores 1.0, and that is the ceiling for
+under-prediction.
+
+MAPE here is `|actual - predicted| / actual`. Predict zero and the term is
+`actual/actual = 1`, no matter how wrong you are in gold. Predict double and the
+term is also 1. Predict triple and it is 2. Predict ten times the actual and it is
+9. Under-prediction is bounded at 1; over-prediction is unbounded.
+
+So MAPE systematically prefers models that under-forecast, and the preference is
+strongest exactly where this product is most useful: an item about to spike. A
+model that calls a 4x spike and gets the timing slightly wrong is punished far
+harder than a model that flatly refuses to call spikes. Note that
+`LightGBMForecaster` trains with `objective: regression_l1`, which already pulls
+predictions toward the conditional median and therefore away from spikes, and note
+that the model's predictions are clamped with `max(0.0, ...)`, so the zero-forecast
+degenerate case is reachable rather than hypothetical.
+
+This is a known property of MAPE, not a bug in this repo. The standard responses
+are sMAPE (symmetric, bounded, with its own pathologies), a log-scale error, or
+scaling by an in-sample baseline error rather than by the actual (MASE, which also
+handles the near-zero case). Any of them would be a defensible upgrade here. The
+thing not to do is report MAPE alone and conclude the low-MAPE model is better at
+the cases you care about.
+"""
+options = [
+  { text = "Both score 1.0: under-prediction is capped at 1 while over-prediction is unbounded, so MAPE systematically favors under-forecasting", correct = true },
+  { text = "Model A scores 1.0 and Model B is excluded, because a zero prediction fails the MAPE_EPSILON guard", note = "The guard is on the actual price, not the prediction. `if a >= MAPE_EPSILON` filters records by actual, so a zero prediction against a healthy actual is scored normally." },
+  { text = "Model A scores 2.0 and Model B scores 1.0, so A is twice as bad", note = "Over-predicting by 100 percent means predicted = 2 x actual, so the absolute error equals the actual and the term is 1.0, not 2.0. A term of 2.0 needs predicted = 3 x actual." },
+  { text = "Both score 1.0, which shows MAPE is symmetric between over- and under-prediction", note = "This one pair coinciding is a coincidence at exactly 2x. Push further in either direction and the asymmetry appears: 3x actual gives 2.0, while nothing below the actual can ever exceed 1.0." },
+]
+source = "wow_forecaster/backtest/metrics.py"
+anchor = "  \"Was I off by 5%?\" is meaningful whether the item costs 10g or 10,000g."
+
+[[question]]
+id = "m05-q09"
+kind = "predict"
+prompt = """
+A fold produces three evaluated records with actual prices of 0.004g, 0.010g and
+5.00g. The absolute errors are 0.002g, 0.020g and 0.50g respectively.
+`MAPE_EPSILON = 0.01`.
+
+What does `compute_metrics()` return for MAPE, and what does that tell you about
+how much protection the epsilon guard buys?
+"""
+answer = """
+The 0.004g record is dropped by `if a >= MAPE_EPSILON`. The other two are kept:
+
+  0.020 / max(0.010, 0.01) = 2.00     (a 200 percent error)
+  0.500 / max(5.00,  0.01) = 0.10     (a 10 percent error)
+
+MAPE = (2.00 + 0.10) / 2 = 1.05, or 105 percent. Two records, one of which is a
+vendor-priced trinket nobody trades, and the reported number for the fold is over
+100 percent.
+
+The guard prevents division by zero and it prevents the unbounded blowup from a
+0.0001g actual. It does not prevent instability, because a price of exactly the
+epsilon is still small enough that any real error is enormous as a percentage. The
+threshold is set in gold at a value below which nothing in this market genuinely
+trades, so its purpose is arithmetic safety rather than statistical stability.
+
+Two details worth reading carefully. The `max(a, MAPE_EPSILON)` inside the
+comprehension is dead: the filter already guarantees `a >= MAPE_EPSILON`, so the
+max never binds. Belt and braces, but do not read it as a second, stronger guard.
+And when every actual falls below the epsilon, MAPE is None rather than 0.0, which
+is the right call: no data is not a perfect score.
+
+If you wanted actual stability, the fix is a volume or liquidity filter upstream
+rather than a bigger epsilon. The recommendation scorer already does exactly that
+with its `min_volume_units` hard filter, so the pattern is available in the repo.
+"""
+options = [
+  { text = "MAPE = 1.05. The guard bounds the division but not the instability: an actual at the epsilon still yields a 200 percent term", correct = true },
+  { text = "MAPE = 0.10, because both sub-gold records fall under the epsilon and are dropped", note = "The filter is `a >= MAPE_EPSILON` and the second actual is exactly 0.010, which passes. Only the 0.004 record is dropped." },
+  { text = "MAPE = 0.77, the mean of all three terms with the smallest actual floored at the epsilon", note = "That treats `max(a, MAPE_EPSILON)` as a flooring rule applied to every record, which would give (0.20 + 2.00 + 0.10) / 3. It is not a flooring rule: the sub-epsilon record is filtered out first, so the max in the divisor never binds on anything." },
+  { text = "MAPE = None, because fewer than three records survive the epsilon filter", note = "There is no minimum count. MAPE is None only when the surviving list is empty, so two records produce a number, however unstable that number is." },
+]
+source = "wow_forecaster/backtest/metrics.py"
+anchor = "        if a >= MAPE_EPSILON"
+
+[[question]]
+id = "m05-q10"
+kind = "recall"
+prompt = """
+`compute_metrics()` reports both `n_predictions` and `n_evaluated`. What is the
+difference, what are the two mechanisms that make them diverge, and why does the
+gap matter when comparing models to each other?
+"""
+rubric = [
+  "n_predictions counts every record; n_evaluated counts records where both actual and predicted are non-null",
+  "Mechanism one: no actual price on the test date. That is a data gap and hits all models on that record equally",
+  "Mechanism two: the model abstained by returning None. That is per-model, so it changes which records a given model is scored on",
+  "MAE is only comparable across models when they were scored on the same records, and nothing in the reporter checks that n_evaluated matches across models",
+  "A model that abstains on hard cases posts a better MAE than one that guesses on them, which rewards abstention rather than skill",
+]
+answer = """
+`n_predictions` is every `(fold, series, model)` record the evaluator emitted.
+`n_evaluated` is the subset with both an actual and a prediction, which is the set
+the metrics were actually computed on.
+
+Two different mechanisms open the gap, and they have opposite implications.
+
+A missing actual on the test date is a data condition. The evaluator looks up
+`price_lookup[(arch, realm, test_date)]` and gets None when that archetype had no
+observations that day. Every model gets the same record dropped, so the comparison
+stays fair. Thin per-archetype series make that the likelier source of most of the
+gap here, but nothing in the reporter separates the two mechanisms, so you cannot
+read which one produced a given gap off the table.
+
+An abstention is a model decision. `RollingMeanModel` and `SimpleVolatilityModel`
+return None when fewer than `min_rows` prices survive in the last 7 rows;
+`LastValueModel` and `DayOfWeekModel` effectively always answer once the
+`min_train_rows` gate has passed. So the two abstaining models are scored on a
+subset of the records the other two are scored on, and that subset is
+non-randomly the easier one: the folds with denser data.
+
+Which is why the gap matters. MAE is a mean over whatever survived, so a model
+that declines to answer on its hardest cases posts a better mean than a model that
+guesses badly on them, and the table shows no sign of it unless you read
+`n_evaluated` alongside. `write_summary_csv` does carry both columns, and nothing
+asserts they match across models. An honest comparison either restricts every
+model to the intersection of records all of them answered, or scores abstention
+explicitly (coverage plus conditional accuracy) rather than silently.
+"""
+source = "wow_forecaster/backtest/metrics.py"
+anchor = "    value is None are excluded from metric computation but counted in"
+
+[[question]]
+id = "m05-q11"
+kind = "mcq"
+prompt = """
+`backtest/models.py` writes down the acceptance bar in one sentence. Which
+comparison would actually satisfy it as stated?
+"""
+answer = """
+The bar is: "If an ML model cannot beat ALL of these baselines, it is not ready
+for use." Read literally, that means every baseline, not the average and not the
+weakest, and to be a comparison at all it has to be at the same horizon, over the
+same folds, on the same evaluated records.
+
+"Beats the mean of the baselines" is the trap, and it is not hypothetical: it is
+what `monitoring/drift.py` and `monitoring/health.py` do today, computing
+`AVG(abs_error)` over `backtest_fold_results` with no `model_name` filter. That
+average is a blend of all four baselines, which is not a model anyone would deploy
+and not a bar anyone chose. A model can beat the blend while losing to
+last_value, and losing to last_value is the one outcome that says stop.
+
+The bar has never been evaluated. `BacktestStage` calls `all_baseline_models()`
+and nothing else, so the harness has only ever compared four baselines against
+each other, and `backtest.horizons_days = [1, 3]` against
+`features.target_horizons_days = [1, 7, 28]` means two of the three production
+horizons had no baseline to be compared against even in principle.
+"""
+options = [
+  { text = "Lower MAE than each of the four baselines individually, at the same horizon, over the same folds and the same evaluated records", correct = true },
+  { text = "Lower MAE than the mean of the four baselines' MAE at that horizon", note = "This is the blend the drift monitor actually uses, and it is weaker than the stated bar. A model can beat an average dragged up by day_of_week while still losing to last_value, which is the comparison that decides whether any signal exists." },
+  { text = "Lower MAE than the best baseline, pooled across all horizons", note = "Pooling across horizons mixes 1-day and 28-day errors into one number, and errors grow with horizon. The pooled figure then moves with the horizon mix rather than with skill. Compare within a horizon." },
+  { text = "Lower MAE than each baseline on its own single holdout split, since each model is trained separately", note = "Separate splits per model is precisely the invalidity PLAN.md flags as DS-2: different partitions, different aggregation, different populations. A comparison requires a shared evaluation set." },
+]
+source = "wow_forecaster/backtest/models.py"
+anchor = "If an ML model cannot beat ALL of these baselines, it is not ready for use."
+see_also = ["PLAN.md", "LESSONS.md"]
+
+[[question]]
+id = "m05-q12"
+kind = "find"
+prompt = """
+There is a second, independent metrics implementation in this repo, and it is the
+one that produces the `validation_mae` stored in `model_metadata`. Find it and
+name three ways it differs from `backtest/metrics.py`.
+"""
+rubric = [
+  "It is LightGBMForecaster._evaluate() in wow_forecaster/ml/lgbm_model.py",
+  "Its MAPE guard is `if actual != 0.0` rather than an epsilon floor, so a near-zero actual produces an unbounded term",
+  "It computes no directional accuracy at all, so the metric the backtest docstring calls critical for buy/hold/sell is never computed for the production model",
+  "It is a separate implementation of the same definitions, so the two can drift, and only the backtest one has unit tests written against the definitions",
+]
+answer = """
+`LightGBMForecaster._evaluate()` in `wow_forecaster/ml/lgbm_model.py`. It computes
+MAE, RMSE and MAPE in a single loop, and that dict is what `train_models()` writes
+into `model_metadata.validation_mae` and `validation_rmse`.
+
+Three differences that matter:
+
+MAPE guard. The backtest version filters records with `a >= MAPE_EPSILON` at 0.01
+gold. This one guards with `if actual != 0.0`, so an actual of 0.001g contributes a
+term of a thousand times the absolute error. One near-worthless archetype can
+dominate the reported validation MAPE.
+
+Directional accuracy. Absent entirely. The backtest docstring calls it "critical
+for buy/hold/sell recommendations: a model that gets the direction wrong is
+actively harmful even if the magnitude is acceptable", and the model that actually
+drives the recommendations has never had it computed.
+
+Independence. These are two implementations of the same four definitions with no
+shared code. `tests/test_backtest/test_metrics.py` pins the first against its
+definitions. Nothing pins the second against the first, so they can drift apart
+without any test going red.
+
+The joint reading with M06: the number in `model_metadata` is computed by an
+unshared implementation, on a leaked split, and is never compared to a baseline.
+Three independent reasons not to quote it, and any one of them is enough.
+"""
+source = "wow_forecaster/ml/lgbm_model.py"
+anchor = "        \"\"\"Compute MAE, RMSE, MAPE on a feature matrix + true labels.\"\"\""
+see_also = ["wow_forecaster/backtest/metrics.py", "PLAN.md"]
+
+[[question]]
+id = "m05-q13"
+kind = "recall"
+prompt = """
+`LightGBMForecaster` trains with `"objective": "regression_l1"` and
+`"metric": "mae"`. What does an L1 objective estimate, why does it pair sensibly
+with MAE as the reported metric, and what does it cost this product specifically?
+"""
+rubric = [
+  "L1 (absolute-error) loss estimates the conditional median, not the conditional mean",
+  "It resists outlier prices, which matters on an auction house with fat tails and manipulation",
+  "Training loss and reporting metric agree, so the number optimized is the number reported",
+  "The cost: the median of a right-skewed price distribution sits below the mean, so the model systematically flattens spikes",
+  "And spikes are exactly the events the recommendation engine exists to catch",
+]
+answer = """
+Minimizing absolute error estimates the conditional median. Minimizing squared
+error estimates the conditional mean. That is the whole statistical difference and
+everything else follows from it.
+
+The case for L1 here is real. A commodity auction house produces fat-tailed prices
+and outright manipulation: a single 100x listing, a market-buy that clears the
+book, a patch-day panic. Squared loss lets one such observation dominate the
+gradient for its whole leaf. Absolute loss caps each observation's influence. And
+because the reported metric is MAE, the model is optimizing the quantity it is
+scored on, which removes one degree of freedom from any "we tuned to a different
+objective" excuse.
+
+The cost is structural. Price distributions are right-skewed, so the conditional
+median sits below the conditional mean, and a median-estimating model
+systematically under-calls upside. The one thing this product exists to spot is
+the consumable that is about to triple before a patch, and the loss function is
+built to shrink exactly that prediction toward the quiet case. Compounding it,
+`predict()` clamps to `max(0.0, ...)`, and MAPE (q08) also rewards
+under-forecasting, so three separate parts of the stack push the same direction.
+
+What would address it: quantile regression at several alphas (ROADMAP M1 issue
+#19) so the upper quantile carries the spike signal while the median stays the
+point forecast, rather than asking one number to do both jobs.
+"""
+source = "wow_forecaster/ml/lgbm_model.py"
+anchor = "            \"objective\":        \"regression_l1\",  # MAE loss — robust to outlier prices"
+see_also = ["docs/ROADMAP.md"]
+
+# ── Reading a result table honestly ───────────────────────────────────────────
+
+[[question]]
+id = "m05-q14"
+kind = "mcq"
+prompt = """
+`monitoring/drift.py` builds its reference with
+`SELECT AVG(abs_error) ... WHERE backtest_run_id = ? AND horizon_days = ?`.
+Which criticism of that reference is the most serious?
+"""
+answer = """
+There is no `model_name` filter, so the reference is a pooled average across all
+four baselines from whichever backtest ran last. Every other problem with that
+query is a matter of degree; this one means the denominator of `mae_ratio` is not
+any model's error.
+
+Rank the rest, because they are all real:
+
+Second: it is absolute gold pooled across archetypes at wildly different price
+levels, so the reference moves when the archetype mix changes rather than when the
+model degrades. That is the q07 lesson applied to monitoring.
+
+Third: the run is selected as the most recent `backtest_run_id` for the realm with
+no staleness check. A backtest from three months ago is used as today's reference
+without comment.
+
+Fourth: `backtest.horizons_days = [1, 3]` while forecasts run at 1, 7 and 28, so
+the 7d and 28d ratios can never be computed at all.
+
+And the failure mode that ties it together: `_classify_error_drift(None)` returns
+`DriftLevel.NONE`, so "cannot compute" is reported as "no drift". `health.py`
+returns `unknown` for the same condition, which is right. The project already
+states the principle elsewhere: the cloud capture gap guard keeps its floor at 20
+on purpose, because a floor the failure mode can satisfy hides the failure.
+"""
+options = [
+  { text = "No model_name filter, so the reference is an average of all four baselines rather than any single model's error", correct = true },
+  { text = "It uses the most recent backtest run with no staleness check", note = "A genuine problem and PLAN.md lists it, but a stale reference is still a reference. A blended one is not the error of anything, so no threshold on the ratio has a defined meaning." },
+  { text = "AVG ignores rows where abs_error is NULL, so the count is unreliable", note = "SQL AVG skips NULLs by design, and the query already filters `actual_price IS NOT NULL`. This is the query behaving correctly, not a defect." },
+  { text = "It is absolute gold rather than a percentage, so it cannot be pooled across archetypes", note = "Correct and important (it is the q07 point), but second in severity. Fix the scale on a blended reference and you still have a well-scaled number for a model nobody deployed." },
+]
+source = "wow_forecaster/monitoring/drift.py"
+anchor = "                    SELECT AVG(abs_error) AS baseline_mae"
+see_also = ["PLAN.md"]
+
+[[question]]
+id = "m05-q15"
+kind = "predict"
+prompt = """
+A backtest at horizon 7d, all models scored on the same 4,000 records, returns:
+
+  model         MAE     MAPE    dir_acc   n_evaluated
+  candidate_A   118g    0.061   0.53      4000
+  candidate_B   174g    0.042   0.66      4000
+  last_value    150g    0.055   0.00      4000
+
+Which candidate is the stronger of the two, and what does A's lower MAE against a
+higher MAPE tell you?
+"""
+answer = """
+B, and the MAE/MAPE disagreement is the tell.
+
+Both were scored on the same records, so the split cannot be a mix effect between
+different populations. What it can be is where inside that population each model
+is accurate. MAE is dominated by the expensive archetypes, since a 5 percent miss
+on a 10,000g item outweighs a 40 percent miss on a 50g flask in gold terms. MAPE
+weights every record equally. So A is better on the expensive tail and worse
+everywhere else; B is the reverse. Since the product recommends flipping and
+crafting across the whole item space, and gold is fungible while items are not,
+the scale-free reading is the relevant one.
+
+Directional accuracy settles it. This system converts forecasts into buy, hold and
+sell, so a model that calls the direction 66 percent of the time is worth more than
+one at 53 percent that happens to be closer in gold. A model near 0.5 is close to
+coin-flipping on the only decision the product asks it to make.
+
+Read `last_value` carefully in that table. Its 0.00 directional accuracy is
+structural (q04) and is not evidence that either candidate has directional skill
+worth having. The row that matters is MAE: A beats the random walk at 118g against
+150g, B does not at 174g.
+
+So B is the better of the two and still does not ship. It loses to the random walk
+on gold error, which is the one comparison `backtest/models.py` says decides
+whether the model is ready, and the table shows only one of the four baselines
+anyway. "Stronger candidate" and "clears the bar" are separate questions, and
+mixing them is how a model with a good-looking table gets deployed.
+"""
+options = [
+  { text = "B: same records, so the MAE/MAPE split says A wins on expensive archetypes and loses everywhere else, and directional accuracy is what the recommendations depend on", correct = true },
+  { text = "A: lowest MAE is the primary metric, and 0.53 directional accuracy is above chance", note = "0.53 over 4,000 records is barely above coin-flipping, and direction is the quantity the buy/hold/sell output is built on. Picking on pooled gold MAE also picks the model that is best on the few most expensive archetypes." },
+  { text = "A: it is the only candidate that beats the last_value MAE, so it is the only one clearing the acceptance bar", note = "It clears the bar against one baseline on one metric. The stated bar is all four baselines, and this table shows only one, so nothing here clears it. The MAE fact is right; the conclusion overreaches." },
+  { text = "Neither: last_value has the worst directional accuracy, so the whole table is broken", note = "last_value's 0.00 is structural rather than a bug in the table: its prediction equals last_known_price, so its predicted direction is always 0. Every other cell in the table is still meaningful." },
+]
+source = "wow_forecaster/backtest/metrics.py"
+anchor = "  Critical for buy/hold/sell recommendations: a model that gets the"
+
+[[question]]
+id = "m05-q16"
+kind = "recall"
+prompt = """
+List what a model-versus-baseline comparison must hold constant to be valid, and
+say which of those this repo currently violates.
+"""
+rubric = [
+  "Same folds and same date range, so both models see the same regimes",
+  "Same series population and the same evaluated record set, so neither is scored on an easier subset",
+  "Same horizon, since error grows with horizon and mixing them makes the number depend on the horizon mix",
+  "Same metric definition, computed by the same code",
+  "Violated today: the model is never run through the harness at all, backtest horizons are [1, 3] against production [1, 7, 28], and the two metric implementations are independent",
+]
+answer = """
+Hold constant: the folds, the series population, the evaluated record set, the
+horizon, and the metric implementation. Vary exactly one thing, the model.
+
+Where this repo stands on each:
+
+Folds and date range. Not comparable. The baselines run through walk-forward folds
+in `backtest/`; the LightGBM model is scored on a single trailing holdout in
+`ml/trainer.py`. Different partitions, so the two numbers were never on the same
+axis.
+
+Series population and evaluated records. Not comparable, and in the same
+direction. The backtest gates series at `min_train_rows = 14` non-null prices per
+fold. Training uses whatever rows the dataset builder emitted. Different
+populations.
+
+Horizon. Not comparable. `backtest.horizons_days = [1, 3]` against
+`features.target_horizons_days = [1, 7, 28]`. Only horizon 1 overlaps, and even
+there the aggregation differs.
+
+Metric implementation. Not comparable, per q12. Two independent implementations
+with different MAPE guards and only one of them computing direction.
+
+So all four are violated at once, which is why the fix is a single piece of work
+rather than four: put `LightGBMForecaster` into the backtest loop behind the
+existing `fit`/`predict` protocol and align the horizon lists. Everything on this
+list becomes constant automatically, because one harness produces every row.
+"""
+source = "config/default.toml"
+anchor = "horizons_days = [1, 3]"
+see_also = ["PLAN.md", "LESSONS.md"]
+
+[[question]]
+id = "m05-q17"
+kind = "recall"
+prompt = """
+Interview question: "How do you know your forecaster is any good?" Give the
+ninety-second answer for this repo, honestly.
+"""
+rubric = [
+  "Start with the bar the repo wrote down: beat all four baselines, each testing one hypothesis about the market",
+  "State plainly that the comparison has never been run, and give the two reasons (the model was never added to the backtest loop, and the horizon lists never matched)",
+  "Name why it matters here specifically: price_mean is both a feature and the basis of the target, so a model that learned nothing posts a respectable MAE",
+  "Say what each metric would tell you: MAE in gold, MAPE for cross-archetype comparison, RMSE ratio for tail misses, directional accuracy for the buy/sell decision",
+  "Close with the concrete next step and what would make you drop the model",
+]
+answer = """
+A version that lands:
+
+"Right now, I do not, and I can tell you exactly why. The repo writes down its own
+acceptance bar: an ML model that cannot beat all four baselines is not ready for
+use. Those baselines each test a hypothesis, random walk, mean reversion, weekly
+seasonality, volatility persistence, so a losing baseline is still informative.
+The problem is that the comparison was never run. The backtest stage only ever
+instantiated the baselines, and the config made it impossible anyway: backtests at
+1 and 3 days, production forecasts at 1, 7 and 28. Only one horizon overlapped.
+
+That matters more here than it would elsewhere, because `price_mean` is both a
+model feature and the basis of the target. A model that learned nothing beyond
+'predict roughly today's price' posts a respectable MAE while being exactly the
+last_value baseline, and nothing in the system could tell those two apart.
+
+The fix is small: the backtest protocol is two methods, `fit` and `predict`, and
+the docstring says it was kept minimal so an ML model could implement it later. So
+drop LightGBM into the loop, align the horizon lists, and read four numbers per
+horizon. MAE in gold for the headline, MAPE because absolute gold cannot be pooled
+across archetypes that differ by orders of magnitude, the RMSE-over-MAE ratio for
+whether a few catastrophic misses are driving it, and directional accuracy because
+the product outputs buy, hold and sell and getting the direction wrong is worse
+than being imprecise.
+
+What would make me drop the model: failing to beat last_value on MAE at any
+horizon. That is the check for whether there is signal at all, and if there is not,
+the honest product is the baseline plus the liquidity and margin ranking, which is
+the part that was doing the work anyway."
+
+The last paragraph is the one that separates a candidate who has metrics from one
+who has a decision rule.
+"""
+source = "wow_forecaster/backtest/models.py"
+anchor = "This protocol is intentionally minimal so ML models can implement the same"
+see_also = ["PLAN.md", "LESSONS.md"]

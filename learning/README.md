@@ -87,9 +87,9 @@ banks/m06.toml           question banks
 labs/lab-01-*.md         lab briefs
 ```
 
-Banks land one part per PR. The curriculum declares all twenty modules from the
-start so the shape of the track is visible; a module without a bank reports as
-"not authored yet" rather than being hidden. A bank with no declared module is an
+All twenty modules are authored (346 questions). The curriculum declares every
+module, so if a future one is added before its bank lands it reports as "not
+authored yet" rather than being hidden. A bank with no declared module is an
 integrity failure, since nothing would ever serve it.
 
 ## The four parts

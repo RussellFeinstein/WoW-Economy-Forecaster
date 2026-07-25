@@ -15,6 +15,7 @@ import pytest
 from typer.testing import CliRunner
 
 from wow_forecaster.cli import app
+from wow_forecaster.learning.loader import REPO_ROOT_ENV
 from wow_forecaster.learning.store import LEARN_DB_ENV
 
 runner = CliRunner()
@@ -26,6 +27,34 @@ SUBCOMMANDS = ["status", "next", "module", "exam", "lab", "validate", "reset"]
 def learn_env(tmp_path):
     """Environment pinning the progress database inside tmp_path."""
     return {LEARN_DB_ENV: str(tmp_path / "progress.db")}
+
+
+@pytest.fixture
+def partial_track(tmp_path, learn_env):
+    """A synthetic content tree with one module authored and one declared-but-bankless.
+
+    The committed track is fully authored, so the "declared module with no bank"
+    path has no real module to exercise. A future milestone re-enters that state
+    by adding a module to the curriculum before its bank lands, so the behavior
+    still matters. Building a two-module tree keeps that coverage without
+    coupling the test to whichever real module happens to be unauthored.
+    """
+    content = tmp_path / "learning"
+    (content / "banks").mkdir(parents=True)
+    (content / "modules").mkdir()
+    (content / "labs").mkdir()
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    (content / "curriculum.toml").write_text(
+        '[[module]]\nid = "m01"\ntitle = "Authored"\npart = "Part I"\n'
+        '[[module]]\nid = "m02"\ntitle = "Bankless"\npart = "Part I"\n',
+        encoding="utf-8",
+    )
+    (content / "banks" / "m01.toml").write_text(
+        '[[question]]\nid = "m01-q01"\nkind = "recall"\n'
+        'prompt = "p"\nanswer = "a"\nrubric = ["x"]\n',
+        encoding="utf-8",
+    )
+    return {**learn_env, REPO_ROOT_ENV: str(tmp_path)}
 
 
 class TestHelp:
@@ -63,8 +92,14 @@ class TestStatus:
         runner.invoke(app, ["learn", "status"], env=learn_env)
         assert (tmp_path / "progress.db").is_file()
 
-    def test_unauthored_modules_are_labelled(self, learn_env):
+    def test_committed_track_is_fully_authored(self, learn_env):
+        """Every module in the shipped curriculum now has a bank."""
         result = runner.invoke(app, ["learn", "status"], env=learn_env)
+        assert "not authored yet" not in result.output
+
+    def test_a_bankless_module_is_labelled_not_authored(self, partial_track):
+        result = runner.invoke(app, ["learn", "status"], env=partial_track)
+        assert result.exit_code == 0, result.output
         assert "not authored yet" in result.output
 
 
@@ -79,16 +114,18 @@ class TestValidate:
         assert result.exit_code == 0, result.output
         assert "1 module(s)" in result.output
 
-    def test_module_scope_on_an_unauthored_bank_exits_one(self, learn_env):
+    def test_module_scope_on_an_unauthored_bank_exits_one(self, partial_track):
         """Scoping is for authoring, so a missing bank is a failure, not a no-op."""
-        result = runner.invoke(app, ["learn", "validate", "-m", "m20"], env=learn_env)
+        result = runner.invoke(app, ["learn", "validate", "-m", "m02"], env=partial_track)
         assert result.exit_code == 1
-        assert "m20" in result.output
+        assert "m02" in result.output
 
 
 class TestNext:
     def test_list_shows_the_queue_without_prompting(self, learn_env):
-        result = runner.invoke(app, ["learn", "next", "--list", "-n", "3"], env=learn_env)
+        result = runner.invoke(
+            app, ["learn", "next", "-m", "m06", "--list", "-n", "3"], env=learn_env
+        )
         assert result.exit_code == 0, result.output
         assert "m06-q01" in result.output
         assert result.output.count("m06-q") == 3
@@ -106,10 +143,10 @@ class TestNext:
         assert result.exit_code == 1
         assert "m99" in result.output
 
-    def test_unauthored_module_exits_one_and_says_what_exists(self, learn_env):
-        result = runner.invoke(app, ["learn", "next", "-m", "m20"], env=learn_env)
+    def test_bankless_module_exits_one_and_says_what_exists(self, partial_track):
+        result = runner.invoke(app, ["learn", "next", "-m", "m02"], env=partial_track)
         assert result.exit_code == 1
-        assert "m06" in result.output
+        assert "m01" in result.output
 
     def test_grading_persists_and_reports_the_next_interval(self, tmp_path, learn_env):
         result = runner.invoke(
@@ -140,8 +177,10 @@ class TestNext:
         assert result.exception is None or isinstance(result.exception, SystemExit)
 
     def test_passed_card_is_not_reserved_the_same_day(self, learn_env):
-        runner.invoke(app, ["learn", "next", "-n", "1"], input="\n3\n", env=learn_env)
-        second = runner.invoke(app, ["learn", "next", "--list", "-n", "1"], env=learn_env)
+        runner.invoke(app, ["learn", "next", "-m", "m06", "-n", "1"], input="\n3\n", env=learn_env)
+        second = runner.invoke(
+            app, ["learn", "next", "-m", "m06", "--list", "-n", "1"], env=learn_env
+        )
         assert "m06-q01" not in second.output
 
 
@@ -152,8 +191,8 @@ class TestModule:
         assert "splits.py" in result.output
         assert "lab-01-purge-embargo" in result.output
 
-    def test_unauthored_module_still_renders(self, learn_env):
-        result = runner.invoke(app, ["learn", "module", "m18"], env=learn_env)
+    def test_bankless_module_still_renders_its_framing(self, partial_track):
+        result = runner.invoke(app, ["learn", "module", "m02"], env=partial_track)
         assert result.exit_code == 0
         assert "not authored yet" in result.output
 
@@ -205,8 +244,8 @@ class TestExam:
         assert conn.execute("SELECT COUNT(*) FROM review_state;").fetchone()[0] == 1
         conn.close()
 
-    def test_unauthored_module_exits_one(self, learn_env):
-        result = runner.invoke(app, ["learn", "exam", "-m", "m20"], env=learn_env)
+    def test_bankless_module_exits_one(self, partial_track):
+        result = runner.invoke(app, ["learn", "exam", "-m", "m02"], env=partial_track)
         assert result.exit_code == 1
 
 
@@ -253,13 +292,15 @@ class TestReset:
         assert "cleared 1" in result.output
 
     def test_declining_the_prompt_keeps_progress(self, learn_env):
-        runner.invoke(app, ["learn", "next", "-n", "1"], input="\n3\n", env=learn_env)
+        runner.invoke(app, ["learn", "next", "-m", "m06", "-n", "1"], input="\n3\n", env=learn_env)
         result = runner.invoke(app, ["learn", "reset"], input="n\n", env=learn_env)
         assert "Cancelled" in result.output
+        # The graded card is still held (progress kept), so it is not re-served today.
         assert "m06-q01" not in runner.invoke(
-            app, ["learn", "next", "--list", "-n", "1"], env=learn_env
+            app, ["learn", "next", "-m", "m06", "--list", "-n", "1"], env=learn_env
         ).output
 
-    def test_scoped_reset_requires_an_authored_module(self, learn_env):
-        result = runner.invoke(app, ["learn", "reset", "-m", "m20", "--yes"], env=learn_env)
+    def test_scoped_reset_rejects_a_module_with_no_bank(self, learn_env):
+        # m99 is not a real module, so it has no question bank to reset.
+        result = runner.invoke(app, ["learn", "reset", "-m", "m99", "--yes"], env=learn_env)
         assert result.exit_code == 1
