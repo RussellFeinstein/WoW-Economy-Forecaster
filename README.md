@@ -172,7 +172,7 @@ tests/
 
 The system does **not** do naive TWW-item → Midnight-item mapping. Instead:
 
-1. **Archetype taxonomy** (`wow_forecaster/taxonomy/archetype_taxonomy.py`) defines 36 economic behavior tags (e.g. `consumable.flask.stat`, `mat.ore.common`).
+1. **Archetype taxonomy** (`wow_forecaster/taxonomy/archetype_taxonomy.py`) defines 40 economic behavior tags (e.g. `consumable.flask.stat`, `mat.ore.common`).
 2. **TWW items** are mapped to these archetypes via the item bootstrapper.
 3. **Models train** on archetype-level time series from TWW.
 4. **Archetype mappings** (`archetype_mappings` table) formally map each TWW archetype to its Midnight equivalent with a confidence score and required rationale.
@@ -683,11 +683,11 @@ pytest tests/test_scripts/          # Bat wrappers: hourly lock guard, daily gat
 
 | Model | Description |
 |---|---|
-| `EventType` | 26 event categories (expansion launch → content drought) |
+| `EventType` | 28 event categories (expansion launch → content drought) |
 | `EventScope` | 4 scopes (global, region, realm_cluster, faction) |
 | `EventSeverity` | 5 severity levels (critical → negligible) |
 | `ArchetypeCategory` | 10 top-level economic categories |
-| `ArchetypeTag` | 36 behavior-specific tags with category-prefix validation |
+| `ArchetypeTag` | 40 behavior-specific tags with category-prefix validation |
 
 ### Core Entities
 
@@ -706,7 +706,7 @@ pytest tests/test_scripts/          # Bat wrappers: hourly lock guard, daily gat
 
 ```
 item_categories               Item hierarchy (slug-based, expansion-aware)
-economic_archetypes           36 behavior tags with transfer_confidence
+economic_archetypes           40 behavior tags with transfer_confidence
 items                         WoW item registry (item_id -> archetype_id FK)
 market_observations_raw       Raw AH snapshots (copper, pre-normalization)
 market_observations_normalized Gold-converted, rolling z-scored, outlier-flagged

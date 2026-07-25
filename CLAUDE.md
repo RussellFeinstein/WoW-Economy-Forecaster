@@ -41,7 +41,7 @@ BLIZZARD_CLIENT_SECRET=...
 
 ## Key Files
 - [wow_forecaster/taxonomy/archetype_taxonomy.py](wow_forecaster/taxonomy/archetype_taxonomy.py) — ArchetypeTag, ArchetypeCategory, CATEGORY_TAG_MAP
-- [wow_forecaster/taxonomy/event_taxonomy.py](wow_forecaster/taxonomy/event_taxonomy.py) — EventType (26), EventScope (4), EventSeverity (5)
+- [wow_forecaster/taxonomy/event_taxonomy.py](wow_forecaster/taxonomy/event_taxonomy.py) — EventType (28), EventScope (4), EventSeverity (5)
 - [wow_forecaster/models/event.py](wow_forecaster/models/event.py) — WoWEvent with is_known_at() backtest bias guard
 - [wow_forecaster/config.py](wow_forecaster/config.py) — AppConfig via load_config()
 - [wow_forecaster/db/schema.py](wow_forecaster/db/schema.py) — 21 tables, apply_schema() idempotent

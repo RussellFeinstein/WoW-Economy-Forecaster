@@ -418,15 +418,16 @@ anchor = "- **Panel data across regions.** EU and KR plus per-realm BoE auctions
 id = "m01-q11"
 kind = "find"
 prompt = """
-The README states how many archetype tags and how many event types exist. Count
-the enum members yourself and compare. Then explain why the taxonomy test suite
-never caught the difference.
+The README and CLAUDE.md state how many archetype tags and event types exist.
+Count the enum members yourself and confirm the docs match. Then explain why,
+until v2.11.2 corrected them, the docs could say 36 and 26 while the enums held
+40 and 28, and the taxonomy test suite never caught the difference.
 """
 rubric = [
-  "ArchetypeTag has 40 members; the README says 36",
-  "EventType has 28 members; the README (and CLAUDE.md) say 26",
+  "ArchetypeTag has 40 members and EventType has 28",
+  "The README, CLAUDE.md, and docs/events.md now agree, corrected in v2.11.2 from 36 and 26",
   "The taxonomy tests assert structure (value uniqueness, every tag in exactly one category, prefix match) and never assert a count",
-  "So the enums grew, the docs did not, and nothing in CI could notice",
+  "So the enums grew, the docs lagged, and nothing in CI could notice; the correction was manual and nothing stops the counts drifting again",
 ]
 answer = """
 Forty tags and twenty-eight event types. Count them with the enums rather than
@@ -436,9 +437,10 @@ by eye:
     from wow_forecaster.taxonomy.event_taxonomy import EventType
     len(ArchetypeTag), len(EventType)   # (40, 28)
 
-The README says 36 and 26 in several places, and so does CLAUDE.md.
+The README, CLAUDE.md, and docs/events.md now say 40 and 28. They said 36 and 26
+until v2.11.2 corrected them, and that history is the more interesting half.
 
-The reason CI is silent is the interesting part.
+The reason CI stayed silent through the drift is the part worth keeping.
 `tests/test_taxonomy/test_archetype_taxonomy.py` is a genuinely good test file:
 it checks that every value is unique, that every tag appears in exactly one
 category's list, that every category has an entry, and that tags carry their
@@ -448,11 +450,13 @@ tag is added, and it is the one nobody wrote.
 
 That is the general shape of documentation drift and it is worth naming: the
 invariants got tested and the counts got written down. A number in prose has no
-test attached unless someone deliberately attaches one, which is exactly the
-problem the anchor guard in this learning track was built to solve for citations.
+test attached unless someone deliberately attaches one. The v2.11.2 fix reset the
+numbers but added no such test, so nothing stops them drifting again. That is
+exactly the problem the anchor guard in this learning track was built to solve
+for citations.
 """
 source = "README.md"
-anchor = "defines 36 economic behavior tags"
+anchor = "defines 40 economic behavior tags"
 see_also = ["wow_forecaster/taxonomy/archetype_taxonomy.py", "PLAN.md"]
 
 [[question]]
@@ -516,7 +520,8 @@ naming convention is stated in the enum docstring rather than left implicit.
 
 What it does not check is the more useful half of the answer.
 
-It says nothing about counts, which is how the README drifted to 36 (q11).
+It says nothing about counts, which is how the README was able to drift to 36
+before v2.11.2 corrected it (q11).
 
 It says nothing about usage. A tag can exist with zero items assigned to it and
 the contract is perfectly happy. `gem.meta` is annotated in its own docstring as
