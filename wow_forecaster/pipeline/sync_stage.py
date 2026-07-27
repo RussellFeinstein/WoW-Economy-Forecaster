@@ -30,7 +30,7 @@ Design notes:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from wow_forecaster.ingestion.cloud_sync import (
@@ -84,11 +84,13 @@ class SyncSnapshotsStage(PipelineStage):
             run:     In-progress :class:`RunMetadata` (mutable).
             since:   Oldest capture to consider.  Defaults to
                 ``cloud_sync.max_backfill_days`` before ``now``, and is always
-                clamped forward to the retention cutoff.
+                clamped forward to the retention cutoff.  Aware values are
+                converted to naive UTC.
             dry_run: Report what would be ingested and touch nothing.
             limit:   Cap on objects ingested this run; overrides the config
                 default.  ``0`` or negative means no cap.
-            now:     Injectable clock (naive UTC) for tests.
+            now:     Injectable clock for tests; aware values are converted
+                to naive UTC.
             s3:      Injectable S3 client for tests.
             env:     Injectable resolved credentials for tests.
 
@@ -101,12 +103,20 @@ class SyncSnapshotsStage(PipelineStage):
         result = self.result
         result.dry_run = dry_run
 
+        # The stage runs on naive UTC end to end (the database stores naive
+        # ISO strings; select_objects_to_ingest() strips key timestamps to
+        # naive), but utcnow() is aware, so the default clock and any aware
+        # caller input are normalized here at the boundary.
         now = now or utcnow()
+        if now.tzinfo is not None:
+            now = now.astimezone(UTC).replace(tzinfo=None)
         retention_cutoff = now - timedelta(
             days=self.config.retention.raw_snapshot_days
         )
         if since is None:
             since = now - timedelta(days=cfg.max_backfill_days)
+        elif since.tzinfo is not None:
+            since = since.astimezone(UTC).replace(tzinfo=None)
         # Never look past the retention horizon: the pruner deletes those rows
         # by observed_at on the next hourly run (API ToS section 2.r).
         since = max(since, retention_cutoff)
