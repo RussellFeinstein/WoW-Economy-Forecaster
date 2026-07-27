@@ -131,7 +131,7 @@ findings themselves are as found on 2026-07-24.
 | Config | TOML via `load_config()`, `config/default.toml` plus gitignored `config/local.toml` |
 | Secrets | `.env` via python-dotenv, `.env.example` documents every key, none committed. Clean |
 | Scheduling | Windows Task Scheduler, four tasks registered by `scripts/setup_tasks.bat`, driven by `.bat` wrappers |
-| Tests | 77 files, ~20,900 lines, 1,628 passing. 34 Windows-only script tests skip on CI |
+| Tests | 77 files, ~20,900 lines, 1,631 passing. 34 Windows-only script tests skip on CI |
 | Dashboard | `dashboard/` sits outside the installable package, reads output files and SQLite directly. No training or inference logic in it |
 | CI | ruff plus pytest on 3.11 and 3.12, PR-gated, branch protection, Dependabot automerge |
 
