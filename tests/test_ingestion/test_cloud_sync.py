@@ -687,3 +687,47 @@ class TestSyncSnapshotsStage:
 
         assert (result.listed, result.selected, result.ingested) == (0, 0, 0)
         assert result.failures == []
+
+
+# ── Naive-UTC clock normalization (issue #95) ─────────────────────────────────
+
+
+class TestNaiveUtcClockNormalization:
+    """Regressions for issue #95.
+
+    Every other test in this file injects a naive ``now``, but the real default
+    clock is the aware ``time_utils.utcnow()``, and the first run against the
+    real bucket crashed before reaching S3.  These tests run the stage with the
+    clock shapes production actually sees, so they use the wall clock on
+    purpose; assertions stay date-boundary-proof (a one-hour-old capture inside
+    a one-day window, nothing keyed to a specific UTC date).
+    """
+
+    def _sync(self, tmp_path, **kwargs):
+        from wow_forecaster.pipeline.sync_stage import sync_snapshots
+
+        db_file = _make_db(tmp_path, [190_001])
+        config = _make_config(tmp_path, db_file)
+        capture = (datetime.now(tz=UTC) - timedelta(hours=1)).replace(
+            minute=16, second=0, microsecond=0, tzinfo=None
+        )
+        stub = StubS3({_key(capture): _envelope_bytes([_record(190_001)])})
+        return sync_snapshots(
+            config, db_path=db_file, s3=stub, env=ENV, dry_run=True, **kwargs
+        )
+
+    def test_default_clock_selects_with_no_since(self, tmp_path):
+        """now=None resolves to the aware utcnow(); selection used to raise."""
+        result = self._sync(tmp_path)
+        assert result.selected == 1
+
+    def test_default_clock_accepts_a_naive_cli_since(self, tmp_path):
+        """The CLI parses --since as naive; max() against the cutoff used to raise."""
+        since = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(days=1)
+        result = self._sync(tmp_path, since=since)
+        assert result.selected == 1
+
+    def test_aware_since_is_normalized_to_naive_utc(self, tmp_path):
+        since = datetime.now(tz=UTC) - timedelta(days=1)
+        result = self._sync(tmp_path, since=since)
+        assert result.selected == 1

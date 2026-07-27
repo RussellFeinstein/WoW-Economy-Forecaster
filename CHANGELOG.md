@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.5] - 2026-07-27
+
+### Fixed
+- `sync-snapshots` crashed with a TypeError before reaching S3 on its first run against the real bucket (issue #95, caught during the #43 acceptance attempt). The stage's default clock is timezone-aware while the CLI's `--since`, the stored coverage timestamps, and the key-timestamp comparisons all run on naive UTC, so `--since` raised at the retention clamp and a bare run raised at object selection; the two coverage queries would also have compared aware parameters against naive stored strings silently. The clock and `--since` are now normalized to naive UTC at the stage boundary. The existing 73 catch-up tests inject naive clocks, which is why none of them saw it; three regression tests now run the stage with the clock shapes production actually sees
+
 ## [2.11.4] - 2026-07-26
 
 ### Fixed

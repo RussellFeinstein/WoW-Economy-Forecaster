@@ -171,7 +171,7 @@ tests/
 | ML | **LightGBM** | Fast training, handles mixed types, interpretable feature importances |
 | HTTP | **httpx** | Async-capable, used for Blizzard OAuth2 + API calls |
 | Reporting | **CLI-first + optional Streamlit** | Terminal reports work headlessly; Streamlit is zero-cost when not needed |
-| Tests | **pytest** | Standard; 1,628 tests across 23 groups |
+| Tests | **pytest** | Standard; 1,631 tests across 23 groups |
 
 ### Transfer Learning Architecture
 
@@ -647,7 +647,7 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 1,628 tests
+# All 1,631 tests
 pytest
 
 # With coverage
