@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.4] - 2026-07-26
+
+### Fixed
+- The README's per-directory test counts, stale in both places they appeared and wrong in eleven of seventeen rows (test_db said 37 against an actual 94, test_reporting 86 against 173), with six groups missing entirely (test_backup, test_dashboard, test_learning, test_viz, and the top-level test_cloud_fetch.py and test_config.py). The counts are gone rather than refreshed: the architecture tree now lists all 23 groups with descriptions and no numbers, the duplicate by-group pytest list is collapsed to a single example, and the only numbers left are the suite total (1,628) and the group count (23), which the tree's own drift history says is the most that manual sweeps can keep honest. Two stale group descriptions also corrected: test_scripts was missing task registration and backup, and several rows adopted the fuller wording from whichever of the two copies had it
+
 ## [2.11.3] - 2026-07-26
 
 ### Added
