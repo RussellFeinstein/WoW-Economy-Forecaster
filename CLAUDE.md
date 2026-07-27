@@ -13,17 +13,6 @@ Category/archetype-based transfer (NOT item-to-item). Python, SQLite, Parquet, T
 
 ## Virtual Environments
 **Always use virtual environments.** Never install packages globally.
-```bash
-python -m venv .venv
-.venv/Scripts/activate  # Windows
-pip install -e ".[dev]"
-```
-
-## Credentials (.env, gitignored)
-```
-BLIZZARD_CLIENT_ID=...
-BLIZZARD_CLIENT_SECRET=...
-```
 
 ## Branch Workflow
 - main is the only permanent branch. A branch protection ruleset (main-pr-only, no bypass actors) requires a pull request for every merge and blocks direct pushes, force pushes, and deletion. This applies to admins too.
@@ -79,14 +68,6 @@ build-datasets       # feature engineering → Parquet
 run-daily-forecast   # train → forecast → recommend
 ```
 `import-auctionator` = historical backfill only, not needed for ongoing operation.
-
-## Snapshot Layout (disk)
-```
-data/raw/snapshots/
-  blizzard_api/YYYY/MM/DD/realm_{realm}_{ts}Z.json
-  blizzard_news/YYYY/MM/DD/news_{ts}Z.json
-```
-Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 
 ## Layer Summary
 

@@ -5,6 +5,14 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Trimmed three derivable setup blocks from CLAUDE.md (the venv command fence, the credentials variable names, and the snapshot layout tree). `.env.example` and `wow_forecaster/ingestion/snapshot.py` remain the source of truth for the removed content
+
+### Fixed
+- `.env.example` updated to name the durable backup bucket `wow-forecaster-db-backups`, matching the bucket as actually provisioned rather than the placeholder name the example carried
+
 ## [2.11.6] - 2026-07-27
 
 ### Fixed
