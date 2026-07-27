@@ -59,7 +59,7 @@ version, hyperparameters, training date range, validation MAE and RMSE,
 `artifact_path`, and `is_active`. It is write-only. Nothing reads it back.
 [wow_forecaster/pipeline/forecast.py:206](wow_forecaster/pipeline/forecast.py)
 picks the model by filesystem mtime glob, and
-[wow_forecaster/cli.py:3620](wow_forecaster/cli.py) picks it lexicographically.
+[wow_forecaster/cli.py:3628](wow_forecaster/cli.py) picks it lexicographically.
 Three selection strategies that can disagree, and the authoritative one is unused.
 
 MLflow with a SQLite backend store and a local artifact root fits because: the
@@ -119,16 +119,19 @@ instead if the Terraform license is a concern.
 
 ### Inventory
 
+Counts and line citations in this document were refreshed on 2026-07-26. The
+findings themselves are as found on 2026-07-24.
+
 | Concern | Where |
 |---|---|
-| Entry points | `wow-forecaster` / `wowfc` Typer CLI, 40 commands plus the `learn` sub-app, [wow_forecaster/cli.py](wow_forecaster/cli.py) at 4,508 lines |
+| Entry points | `wow-forecaster` / `wowfc` Typer CLI, 40 commands plus the `learn` sub-app, [wow_forecaster/cli.py](wow_forecaster/cli.py) at 4,516 lines |
 | Training | `TrainStage` to `train_models()` in [wow_forecaster/ml/trainer.py](wow_forecaster/ml/trainer.py). Runs unconditionally every day via `run-daily-forecast` |
 | Inference | `ForecastStage` to `run_inference()` in [wow_forecaster/ml/predictor.py](wow_forecaster/ml/predictor.py), batch only, writes `forecast_outputs` |
 | Model artifacts | joblib `.pkl` plus JSON sidecar in `data/outputs/model_artifacts/` (gitignored) |
 | Config | TOML via `load_config()`, `config/default.toml` plus gitignored `config/local.toml` |
 | Secrets | `.env` via python-dotenv, `.env.example` documents every key, none committed. Clean |
 | Scheduling | Windows Task Scheduler, four tasks registered by `scripts/setup_tasks.bat`, driven by `.bat` wrappers |
-| Tests | 71 files, ~19,000 lines, 1,481 passing. 34 Windows-only script tests skip on CI |
+| Tests | 77 files, ~20,900 lines, 1,628 passing. 34 Windows-only script tests skip on CI |
 | Dashboard | `dashboard/` sits outside the installable package, reads output files and SQLite directly. No training or inference logic in it |
 | CI | ruff plus pytest on 3.11 and 3.12, PR-gated, branch protection, Dependabot automerge |
 
@@ -152,10 +155,18 @@ embargo of `h` days. The walk-forward split generator in
 [wow_forecaster/backtest/splits.py](wow_forecaster/backtest/splits.py) is correct
 and does not have this problem. Only the LightGBM training split does.
 
+The same function carries a second, quieter leak vector. When the data covers
+fewer calendar dates than `validation_split_days`, it falls back to an 80/20 split
+by row index ([wow_forecaster/ml/trainer.py:93-97](wow_forecaster/ml/trainer.py))
+with no date sort at all, so the validation set is whichever rows Parquet
+row-group order happened to put last. The "NEVER random" warning in the module
+docstring describes the date split; it does not cover this branch. Cold-start
+realms and short windows are exactly where the fallback fires.
+
 **DS-2. LightGBM is never backtested.** `BacktestStage` calls
 `all_baseline_models()` and nothing else
 ([wow_forecaster/pipeline/backtest.py:160](wow_forecaster/pipeline/backtest.py),
-and the same at [wow_forecaster/cli.py:1033](wow_forecaster/cli.py)). A grep for
+and the same at [wow_forecaster/cli.py:1041](wow_forecaster/cli.py)). A grep for
 `LightGBMForecaster` across `wow_forecaster/backtest/` returns nothing. So the
 walk-forward machinery evaluates four naive baselines against each other, and the
 production model is judged only on the single leaked holdout from DS-1. The two
@@ -178,8 +189,23 @@ compute `baseline_mae` as `AVG(abs_error)` over `backtest_fold_results` with no
 from whichever backtest ran last, with no staleness check. It is also an absolute
 gold MAE pooled across archetypes whose price levels differ by orders of
 magnitude, so the ratio moves when the archetype mix changes rather than when the
-model degrades. And because backtest horizons are 1 and 3 while forecasts are 1,
-7, and 28, the 7d and 28d ratios can never be computed at all.
+model degrades. The two sides do not even agree on what the actual price is: the
+live side takes `AVG(price_gold)` over normalized observations on the target date,
+while the baseline side is `abs_error` measured against the daily-aggregate
+`price_mean` the backtest was scored on.
+
+In practice no ratio is computable at any horizon, which is worse than the horizon
+mismatch alone suggests. `persist_backtest_run` sits inside the per-horizon loop
+([wow_forecaster/pipeline/backtest.py:174](wow_forecaster/pipeline/backtest.py)),
+so each horizon opens its own `backtest_run_id` and holds only that horizon's fold
+rows. Both baseline queries take the newest run by `backtest_run_id`, which is
+therefore always the last horizon of the last backtest (3, under
+`backtest.horizons_days = [1, 3]`), and then filter `horizon_days = 1`. That
+matches nothing, so `baseline_mae` is `None` for the 1d check too. And `run_all`
+only ever asks for horizon 1
+([wow_forecaster/monitoring/drift.py:367](wow_forecaster/monitoring/drift.py)), so
+7d and 28d are never requested in the first place. The scheduled error-drift check
+computes nothing at all.
 
 The failure mode is worse in `drift.py` than in `health.py`.
 `_classify_error_drift(None)` returns `DriftLevel.NONE`, so "cannot compute"
@@ -204,18 +230,20 @@ Also: all three notebooks have zero stored outputs across all 48 code cells, whi
 `.gitignore` states "Notebooks in notebooks/ are committed for portfolio display."
 They currently display nothing.
 
-Doc drift found along the way: README says 37 model features (actual 40), 23
-tables in one place and 21 in another (actual 23), "1,200+ tests" in a badge and
-"1,400+" in the body (actual 1,481), 39 CLI commands (actual 40; the audit's own
-"41" was itself wrong, and all three numbers were corrected when the learning
-track landed in v2.11.0).
+Doc drift found along the way, all four since corrected: README said 37 model
+features (actual 40), 23 tables in one place and 21 in another (actual 23),
+"1,200+ tests" in a badge and "1,400+" in the body (1,481 at the time), and 39 CLI
+commands (actual 40; the audit's own "41" was itself wrong). The test and command
+counts were fixed when the learning track landed in v2.11.0. The feature and table
+counts stayed wrong until v2.11.3, which also added the two `daily_rollup_*` tables
+the README's schema listing had never included.
 
 ### MLOps story
 
 | Lifecycle concern | State |
 |---|---|
 | Orchestration and scheduling | **Partial.** Real stage abstraction with provenance, run metadata, and config snapshots. Driven by Windows `.bat` and Task Scheduler with genuinely thoughtful hardening (lock takeover, wake-to-run, silent execution, state preservation). Windows-only, so an MLOps reader cannot run any of it |
-| Retraining trigger | **Absent as designed.** Retrains from scratch daily regardless of need, and `_register_model` promotes the new model unconditionally. No champion-challenger, no promotion gate. `auto_retrain_on_critical` exists and is off |
+| Retraining trigger | **Absent as designed.** Retrains from scratch daily regardless of need, and `_register_model` promotes the new model unconditionally. No champion-challenger, no promotion gate. `auto_retrain_on_critical` is declared in config and read by no code at all, so setting it true changes nothing |
 | Experiment tracking | **Absent.** No run comparison, no param sweep history |
 | Model registry | **Partial and unused.** `model_metadata` has the right columns including `is_active`. Serving ignores it and globs by mtime |
 | Packaging and reproducibility | **Weak.** No Dockerfile, no lockfile, all deps floating `>=`. `dashboard/requirements.txt` duplicates dependency info and can drift from `pyproject.toml`. Good partial credit: `features_hash` on every forecast, `config_snapshot` on every run, dataset manifests |
@@ -247,7 +275,7 @@ worst version of this problem and it is absent. Real items, in order:
    config/default.toml." They no longer do, which is the demo bug above.
 3. **Model selection by filesystem mtime.** Ties serving to a local filesystem
    layout and bypasses the registry.
-4. **`cli.py` at 4,508 lines.** Not blocking: the stage classes are already
+4. **`cli.py` at 4,516 lines.** Not blocking: the stage classes are already
    importable without Typer, so serving can call them directly. Note it, do not
    schedule it.
 5. **Non-injectable clocks in about 20 modules.** The project already knows the
@@ -283,7 +311,9 @@ wow_forecaster/               unchanged
 
 ### README outline
 
-Currently 851 lines, roughly 70 percent CLI reference, zero results, zero images.
+Currently 894 lines, of which the CLI reference is about a third (325 lines) and
+another large block is setup. No results anywhere, and the only image is the
+architecture diagram, which renders but shows structure rather than findings.
 Target is that both readers find their story above the fold.
 
 ```

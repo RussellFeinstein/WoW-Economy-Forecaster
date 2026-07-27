@@ -44,7 +44,7 @@ BLIZZARD_CLIENT_SECRET=...
 - [wow_forecaster/taxonomy/event_taxonomy.py](wow_forecaster/taxonomy/event_taxonomy.py) — EventType (28), EventScope (4), EventSeverity (5)
 - [wow_forecaster/models/event.py](wow_forecaster/models/event.py) — WoWEvent with is_known_at() backtest bias guard
 - [wow_forecaster/config.py](wow_forecaster/config.py) — AppConfig via load_config()
-- [wow_forecaster/db/schema.py](wow_forecaster/db/schema.py) — 21 tables, apply_schema() idempotent
+- [wow_forecaster/db/schema.py](wow_forecaster/db/schema.py): 23 tables, apply_schema() idempotent
 - [wow_forecaster/pipeline/base.py](wow_forecaster/pipeline/base.py) — PipelineStage ABC
 - [wow_forecaster/cli.py](wow_forecaster/cli.py) — Typer app (40 commands + the `learn` sub-app)
 - [config/default.toml](config/default.toml) — static config
@@ -125,7 +125,7 @@ Each file: `{"_meta": {..., "written_at": "..."}, "data": [...]}`
 - [wow_forecaster/pipeline/orchestrator.py](wow_forecaster/pipeline/orchestrator.py) — HourlyOrchestrator: 7-step pipeline
 - Drift detection: z-score of means per archetype/realm series; outlier rows excluded
 - Adaptive CI chain: drift check → uncertainty_mult in drift_check_results → ForecastStage reads it → widens CI
-- DB migration 0004: drift_check_results + model_health_snapshots (18 tables + migration 0005 adds 3 more = 21 total)
+- DB migration 0004: drift_check_results + model_health_snapshots (18 tables at that point; migration 0005 adds 3 more for 21, and the two daily_rollup_* tables added later bring schema.py to its current 23)
 - Rollup step UTC anchor (v2.7.5, issue #61): step 3.5 anchors on an injectable UTC clock (run(now=...), pruner-style None default) and upserts BOTH the previous and current UTC dates per realm; the previous-date upsert is load-bearing (observations after the last pre-UTC-midnight run only arrive in post-midnight runs, so it is what completes each UTC day's tail) (previously date.today() local: self-healed daily but rollups lagged up to ~4h intraday and a machine down past local midnight silently lost the tail). Both rollup UPSERTs still use a DATE(observed_at)=? predicate (table scan; follow-up issue filed at #61 close-out for the #59-style range rewrite)
 
 ### Reporting (v0.7.0 / v2.1.0)

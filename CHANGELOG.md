@@ -5,6 +5,19 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `docs/audit-pr-89.md`: the audit that produced the corrections below. PR #89 was re-checked claim by claim against the code, and the record keeps both halves of the result: every substantive technical finding held up, and the mechanical parts (one figure that was never right, three citations gone stale, three findings the PR understated) did not
+
+### Fixed
+- The model feature count and the table count in the docs, the last two of the four drifts `PLAN.md` named and the only two still wrong. `README.md` said 37 input features in two places against an actual 40, and 21 tables in two places against an actual 23, while its own highlights line already said 23. `CLAUDE.md` carried the same 21. The schema listing was short two rows, `daily_rollup_archetype` and `daily_rollup_item`, which is how the listing and its header managed to agree with each other while both disagreed with `schema.py`
+- Stale citations in `PLAN.md`. The `learn` sub-app inserted eight lines at the top of `cli.py` after PR #89 merged, so `cli.py:3620` and `cli.py:1033` each landed short of the code they cited and the 4,508-line figure was two releases old. The inventory table had also half-drifted: its command row was refreshed when the learning track landed but its test row still described the repo at merge (71 files, 1,481 passing). Both rows now carry an as-of date, so the next reader can tell which numbers were re-checked and when
+- The README size claim in `PLAN.md`, which was never right rather than drifted. "Roughly 70 percent CLI reference" measured nothing: the CLI reference is 325 of 894 lines, about a third. "Zero images" was wrong too, since the architecture diagram renders. The point behind both stands and now says what it means, which is that there is no chart of anything the model actually did
+
+### Changed
+- Three `PLAN.md` findings sharpened, each of which understated the defect it described. DS-3 said the 7d and 28d error-drift ratios can never be computed. None of them can: `persist_backtest_run` sits inside the per-horizon loop, so every horizon opens its own `backtest_run_id` and the newest row is always the last horizon of the last backtest, while both baseline queries take that newest run and then filter for horizon 1, which matches nothing. The scheduled drift check therefore computes no baseline at any horizon and reports no drift rather than unknown. DS-1 gained the second leak vector sitting in the same function, an 80/20 fallback split that slices by row index with no date sort at all, which the module docstring's "NEVER random" warning does not cover. And `auto_retrain_on_critical` is not merely off, it has no reader anywhere in the codebase, so setting it true changes nothing
+
 ## [2.11.2] - 2026-07-24
 
 ### Fixed

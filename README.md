@@ -67,7 +67,7 @@ graph LR
 wow_forecaster/
 ├── taxonomy/        # Pure enums: EventType, ArchetypeCategory, ArchetypeTag
 ├── models/          # Pydantic v2 domain models (frozen/immutable value objects)
-├── db/              # SQLite: connection, schema DDL (21 tables), migrations, repos
+├── db/              # SQLite: connection, schema DDL (23 tables), migrations, repos
 ├── pipeline/        # 7 stages: ingest, normalize, feature_build, train,
 │                    #           forecast, recommend, orchestrator (backtest separate)
 ├── ingestion/       # Blizzard live client, snapshot writer, item bootstrapper,
@@ -75,7 +75,7 @@ wow_forecaster/
 ├── features/        # Daily agg, lag/rolling, event features, archetype features,
 │                    # dataset builder → 48-col training / 45-col inference Parquet
 ├── backtest/        # Walk-forward splits, baseline models, metrics, reporter
-├── ml/              # LightGBM: feature selector (37 cols), trainer, predictor
+├── ml/              # LightGBM: feature selector (40 cols), trainer, predictor
 ├── recipes/         # Blizzard recipe client, seeder, repo, margin calculator
 ├── recommendations/ # Scorer (5-component formula), ranker, reporter (CSV/JSON)
 │                    # crafting_advisor: 6-window margin compression/expansion
@@ -702,7 +702,7 @@ pytest tests/test_scripts/          # Bat wrappers: hourly lock guard, daily gat
 
 ---
 
-## SQLite Schema (21 tables)
+## SQLite Schema (23 tables)
 
 ```
 item_categories               Item hierarchy (slug-based, expansion-aware)
@@ -710,6 +710,8 @@ economic_archetypes           40 behavior tags with transfer_confidence
 items                         WoW item registry (item_id -> archetype_id FK)
 market_observations_raw       Raw AH snapshots (copper, pre-normalization)
 market_observations_normalized Gold-converted, rolling z-scored, outlier-flagged
+daily_rollup_archetype        Per-day archetype price/volume sums (feature spine source)
+daily_rollup_item             Per-day item price/volume sums (item-level forecasts)
 archetype_mappings            TWW -> Midnight transfer map (rationale required)
 wow_events                    Economy events with announced_at bias guard
 event_archetype_impacts       Event x archetype impact direction/magnitude/lag
@@ -764,7 +766,7 @@ The dataset builder produces two Parquet files per run:
 
 **Feature groups:** price (9), volume (3), lag (5), rolling (6), momentum (3), temporal (4), event (8), archetype (5), transfer (2), target (3 — training only).
 
-The ML model uses **37 input features** (subset of inference columns, selected by `wow_forecaster/ml/feature_selector.py`).
+The ML model uses **40 input features** (subset of inference columns, selected by `wow_forecaster/ml/feature_selector.py`).
 
 ---
 
