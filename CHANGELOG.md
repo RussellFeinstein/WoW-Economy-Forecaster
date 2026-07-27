@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.11.6] - 2026-07-27
 
 ### Fixed
 - The missing-credentials CLI test failed on any machine whose real `.env` carries `SNAPSHOT_S3_*` values (issue #97): `load_config()` re-reads `.env` mid-invocation and refilled the variables the test had deleted, sending a unit test into the real bucket and the production database. The test now stubs out dotenv loading, so it exercises the named-missing-vars path regardless of what the developer's `.env` contains
