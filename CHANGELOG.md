@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.11.3] - 2026-07-26
 
 ### Added
 - `docs/audit-pr-89.md`: the audit that produced the corrections below. PR #89 was re-checked claim by claim against the code, and the record keeps both halves of the result: every substantive technical finding held up, and the mechanical parts (one figure that was never right, three citations gone stale, three findings the PR understated) did not
