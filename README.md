@@ -136,23 +136,28 @@ scripts/
 └── setup_tasks.bat           # One-shot Windows Task Scheduler registration
 
 tests/
-├── test_backtest/        # Splits, models, metrics (60 tests)
-├── test_cli/             # CLI smoke tests (54 tests)
-├── test_db/              # Schema + repositories + migrations (37 tests)
-├── test_events/          # Seed loader, event imports (24 tests)
-├── test_features/        # Feature engineering, no-leakage (81 tests)
-├── test_governance/      # Source policies, preflight, freshness (84 tests)
-├── test_ingestion/       # Snapshots, event CSV, persistence (73 tests)
-├── test_ml/              # Feature selector, LightGBM (44 tests)
-├── test_models/          # Pydantic validation (61 tests)
-├── test_monitoring/      # Drift, adaptive, orchestrator (73 tests)
-├── test_pipeline/        # Pipeline interfaces, normalize (36 tests)
-├── test_recipes/         # Recipe repo, seeder, margin calculator (21 tests)
-├── test_recommendations/ # Scorer, ranker, item overlay, crafting (133 tests)
-├── test_reporting/       # Reader, formatters, export (86 tests)
-├── test_scheduler/       # Scheduler daemon (26 tests)
-├── test_scripts/         # Bat wrappers: hourly lock guard, daily gate, health alerting, Windows-only (17 tests)
-└── test_taxonomy/        # Taxonomy integrity (30 tests)
+├── test_backtest/        # Splits, models, metrics
+├── test_backup/          # Durable backup build, prune, upload
+├── test_cli/             # CLI smoke tests
+├── test_cloud_fetch.py   # Cloud capture: fetch, sanity floor, gap guard
+├── test_config.py        # Config loading and validation
+├── test_dashboard/       # Dashboard data loaders
+├── test_db/              # Schema + repositories + migrations
+├── test_events/          # Seed loader, event imports
+├── test_features/        # Feature engineering, no-leakage
+├── test_governance/      # Source policies, preflight, freshness, pruner
+├── test_ingestion/       # Snapshots, cloud sync, event CSV, persistence
+├── test_learning/        # Learning track: loader, scheduler, session, store, bank integrity
+├── test_ml/              # LightGBM training, inference, cold-start blending
+├── test_models/          # Pydantic validation
+├── test_monitoring/      # Drift, adaptive, orchestrator
+├── test_pipeline/        # Pipeline interfaces, normalize, item forecasts
+├── test_recipes/         # Recipe repo, seeder, margin calculator
+├── test_recommendations/ # Scorer, ranker, item overlay, crafting advisor
+├── test_reporting/       # Reader, formatters, export, TSM export, health
+├── test_scheduler/       # Scheduler daemon
+├── test_scripts/         # Bat wrappers: lock guard, freshness gate, health alerting, task registration, backup (Windows-only)
+└── test_taxonomy/        # Taxonomy integrity
 ```
 
 ### Key Design Decisions
@@ -166,7 +171,7 @@ tests/
 | ML | **LightGBM** | Fast training, handles mixed types, interpretable feature importances |
 | HTTP | **httpx** | Async-capable, used for Blizzard OAuth2 + API calls |
 | Reporting | **CLI-first + optional Streamlit** | Terminal reports work headlessly; Streamlit is zero-cost when not needed |
-| Tests | **pytest** | Standard; 1,000+ tests across 20 groups |
+| Tests | **pytest** | Standard; 1,628 tests across 23 groups |
 
 ### Transfer Learning Architecture
 
@@ -642,30 +647,14 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 1,000+ tests
+# All 1,628 tests
 pytest
 
 # With coverage
 pytest --cov=wow_forecaster --cov-report=term-missing
 
-# By group
-pytest tests/test_recommendations/  # Scorer, ranker, item overlay, crafting advisor (160 tests)
-pytest tests/test_cli/              # CLI smoke tests (54 tests)
-pytest tests/test_governance/       # Source policies, preflight, freshness, pruner (100 tests)
-pytest tests/test_reporting/        # Reader, formatters, export, TSM export, health (125 tests)
-pytest tests/test_monitoring/       # Drift, adaptive, orchestrator (73 tests)
-pytest tests/test_ingestion/        # Ingestion + snapshots (73 tests)
-pytest tests/test_features/         # Feature engineering (81 tests)
-pytest tests/test_backtest/         # Backtest framework (60 tests)
-pytest tests/test_models/           # Pydantic validation (61 tests)
-pytest tests/test_pipeline/         # Pipeline interfaces, normalize, item forecasts (68 tests)
-pytest tests/test_ml/               # LightGBM training, inference, cold-start blending (81 tests)
-pytest tests/test_scheduler/        # Scheduler daemon (26 tests)
-pytest tests/test_db/               # Schema + repositories + migrations (37 tests)
-pytest tests/test_events/           # Seed loader, event imports (24 tests)
-pytest tests/test_taxonomy/         # Taxonomy integrity (30 tests)
-pytest tests/test_recipes/          # Recipe repo, seeder, margin calculator (21 tests)
-pytest tests/test_scripts/          # Bat wrappers: hourly lock guard, daily gate, health alerting, Windows-only (17 tests)
+# By group: any tests/ subdirectory runs standalone, for example
+pytest tests/test_backtest/
 ```
 
 ---
