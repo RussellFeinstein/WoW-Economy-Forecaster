@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.8] - 2026-07-27
+
+### Changed
+- M1 work order resequenced to carry the four repair issues that accumulated since it was written: #70 and #71 (filed from the #11 day-one verification) and #100 and #101 (filed from the 2026-07-24 portfolio audit). ROADMAP step 6 and the M1 milestone header updated; the lab-01 instructions now point at #100 instead of telling the reader to file it
+
 ## [2.11.7] - 2026-07-27
 
 ### Changed

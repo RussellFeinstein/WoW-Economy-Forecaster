@@ -21,17 +21,17 @@ mis-scored.
 
 ## Before you write any code
 
-**File the issue.** There is no issue for this yet, and filing it is part of the
-lab. It belongs in milestone M1 (model validation and monitoring), next to #16.
-The body should state the defect, the per-horizon contamination table above, the
-second-order early-stopping effect, and the fix. Link `LESSONS.md` and the
-`PLAN.md` DS-1 finding rather than restating them.
+**Read the issue.** This defect is filed as
+[#100](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/100) in
+milestone M1. Read it alongside the `PLAN.md` DS-1 finding and `LESSONS.md`
+before touching code: the issue carries the acceptance bar the PR must clear,
+including the second leak vector in the short-data 80/20 fallback.
 
 Then cut the branch from the latest main:
 
 ```
 git checkout main && git pull --ff-only
-git checkout -b fix/<issue>-purge-embargo-training-split
+git checkout -b fix/100-purge-embargo-training-split
 ```
 
 ## Write the failing test first
