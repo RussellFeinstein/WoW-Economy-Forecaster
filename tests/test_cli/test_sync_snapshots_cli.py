@@ -59,6 +59,12 @@ class TestMissingCredentials:
     def test_exits_one_and_names_the_missing_variables(self, monkeypatch):
         from wow_forecaster.ingestion.cloud_sync import REQUIRED_ENV
 
+        # load_config() re-reads the repo's real .env mid-invocation, which
+        # would refill the deleted variables on a machine with credentials and
+        # then hit the real bucket from a unit test (issue #97).
+        monkeypatch.setattr(
+            "wow_forecaster.config.load_dotenv", lambda *args, **kwargs: None
+        )
         for name in REQUIRED_ENV:
             monkeypatch.delenv(name, raising=False)
         result = runner.invoke(app, ["sync-snapshots", "--dry-run"])
