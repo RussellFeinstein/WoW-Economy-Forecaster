@@ -122,10 +122,8 @@ workflow restores the newest object on a GitHub Actions runner daily and runs:
 The workflow authenticates with a read-only token (repository secrets
 `BACKUP_S3_*`), so CI can never modify or delete backups. The same module runs
 locally against a downloaded file before a restore:
-`python -m wow_forecaster.backup.verify <file.db.gz>`. The incident procedure
-for a failed check is tracked in
-[#106](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/106)
-and will land as `docs/integrity-incidents.md`.
+`python -m wow_forecaster.backup.verify <file.db.gz>`. Incident procedure for
+a failed check: [integrity-incidents.md](integrity-incidents.md).
 
 ## Object layout
 
