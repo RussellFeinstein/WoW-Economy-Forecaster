@@ -391,6 +391,20 @@ the rigorous version and stay in M1.
 
 The portability unblock. Everything below depends on it.
 
+Update 2026-07-28: this phase now carries a second driver beyond the portfolio
+story. The desktop's memory instability produced a live integrity incident on
+the 25.7 GB production DB (record on issue #106), and the hardening decision
+taken that day splits the response in two. The verification tier shipped
+immediately (#104 backup verification in CI, #105 the durable integrity scope,
+#106 the incident runbook). Moving compute and the database off the box is
+deliberately NOT a standalone hardening project: it is this phase plus Phase 4,
+scheduled sooner because the hardware argues for it. The hosting choice (a
+Hetzner-class VPS at roughly $5 to $8 a month, or a comparable option) is
+decided when this phase starts, not before. Hardware spend on the box itself
+waits for a free MemTest86 per-stick diagnosis; #107 (item forecasts from
+daily_rollup_item) is the prerequisite that lets the daily ML run from a
+restored durable backup wherever it lands.
+
 - Stand up the orchestrator chosen in OD-1 over the existing stage classes. Do
   not rewrite the stages. Wrap them.
 - Model the pipeline as assets or tasks matching what already exists: rollups,
