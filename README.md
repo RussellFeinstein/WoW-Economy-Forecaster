@@ -171,7 +171,7 @@ tests/
 | ML | **LightGBM** | Fast training, handles mixed types, interpretable feature importances |
 | HTTP | **httpx** | Async-capable, used for Blizzard OAuth2 + API calls |
 | Reporting | **CLI-first + optional Streamlit** | Terminal reports work headlessly; Streamlit is zero-cost when not needed |
-| Tests | **pytest** | Standard; 1,631 tests across 23 groups |
+| Tests | **pytest** | Standard; 1,651 tests across 23 groups |
 
 ### Transfer Learning Architecture
 
@@ -360,6 +360,21 @@ wow-forecaster backup-durable-db       [--output-dir PATH] [--upload/--no-upload
 4. `scripts/setup_tasks.bat` registers `WoWForecaster-Backup` (daily 07:30). The
    scheduled health check (`run_healthcheck.bat`) then flags a stale backup via
    `check-data-health --backup-stale-hours 30`.
+
+**Off-box verification (one time, in the GitHub repository):** the
+[Verify durable backup](.github/workflows/verify-backup.yml) workflow restores
+the newest backup object on a CI runner every day and checks integrity, foreign
+keys, row-count floors, and no-shrink against the previous object. A missing or
+stale object fails the run rather than skipping. To activate it, add four
+repository secrets named `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`,
+`BACKUP_S3_ACCESS_KEY_ID`, and `BACKUP_S3_SECRET_ACCESS_KEY`, holding a
+read-only R2 token scoped to the backup bucket (not the read-write token from
+`.env`). The same checks run locally against a downloaded file before a
+restore:
+
+```bash
+python -m wow_forecaster.backup.verify path/to/durable_YYYYMMDDTHHMMSSZ.db.gz
+```
 
 ### Reporting
 
@@ -647,7 +662,7 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 1,631 tests
+# All 1,651 tests
 pytest
 
 # With coverage

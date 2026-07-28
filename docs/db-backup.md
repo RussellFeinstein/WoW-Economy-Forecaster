@@ -101,6 +101,32 @@ default) flags the newest backup when it is older than N hours, and
 window a stale ingest does. The check is off by default so a stale backup never
 trips the daily forecast's freshness gate.
 
+### Verification: the backup is read back daily (issue #104)
+
+Uploading is not enough: `build_durable_db` checks foreign keys on the file it
+builds, but nothing after that ever read the object back, so a backup corrupted
+at build time would upload green every night. The machine that builds backups
+has a documented memory-corruption history, which makes "verify on this machine"
+circular; the [Verify durable backup](../.github/workflows/verify-backup.yml)
+workflow restores the newest object on a GitHub Actions runner daily and runs:
+
+- `PRAGMA integrity_check` and `PRAGMA foreign_key_check` on the restored file.
+- Row-count floors: the key durable tables must be non-empty.
+- No-shrink: `daily_rollup_archetype`, `daily_rollup_item`, and
+  `forecast_outputs` are append-only, so a count below the previous object's is
+  data loss, and fails.
+- Freshness: a newest object older than `BACKUP_VERIFY_MAX_AGE_HOURS`
+  (default 30) fails the run. So does an empty bucket. A missing backup is a
+  failure, not a skip.
+
+The workflow authenticates with a read-only token (repository secrets
+`BACKUP_S3_*`), so CI can never modify or delete backups. The same module runs
+locally against a downloaded file before a restore:
+`python -m wow_forecaster.backup.verify <file.db.gz>`. The incident procedure
+for a failed check is tracked in
+[#106](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/106)
+and will land as `docs/integrity-incidents.md`.
+
 ## Object layout
 
 ```
@@ -154,6 +180,10 @@ credential values:
    `WoWForecaster-Backup` alongside the existing three tasks).
 7. Trigger once by hand: `schtasks /Run /TN "WoWForecaster-Backup"`, then confirm
    an object appears under `db_backups/` at roughly a few MB.
+8. For off-box verification: create a second R2 API token scoped to the same
+   bucket with read-only access, add it as the four `BACKUP_S3_*` repository
+   secrets on GitHub, and dispatch the "Verify durable backup" workflow once to
+   confirm a green run.
 
 ## Restore
 
@@ -176,6 +206,8 @@ is copied, so migrations do not re-run against an already-current schema.
 - `check-data-health --backup-stale-hours 30` (run by `run_healthcheck.bat`)
   raises the alert window when the newest backup goes stale, catching a task that
   has silently stopped running.
+- The daily verification workflow goes red when the newest object is corrupt,
+  incomplete, shrunk, stale, or missing, independent of anything on the desktop.
 
 ## Out of scope, noted for later
 

@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.12.0] - 2026-07-28
+
+### Added
+- Daily off-box verification of the durable backup (issue #104). A scheduled GitHub Actions workflow restores the newest `db_backups/` object on a CI runner and checks integrity, foreign keys, row-count floors, and no-shrink of the append-only tables against the previous object. A corrupt, incomplete, shrunk, stale, or missing backup turns the run red; nothing skips. Until now the backup was uploaded nightly and never read back, so a backup corrupted at build time would have surfaced only at restore time. Verification runs off the desktop on purpose: the machine that builds the backups has a documented memory-corruption history, so checking there is circular. The same module verifies a downloaded file before a restore: `python -m wow_forecaster.backup.verify <file.db.gz>`. Activation needs four read-only `BACKUP_S3_*` repository secrets (see README and docs/db-backup.md)
+
 ## [2.11.8] - 2026-07-27
 
 ### Changed

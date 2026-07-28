@@ -1,0 +1,57 @@
+# Daily off-box verification of the durable backup (issue #104).
+#
+# The backup task uploads a .db.gz every morning (docs/db-backup.md); nothing
+# ever read it back until this workflow. It restores the newest object on the
+# runner and checks integrity, foreign keys, row-count floors, and no-shrink
+# against the previous object. The runner's RAM is not the suspect component
+# the way the desktop's is, so a red run here means the backup itself is bad
+# (or missing, or stale), not that the check misfired.
+#
+# Secrets are added by hand in repository settings, never by agents: the four
+# BACKUP_S3_* values below, holding a READ-ONLY token scoped to the backup
+# bucket (separate from the read-write token in the desktop's .env).
+
+name: Verify durable backup
+
+on:
+  schedule:
+    # After the desktop's 07:30 local backup task has built and uploaded
+    # (~11:35 UTC in summer, ~12:35 UTC in winter). A missing or stale object
+    # at this hour is a failure, not a skip.
+    - cron: "0 14 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-backup
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install minimal dependencies
+        # --no-deps keeps the job lean: the verifier's import chain is stdlib
+        # plus lazily imported boto3.
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-deps .
+          pip install boto3
+
+      - name: Download and verify the newest backup
+        env:
+          BACKUP_S3_ENDPOINT: ${{ secrets.BACKUP_S3_ENDPOINT }}
+          BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+          BACKUP_S3_ACCESS_KEY_ID: ${{ secrets.BACKUP_S3_ACCESS_KEY_ID }}
+          BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_S3_SECRET_ACCESS_KEY }}
+        run: python -m wow_forecaster.backup.verify
