@@ -97,6 +97,15 @@ class HealthReport:
                           ``backup_stale_hours`` (or none exists) and the check
                           was enabled.
         backup_stale_hours: Threshold used to compute ``backup_is_stale``.
+        integrity_checked: True when an integrity scope other than "none" ran.
+                          Opt-in like the backup check, so page-level checks
+                          never run for callers that did not ask (the daily
+                          forecast gate).
+        integrity_tables_checked: Durable tables covered by the scoped
+                          ``PRAGMA integrity_check``.
+        integrity_failures: Table name -> integrity_check messages for every
+                          table that did not come back "ok". Non-empty joins
+                          ``has_failures``.
     """
 
     generated_at:           str
@@ -119,6 +128,9 @@ class HealthReport:
     backup_age_hours:       float | None        = None
     backup_is_stale:        bool                   = False
     backup_stale_hours:     float                  = 0.0
+    integrity_checked:      bool                   = False
+    integrity_tables_checked: int                  = 0
+    integrity_failures:     dict[str, list[str]]   = field(default_factory=dict)
 
     @property
     def has_failures(self) -> bool:
@@ -128,10 +140,49 @@ class HealthReport:
             or self.lock_is_stale
             or self.retention_violation
             or self.backup_is_stale
+            or bool(self.integrity_failures)
         )
 
 
 # ── Query helpers ─────────────────────────────────────────────────────────────
+
+def _integrity_check_durable(conn: sqlite3.Connection) -> tuple[dict[str, list[str]], int]:
+    """Table-scoped ``PRAGMA integrity_check`` over every durable table.
+
+    Skips the two per-observation tables (the same exclusion set the durable
+    backup uses): they dominate the DB, a full check of them costs ~25 minutes
+    on the production file, and they are a rebuildable cache (the snapshot
+    bucket holds their entire 30-day retention window). The durable tables
+    check in seconds. Table-scoped integrity_check needs SQLite 3.33+.
+
+    Returns (failures, tables_checked) where failures maps each non-ok table
+    to its integrity_check messages. A table that raises (a badly corrupted
+    page can) is reported as a failure, never as a crash.
+    """
+    from wow_forecaster.backup.durable_backup import EXCLUDED_TABLES
+
+    failures: dict[str, list[str]] = {}
+    checked = 0
+    tables = [
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+    ]
+    for name in tables:
+        if name in EXCLUDED_TABLES:
+            continue
+        try:
+            rows = conn.execute(f'PRAGMA integrity_check("{name}")').fetchall()
+            messages = [str(r[0]) for r in rows]
+        except sqlite3.DatabaseError as exc:
+            messages = [f"unreadable: {exc}"]
+        if messages != ["ok"]:
+            failures[name] = messages
+        checked += 1
+    return failures, checked
+
 
 def _age_hours(ts_iso: str | None) -> float | None:
     """Return hours between an ISO timestamp and now (UTC).  None if ts_iso is None."""
@@ -254,6 +305,7 @@ def collect_health_report(
     retention_days:        int   = 30,
     backup_dir:            Path | str | None = None,
     backup_stale_hours:    float = 0.0,
+    integrity_scope:       str   = "none",
 ) -> HealthReport:
     """Build a full data collection health report.
 
@@ -285,10 +337,23 @@ def collect_health_report(
                                forecast freshness gate).
         backup_stale_hours:    Age beyond which the newest backup is stale.
                                Only consulted when ``backup_dir`` is given.
+        integrity_scope:       "none" (default) skips page-level checks;
+                               "durable" runs a table-scoped
+                               ``PRAGMA integrity_check`` over every table
+                               except the two per-observation tables (issue
+                               #105).  Opt-in like the backup check, so the
+                               daily forecast gate never pays for it.
 
     Returns:
         :class:`HealthReport` with all findings populated.
+
+    Raises:
+        ValueError: On an unknown ``integrity_scope``.
     """
+    if integrity_scope not in ("none", "durable"):
+        raise ValueError(
+            f"Unknown integrity_scope {integrity_scope!r}; expected 'none' or 'durable'"
+        )
     if as_of is None:
         as_of = datetime.now(tz=UTC).date()
     now_iso = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -405,6 +470,13 @@ def collect_health_report(
         else:
             report.backup_is_stale = True
 
+    # ── Durable-table integrity (opt-in; issue #105) ──────────────────────────
+    if integrity_scope == "durable":
+        report.integrity_checked = True
+        report.integrity_failures, report.integrity_tables_checked = (
+            _integrity_check_durable(conn)
+        )
+
     return report
 
 
@@ -478,6 +550,21 @@ def format_health_report(report: HealthReport) -> str:
             lines.append(
                 f"  Newest backup    : {_age_str(report.backup_age_hours)} "
                 f"(limit {report.backup_stale_hours:.0f}h){bak_mark}"
+            )
+
+    if report.integrity_checked:
+        if report.integrity_failures:
+            lines.append(
+                f"  Integrity        : {len(report.integrity_failures)} "
+                f"table(s) failed [CORRUPT]"
+            )
+            for name in sorted(report.integrity_failures):
+                first = report.integrity_failures[name][0]
+                lines.append(f"    {name}: {first}")
+        else:
+            lines.append(
+                f"  Integrity        : ok "
+                f"({report.integrity_tables_checked} durable tables)"
             )
     lines.append("")
 

@@ -118,6 +118,19 @@ def _read_log(tree: Path) -> str:
     return (tree / "logs" / "health.log").read_text(encoding="utf-8", errors="replace")
 
 
+def test_integrity_scope_flag_reaches_the_cli(bat_tree: Path) -> None:
+    """The scheduled health check opts in to the durable integrity scope
+    (issue #105). A stub that echoes its full argument list proves the flag
+    is passed; the daily gate (run_daily.bat) deliberately does not pass it."""
+    stub = bat_tree / "wowfc_stub_args.bat"
+    stub.write_text(
+        "@echo off\r\necho STUB %*\r\nexit /b 0\r\n", encoding="ascii"
+    )
+    result = _run_bat(bat_tree, stub=stub)
+    assert result.returncode == 0
+    assert "--integrity-scope durable" in _read_log(bat_tree)
+
+
 # ── Healthy path ──────────────────────────────────────────────────────────────
 
 

@@ -10,8 +10,9 @@ rem
 rem  What it does:
 rem    1. Navigates to the project root (one level above this scripts/ folder)
 rem    2. Runs check-data-health --stale-hours %STALE_HOURS%
-rem       --backup-stale-hours %BACKUP_STALE_HOURS% via the venv CLI (the backup
-rem       check is opt-in here so a stale durable backup surfaces through this
+rem       --backup-stale-hours %BACKUP_STALE_HOURS% --integrity-scope durable
+rem       via the venv CLI (the backup and integrity checks are opt-in here so
+rem       a stale backup or a corrupt durable table surfaces through this
 rem       alert window without ever blocking the daily forecast gate) and
 rem       appends its output to logs\health.log
 rem    3. On failure:
@@ -53,7 +54,7 @@ if not exist data\outputs\monitoring mkdir data\outputs\monitoring
 echo [%DATE% %TIME%] ============================================================ >> logs\health.log
 echo [%DATE% %TIME%] Health check starting ^(stale threshold %STALE_HOURS%h^) >> logs\health.log
 
-call "%WOWFC%" check-data-health --stale-hours %STALE_HOURS% --backup-stale-hours %BACKUP_STALE_HOURS% >> logs\health.log 2>&1
+call "%WOWFC%" check-data-health --stale-hours %STALE_HOURS% --backup-stale-hours %BACKUP_STALE_HOURS% --integrity-scope durable >> logs\health.log 2>&1
 set "HC_CODE=!ERRORLEVEL!"
 
 echo [%DATE% %TIME%] check-data-health exited with code !HC_CODE! >> logs\health.log

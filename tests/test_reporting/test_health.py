@@ -463,6 +463,9 @@ class TestHasFailures:
         assert HealthReport(
             generated_at="x", backup_is_stale=True
         ).has_failures is True
+        assert HealthReport(
+            generated_at="x", integrity_failures={"items": ["btree page corrupt"]}
+        ).has_failures is True
 
 
 # ── Tests: backup freshness check (issue #80) ─────────────────────────────────
@@ -654,3 +657,138 @@ class TestFormatHealthReport:
         report.backup_is_stale = True
         output = format_health_report(report)
         assert "Newest backup    : none found [STALE BACKUP]" in output
+
+    def test_no_integrity_line_when_scope_none(self):
+        output = format_health_report(self._base_report())
+        assert "Integrity" not in output
+
+    def test_integrity_ok_line_when_clean(self):
+        report = self._base_report()
+        report.integrity_checked = True
+        report.integrity_tables_checked = 21
+        output = format_health_report(report)
+        assert "Integrity        : ok (21 durable tables)" in output
+        assert "[CORRUPT]" not in output
+
+    def test_integrity_failure_names_table_and_unhealthy_status(self):
+        report = self._base_report(is_stale=False)
+        report.integrity_checked = True
+        report.integrity_tables_checked = 21
+        report.integrity_failures = {"daily_rollup_item": ["btree page 12 corrupt"]}
+        output = format_health_report(report)
+        assert "[CORRUPT]" in output
+        assert "daily_rollup_item" in output
+        assert "btree page 12 corrupt" in output
+        assert "[UNHEALTHY]" in output
+        assert "[HEALTHY]" not in output
+
+
+# ── Tests: integrity scope (issue #105) ───────────────────────────────────────
+
+def _make_file_db(path: Path, *, rollup_rows: int = 0) -> None:
+    """File-backed schema DB (corruption tests need real pages on disk)."""
+    db = sqlite3.connect(str(path))
+    db.execute("PRAGMA foreign_keys = OFF;")
+    apply_schema(db)
+    for i in range(rollup_rows):
+        db.execute(
+            "INSERT INTO daily_rollup_item(item_id,realm_slug,obs_date) "
+            "VALUES (?,?,?)",
+            (i, "us", f"2026-07-{(i % 28) + 1:02d}"),
+        )
+    db.commit()
+    db.close()
+
+
+def _corrupt_table_root_page(path: Path, table: str) -> None:
+    """Overwrite the start of one table's root page with garbage."""
+    db = sqlite3.connect(str(path))
+    try:
+        rootpage = db.execute(
+            "SELECT rootpage FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()[0]
+        page_size = db.execute("PRAGMA page_size").fetchone()[0]
+    finally:
+        db.close()
+    data = bytearray(path.read_bytes())
+    offset = (rootpage - 1) * page_size
+    data[offset : offset + 200] = b"\xff" * 200
+    path.write_bytes(bytes(data))
+
+
+class TestIntegrityScope:
+    def test_scope_none_is_the_default_and_inert(self, conn):
+        _insert_ingested_row(conn, "us", hours_ago=1.0)
+        report = collect_health_report(conn, ["us"])
+        assert report.integrity_checked is False
+        assert report.integrity_failures == {}
+        assert report.has_failures is False
+
+    def test_unknown_scope_raises(self, conn):
+        with pytest.raises(ValueError):
+            collect_health_report(conn, ["us"], integrity_scope="bogus")
+
+    def test_clean_db_passes_durable_scope(self, conn):
+        _insert_ingested_row(conn, "us", hours_ago=1.0)
+        report = collect_health_report(conn, ["us"], integrity_scope="durable")
+        assert report.integrity_checked is True
+        assert report.integrity_failures == {}
+        assert report.integrity_tables_checked > 0
+        assert report.has_failures is False
+
+    def test_obs_tables_are_not_checked(self, conn):
+        user_tables = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master "
+            "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchone()[0]
+        report = collect_health_report(conn, ["us"], integrity_scope="durable")
+        assert report.integrity_tables_checked == user_tables - 2
+
+    def test_corrupted_durable_table_detected_and_named(self, tmp_path):
+        db_path = tmp_path / "health.db"
+        _make_file_db(db_path, rollup_rows=500)
+        _corrupt_table_root_page(db_path, "daily_rollup_item")
+
+        db = sqlite3.connect(str(db_path))
+        db.row_factory = sqlite3.Row
+        try:
+            report = collect_health_report(db, ["us"], integrity_scope="durable")
+        finally:
+            db.close()
+        assert report.integrity_checked is True
+        assert "daily_rollup_item" in report.integrity_failures
+        assert report.integrity_failures["daily_rollup_item"]
+        assert report.has_failures is True
+
+    def test_corrupted_obs_table_does_not_trip_durable_scope(self, tmp_path):
+        """The scope must skip the rebuildable observation tables entirely: a
+        corrupt obs page is recoverable from the snapshot bucket and must not
+        page anyone through the health alert. Exercised via the integrity
+        helper directly, because the report's own realm-stats queries also read
+        the observation tables and would fail first on this fixture."""
+        from wow_forecaster.reporting.health import _integrity_check_durable
+
+        db_path = tmp_path / "health.db"
+        _make_file_db(db_path)
+        db = sqlite3.connect(str(db_path))
+        db.execute("PRAGMA foreign_keys = OFF;")
+        for i in range(500):
+            db.execute(
+                "INSERT INTO market_observations_raw "
+                "(item_id, realm_slug, observed_at, source, ingested_at) "
+                "VALUES (?, 'us', '2026-07-27T00:00:00Z', 'test', "
+                "'2026-07-27T00:00:00Z')",
+                (i,),
+            )
+        db.commit()
+        db.close()
+        _corrupt_table_root_page(db_path, "market_observations_raw")
+
+        db = sqlite3.connect(str(db_path))
+        db.row_factory = sqlite3.Row
+        try:
+            failures, checked = _integrity_check_durable(db)
+        finally:
+            db.close()
+        assert failures == {}
+        assert checked > 0

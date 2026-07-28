@@ -171,7 +171,7 @@ tests/
 | ML | **LightGBM** | Fast training, handles mixed types, interpretable feature importances |
 | HTTP | **httpx** | Async-capable, used for Blizzard OAuth2 + API calls |
 | Reporting | **CLI-first + optional Streamlit** | Terminal reports work headlessly; Streamlit is zero-cost when not needed |
-| Tests | **pytest** | Standard; 1,651 tests across 23 groups |
+| Tests | **pytest** | Standard; 1,663 tests across 23 groups |
 
 ### Transfer Learning Architecture
 
@@ -406,8 +406,13 @@ wow-forecaster report-feature-importance [--realm SLUG] [--horizon 1d|7d|28d] \
 # hourly-lock check and a retention sentinel (oldest raw row vs the 30-day
 # ToS window). Exits 1 when any check fails. --backup-stale-hours (opt-in,
 # 0 = off) also flags a durable backup older than N hours.
+# --integrity-scope durable (opt-in) additionally runs a table-scoped
+# PRAGMA integrity_check over every table except the two large observation
+# tables (seconds; the scheduled health check passes it, the daily gate
+# does not).
 wow-forecaster check-data-health       [--realm SLUG] [--lookback-days 14] \
-                                       [--stale-hours 4] [--backup-stale-hours 0]
+                                       [--stale-hours 4] [--backup-stale-hours 0] \
+                                       [--integrity-scope none|durable]
 ```
 
 **Common options for all report commands:**
@@ -662,7 +667,7 @@ Freshness badges: Every tab shows a green/orange/red badge (`FRESH` / `STALE` / 
 ## Running Tests
 
 ```bash
-# All 1,651 tests
+# All 1,663 tests
 pytest
 
 # With coverage
