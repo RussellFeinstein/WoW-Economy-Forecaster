@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `docs/integrity-incidents.md` (issue #106): the procedure for an integrity check that reports errors on the production machine. Two-pass discriminator (identical error lists mean real disk damage, a differing or clean second pass means transient in-memory reads and no DB action), the standing no-REINDEX/no-VACUUM-as-repair rule, verify-before-restore, and restore paths per table class: durable tables from the newest verified backup, observation tables re-drained from the snapshot bucket with `sync-snapshots --since`. Linked from docs/db-backup.md
+
 ## [2.13.0] - 2026-07-28
 
 ### Added
