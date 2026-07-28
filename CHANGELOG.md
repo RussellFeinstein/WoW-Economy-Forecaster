@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.13.2] - 2026-07-28
 
 ### Changed
 - PLAN.md Phase 2 now names the desktop's memory instability as a second driver for the orchestration and portability phase, records that the verification tier shipped separately (#104, #105, #106), and pins where the remaining decisions land: VPS hosting choice at phase start, hardware spend only after a free MemTest86 diagnosis, #107 as the restored-backup prerequisite for off-box ML
