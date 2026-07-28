@@ -179,9 +179,12 @@ credential values:
 7. Trigger once by hand: `schtasks /Run /TN "WoWForecaster-Backup"`, then confirm
    an object appears under `db_backups/` at roughly a few MB.
 8. For off-box verification: create a second R2 API token scoped to the same
-   bucket with read-only access, add it as the four `BACKUP_S3_*` repository
-   secrets on GitHub, and dispatch the "Verify durable backup" workflow once to
-   confirm a green run.
+   bucket with read-only access, named `github-actions-verify-db-backups-ro`
+   (token naming convention: `<consumer>-<verb>-<bucket>-<access>`). Add its
+   values as the four `BACKUP_S3_*` repository secrets on GitHub (endpoint and
+   bucket carry the same values as `.env`; the key pair comes from this token,
+   never the read-write one), then dispatch the "Verify durable backup"
+   workflow once to confirm a green run.
 
 ## Restore
 
