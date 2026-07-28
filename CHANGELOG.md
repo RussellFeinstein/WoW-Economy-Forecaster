@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.0] - 2026-07-28
+
+### Added
+- `check-data-health --integrity-scope durable` (issue #105): a table-scoped `PRAGMA integrity_check` over every table except the two large observation tables, so page-level corruption in the durable state is caught by the scheduled health check in seconds instead of requiring a 25-minute full-database scan. The scheduled health check (`run_healthcheck.bat`) passes it and raises the existing alert window on a failure; the daily forecast gate does not, so a corrupt table alerts without blocking forecasts. The observation tables are skipped on purpose: they are a rebuildable cache (the snapshot bucket holds their whole 30-day window), and the failure message points at the two-pass transient-read discriminator before any action
+
 ## [2.12.0] - 2026-07-28
 
 ### Added

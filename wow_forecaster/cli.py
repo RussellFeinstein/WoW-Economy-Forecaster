@@ -2599,6 +2599,16 @@ def check_data_health_cmd(
             "daily forecast gate; run_healthcheck.bat passes 30."
         ),
     ),
+    integrity_scope: str = typer.Option(
+        "none",
+        "--integrity-scope",
+        help=(
+            "'durable' runs a table-scoped PRAGMA integrity_check over every "
+            "table except the two per-observation tables (seconds, not "
+            "minutes). 'none' (default) skips it so the daily forecast gate "
+            "never pays for page checks; run_healthcheck.bat passes durable."
+        ),
+    ),
     config_path: str | None = typer.Option(
         None,
         "--config",
@@ -2620,11 +2630,14 @@ def check_data_health_cmd(
       - [RETENTION VIOLATION] flag when the oldest raw observation is older
         than retention.raw_snapshot_days plus 2 days of grace (the pruner
         has stopped enforcing the 30-day API ToS window).
+      - [CORRUPT] flag when --integrity-scope durable finds a durable table
+        failing PRAGMA integrity_check (issue #105).
 
     \b
     Exit codes:
       0 -- all checks pass
-      1 -- stale data, a stale hourly lock, or a retention violation
+      1 -- stale data, a stale hourly lock, a retention violation, or a
+           failed integrity check
 
     \b
     Examples:
@@ -2639,6 +2652,12 @@ def check_data_health_cmd(
         collect_health_report,
         format_health_report,
     )
+
+    if integrity_scope not in ("none", "durable"):
+        raise typer.BadParameter(
+            f"Unknown value {integrity_scope!r}; expected 'none' or 'durable'.",
+            param_hint="--integrity-scope",
+        )
 
     config = _load_config_or_exit(config_path)
     _configure_logging(config)
@@ -2658,6 +2677,7 @@ def check_data_health_cmd(
             retention_days = config.retention.raw_snapshot_days,
             backup_dir     = config.backup.output_dir if backup_stale_hours > 0 else None,
             backup_stale_hours = backup_stale_hours,
+            integrity_scope = integrity_scope,
         )
     finally:
         conn.close()
@@ -2681,6 +2701,13 @@ def check_data_health_cmd(
             typer.echo(
                 "[STALE BACKUP] check-data-health: newest durable backup older "
                 "than the limit -- the backup task may have stopped running."
+            )
+        if report.integrity_failures:
+            typer.echo(
+                "[CORRUPT] check-data-health: integrity_check failed for "
+                + ", ".join(sorted(report.integrity_failures))
+                + " -- run a second pass to rule out a transient read before "
+                "acting, and never REINDEX this DB as a repair step."
             )
         raise typer.Exit(code=1)
 
