@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.13.3] - 2026-07-28
 
 ### Changed
 - The db-backup activation checklist now names the CI verification token, `github-actions-verify-db-backups-ro`, and records the token naming convention (`<consumer>-<verb>-<bucket>-<access>`); `.env.example`'s `BACKUP_S3_*` block gains a cross-reference noting the same four names also exist as GitHub repository secrets holding a separate read-only token. Prompted by a real mixup: values in `.env` do not reach GitHub Actions
