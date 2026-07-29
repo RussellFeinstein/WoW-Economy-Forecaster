@@ -5,6 +5,14 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- The test suite no longer writes into the production database (issue #113). `TestMissingCredentials` was the one test in `test_sync_snapshots_cli.py` that did not stub the stage, so it built a real `SyncSnapshotsStage` from the production config and `PipelineStage.run()` persisted a failed `sync_snapshots` row to `data/db/wow_forecaster.db` on every suite run. 39 such rows had accumulated since 2026-07-24, indistinguishable from real operational failures when reading `run_metadata`. This is the half of #97 that fix did not cover: it stopped the test reaching the live bucket, not the live database
+
+### Added
+- An autouse `isolated_product_db` fixture in `tests/conftest.py` pinning `WOW_FORECASTER_DB_PATH` to `tmp_path` for every test, so no test can reach the real database whether or not its author remembered to override the path. Mirrors the `WOWFC_LEARN_DB` fixture the learning track already uses. `tests/test_db_isolation.py` asserts the guard actually holds, since the failure mode it prevents is silent (the test still passes; only the production database shows the damage)
+
 ## [2.13.3] - 2026-07-28
 
 ### Changed

@@ -56,7 +56,7 @@ class TestArgumentHandling:
 
 
 class TestMissingCredentials:
-    def test_exits_one_and_names_the_missing_variables(self, monkeypatch):
+    def test_exits_one_and_names_the_missing_variables(self, monkeypatch, tmp_path):
         from wow_forecaster.ingestion.cloud_sync import REQUIRED_ENV
 
         # load_config() re-reads the repo's real .env mid-invocation, which
@@ -67,7 +67,16 @@ class TestMissingCredentials:
         )
         for name in REQUIRED_ENV:
             monkeypatch.delenv(name, raising=False)
-        result = runner.invoke(app, ["sync-snapshots", "--dry-run"])
+        # This is the one test in the file that does not stub the stage, so the
+        # real SyncSnapshotsStage runs and PipelineStage.run() persists its
+        # failure.  Without the db_path override that row lands in the
+        # production database (issue #113).  The file needs no schema:
+        # _persist_run() logs and swallows persistence errors.
+        result = runner.invoke(
+            app,
+            ["sync-snapshots", "--dry-run"],
+            env={"WOW_FORECASTER_DB_PATH": str(tmp_path / "unused.db")},
+        )
         assert result.exit_code == 1
         assert "SNAPSHOT_S3_ENDPOINT" in result.output
 
