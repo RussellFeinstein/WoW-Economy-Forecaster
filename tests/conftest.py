@@ -12,6 +12,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Generator
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +25,29 @@ from wow_forecaster.models.market import NormalizedMarketObservation, RawMarketO
 from wow_forecaster.models.meta import ModelMetadata, RunMetadata
 from wow_forecaster.taxonomy.archetype_taxonomy import ArchetypeCategory, ArchetypeTag
 from wow_forecaster.taxonomy.event_taxonomy import EventScope, EventSeverity, EventType
+
+# ── Production database isolation ─────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def isolated_product_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point the product database at tmp_path for every test in the suite.
+
+    A test that builds a real pipeline stage without an override inherits
+    ``AppConfig``'s default ``db_path`` and writes to the developer's real
+    database. That is not hypothetical: ``TestMissingCredentials`` persisted a
+    failed ``sync_snapshots`` run row on every suite run for weeks, and the rows
+    were indistinguishable from real operational failures (issue #113).
+
+    The failure mode is silent — the test still passes, and only the production
+    database shows it — so this pins the override for every test rather than
+    relying on each one to remember. A test that needs its own database still
+    wins: a CliRunner ``env=`` argument, or a ``monkeypatch`` call inside the
+    test, applies after this fixture.
+    """
+    db_path = tmp_path / "isolated.db"
+    monkeypatch.setenv("WOW_FORECASTER_DB_PATH", str(db_path))
+    return db_path
+
 
 # ── Database fixture ──────────────────────────────────────────────────────────
 
