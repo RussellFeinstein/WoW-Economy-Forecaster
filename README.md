@@ -133,6 +133,8 @@ scripts/
 ├── run_daily.bat             # Daily pipeline wrapper (freshness gate + build + forecast)
 ├── run_healthcheck.bat       # Scheduled health check + failure alerting
 ├── run_hourly.bat            # Hourly refresh wrapper (stale-lock takeover guard)
+├── run_silent.vbs            # Window-less launcher; waits and propagates the exit code
+├── sleep_back.ps1            # Returns the machine to sleep after a run that woke it
 └── setup_tasks.bat           # One-shot Windows Task Scheduler registration
 
 tests/
@@ -484,15 +486,40 @@ collision and Blizzard's top-of-hour snapshot refresh, and the health check's
 same time. Re-running setup_tasks.bat is safe: it pins those anchors and
 preserves the Disabled state of any task an operator has turned off.
 
-All three tasks are registered with wake-to-run, so the machine may sleep
-between runs: Task Scheduler wakes it for each trigger and Windows returns it
-to sleep on the idle timeout after the run exits. This requires the active
-power plan's "Allow wake timers" setting to be Enable (the Windows desktop
-default); setup_tasks.bat checks it and prints the elevated powercfg fix if
-the plan blocks wake timers. Know the boundary: wake timers cover sleep, and
-hibernate on hardware that supports waking from it, but a powered-off machine
-does not wake. Capture that survives power-off is what the cloud snapshot
-workflow below provides.
+All four tasks are registered with wake-to-run, so the machine may sleep
+between runs and Task Scheduler wakes it for each trigger. This requires the
+active power plan's "Allow wake timers" setting to be Enable (the Windows
+desktop default); setup_tasks.bat checks it and prints the elevated powercfg
+fix if the plan blocks wake timers. Know the boundary: wake timers cover sleep,
+and hibernate on hardware that supports waking from it, but a powered-off
+machine does not wake. Capture that survives power-off is what the cloud
+snapshot workflow below provides.
+
+Getting back to sleep is a separate job, done by `scripts/sleep_back.ps1`. The
+hourly and health-check wrappers hand off to it when they finish, and it
+suspends the machine only when all four of these hold: the run was itself a
+wake attributed by name to a WoWForecaster task, no keyboard or mouse input
+arrived while the run was going, no other WoWForecaster task is running and no
+hourly lock is held, and no unacknowledged health alert is waiting on screen.
+Anything it cannot check leaves the machine awake. Do not rely on the power
+plan's idle timeout for this: that timer also fires while you are reading the
+screen, and its floor is the timer value even though a run takes about
+fourteen minutes.
+
+It only acts inside an overnight window, 20:00 to 08:00 by default, so the
+machine is up and ready during the day. The window wraps midnight, and both
+ends are adjustable per machine:
+
+```bat
+setx WOWFC_SLEEP_UNTIL_HOUR 9    :: sleep back until 09:00 instead of 08:00
+setx WOWFC_SLEEP_FROM_HOUR 22    :: and not before 22:00 instead of 20:00
+```
+
+Scheduled tasks pick these up from the user environment at launch, so the next
+run after `setx` uses them. Every decision, with the reason when it declines,
+is appended to `logs/sleep_back.log`; that file is the first place to look if
+the machine sleeps when you did not expect it to, or stays up when you did.
+The 07:00 daily and 07:30 backup runs never sleep the machine, by design.
 
 The daily task gates itself on data freshness: run_daily.bat runs
 `check-data-health --stale-hours 26` first and exits non-zero without

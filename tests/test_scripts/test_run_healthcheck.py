@@ -37,6 +37,7 @@ pytestmark = pytest.mark.skipif(
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BAT_SOURCE = REPO_ROOT / "scripts" / "run_healthcheck.bat"
+PS1_SOURCE = REPO_ROOT / "scripts" / "sleep_back.ps1"
 CMD_EXE = os.environ.get("ComSpec", r"C:\Windows\System32\cmd.exe")
 
 FLAG_SENTINEL = "flag-sentinel-issue-4"
@@ -51,9 +52,13 @@ def bat_tree(tmp_path: Path) -> Path:
 
     data/outputs/monitoring is deliberately NOT pre-created here: the script's
     own mkdir guard is part of the surface under test.
+
+    sleep_back.ps1 comes along because the .bat calls it on both exit paths
+    (issue #78).
     """
     (tmp_path / "scripts").mkdir()
     shutil.copyfile(BAT_SOURCE, tmp_path / "scripts" / "run_healthcheck.bat")
+    shutil.copyfile(PS1_SOURCE, tmp_path / "scripts" / "sleep_back.ps1")
     return tmp_path
 
 
@@ -100,6 +105,7 @@ def _run_bat(
     env = dict(os.environ)
     env.pop("WOWFC", None)
     env["WOWFC_NO_ALERT_WINDOW"] = "1"  # no test may ever pop a console window
+    env["WOWFC_NO_SLEEP"] = "1"  # nor may one ever suspend the machine (#78)
     if stub is not None:
         env["WOWFC"] = str(stub)
     if path_override is not None:
@@ -239,3 +245,59 @@ def test_powershell_failure_biases_toward_raise(bat_tree: Path) -> None:
     assert "ALERT WINDOW RAISED" in log
     assert "ALERT SUPPRESSED" not in log
     assert result.returncode == 1
+
+
+# ── Sleep-back wiring (issue #78) ─────────────────────────────────────────────
+#
+# The helper is invoked detached (`start "" /b`), so its log lands after the
+# .bat has already exited and these two tests poll for it.  Detaching is not
+# incidental: SetSuspendState does not return until the machine resumes, and
+# run_silent.vbs waits on the .bat, so an inline call would hold the task in
+# the Running state for the whole sleep and the next trigger could be skipped.
+
+
+def _wait_for_sleep_log(tree: Path, timeout: float = 20.0) -> str:
+    """Poll for the detached helper's log, which outlives the .bat."""
+    path = tree / "logs" / "sleep_back.log"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if path.exists():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if "STAYING AWAKE" in text or "SLEEP BACK" in text:
+                return text
+        time.sleep(0.25)
+    return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+
+
+def test_failing_check_cannot_sleep_away_its_own_alert(bat_tree: Path) -> None:
+    """Ordering is the point: the alert JSON is written before the handoff.
+
+    So the helper's condition 4 sees it and refuses.  Without that ordering a
+    failing health check would raise a console window and then suspend the
+    machine underneath it.
+    """
+    stub = _make_stub(bat_tree, exit_code=1)
+    result = _run_bat(bat_tree, stub)
+    assert result.returncode == 1
+    assert _alert_path(bat_tree).exists()
+    assert "health alert present" in _wait_for_sleep_log(bat_tree)
+
+
+def test_healthy_check_gets_past_the_alert_condition(bat_tree: Path) -> None:
+    """On the healthy path the alert file was just deleted, so it may proceed.
+
+    What this pins is the ordering, so the assertion is that the alert check
+    passed, not what stopped the run afterwards.  Two things can: no
+    WoWForecaster task woke this machine for a test run (live-acceptance
+    territory), or someone is at the keyboard while the suite runs.  Either
+    reason proves the alert condition was cleared first.
+    """
+    _seed_flag(bat_tree)
+    _alert_path(bat_tree).write_text('{"raised_at": "old"}', encoding="ascii")
+    stub = _make_stub(bat_tree, exit_code=0)
+    result = _run_bat(bat_tree, stub)
+    assert result.returncode == 0
+    assert not _alert_path(bat_tree).exists()
+    log = _wait_for_sleep_log(bat_tree)
+    assert "health alert present" not in log
+    assert ("wake check" in log) or ("user input during run" in log)

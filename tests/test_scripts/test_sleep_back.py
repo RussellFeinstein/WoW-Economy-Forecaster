@@ -176,11 +176,18 @@ def test_capture_logs_nothing_to_stdout_when_it_also_logs(ps_tree: Path) -> None
     assert len(result.stdout.strip().splitlines()) == 1
 
 
-def test_capture_is_stable_across_two_reads(ps_tree: Path) -> None:
-    """dwTime only moves on real input, which is what makes equality work."""
-    first = _capture(ps_tree)
-    second = _capture(ps_tree)
-    assert first == second
+def test_capture_is_monotonic(ps_tree: Path) -> None:
+    """dwTime moves only on real input, and only ever forwards.
+
+    Monotonicity is the invariant that holds whether or not the machine is in
+    use, so it is what gets asserted here.  Equality across a quiet interval is
+    the stronger property the design relies on, and it is exercised by
+    test_unchanged_input_passes_condition_two, which checks its own
+    precondition first.
+    """
+    first = int(_capture(ps_tree))
+    second = int(_capture(ps_tree))
+    assert second >= first
 
 
 # ── The overnight window ──────────────────────────────────────────────────────
@@ -267,7 +274,7 @@ def test_from_hour_is_overridable_too(ps_tree: Path) -> None:
     assert "outside window" not in log
 
 
-@pytest.mark.parametrize("bad", ["abc", "25", "-1", "8.5", ""])
+@pytest.mark.parametrize("bad", ["abc", "25", "-1", "8.5"])
 def test_garbage_bound_refuses_and_says_so(ps_tree: Path, bad: str) -> None:
     """Fail-safe: a typo disables sleep-back rather than silently reverting.
 
@@ -280,6 +287,19 @@ def test_garbage_bound_refuses_and_says_so(ps_tree: Path, bad: str) -> None:
     assert AWAKE_MARK in log
     assert "bad window bounds" in log
     assert not _slept(ps_tree)
+
+
+def test_empty_bound_env_var_means_unset(ps_tree: Path) -> None:
+    """An empty value is "not provided", not "garbage".
+
+    Windows cannot distinguish an empty environment variable from an absent
+    one, so treating empty as a typo would make the fail-safe fire on a state
+    the operator cannot even express. It falls back to the default instead.
+    """
+    _decide(ps_tree, env=_env(WOWFC_SLEEP_UNTIL_HOUR=""))
+    log = _log(ps_tree)
+    assert f"window: {DEFAULT_FROM_HOUR:02d}:00-{DEFAULT_UNTIL_HOUR:02d}:00" in log
+    assert "bad window bounds" not in log
 
 
 # ── Condition 2: no user input during the run ─────────────────────────────────
@@ -296,7 +316,18 @@ def test_input_changed_during_run_refuses(ps_tree: Path) -> None:
 
 
 def test_unchanged_input_passes_condition_two(ps_tree: Path) -> None:
-    _decide(ps_tree)
+    """The quiet case, guarded by a precondition check.
+
+    Condition 2 compares a stamp read before the run to one read after, so it
+    is only observable while nobody is touching the machine.  Reading the
+    stamp again afterwards says whether that held: if it moved, the check did
+    its job and there is nothing to assert.  Seen for real, with the stamp
+    advancing 390-500 ms across a full-suite run while the mouse was in use.
+    """
+    before = _capture(ps_tree)
+    _decide(ps_tree, input_at_start=before)
+    if _capture(ps_tree) != before:
+        pytest.skip("input arrived during the check; the quiet case is unobservable")
     assert "user input during run" not in _log(ps_tree)
 
 
@@ -352,9 +383,13 @@ def test_wake_check_is_what_decides_when_all_else_passes(ps_tree: Path) -> None:
     """Proves the cheap, controllable conditions are evaluated first.
 
     The wake check needs a real event log, so its verdict is not asserted; that
-    it was reached is.
+    it was reached is.  Same precondition as the condition 2 quiet case: live
+    input short-circuits before the wake check and there is nothing to see.
     """
-    _decide(ps_tree)
+    before = _capture(ps_tree)
+    _decide(ps_tree, input_at_start=before)
+    if _capture(ps_tree) != before:
+        pytest.skip("input arrived during the check; the wake check is not reached")
     log = _log(ps_tree)
     assert ("wake" in log) or (SLEEP_MARK in log)
 
