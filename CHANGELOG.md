@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.11] - 2026-07-30
+
+### Fixed
+- The roadmap pointer in CLAUDE.md no longer carries an issue-number range. It read "issues #1-#126" and went stale for the third time when [#130](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/pull/130) and [#132](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/pull/132) filed #129 and #131. A hardcoded upper bound has to be rewritten by every PR that files an issue, and a PR that files one has no other reason to open CLAUDE.md, so the same-PR Documentation Sync rule kept missing it. Replaced with the fact the range was standing in for: the milestones between them carry every open issue, which is true without maintenance and is checkable in one query
+
 ## [2.14.10] - 2026-07-30
 
 ### Added
