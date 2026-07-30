@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.14.10] - 2026-07-30
 
 ### Added
 - [#131](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/131) added to the M1 work order ahead of [#16](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/16), which it blocks. `generate_walk_forward_splits` walks the calendar between the requested dates without checking which of them carry rows, so it emits folds whose training window and test date both sit inside a period with no data. `run_backtest` then skips every series in such a fold at the `min_train_rows` guard and records nothing, and the command exits 0. Measured over the full observed range with the shipped config: 19 folds generated at 1d of which 2 are usable, and at 7d and 28d none are usable at all, so a backtest can report success having evaluated nothing. `--dry-run` reports the inflated fold count, which confirms an expectation the real run will not meet
