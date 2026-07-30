@@ -5,6 +5,19 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.1] - 2026-07-29
+
+### Changed
+- Roadmap, README and cloud-capture docs caught up with work that shipped without them. Nine issues had been filed, worked and in six cases closed with no milestone attached, so the milestone view understated what was done and the roadmap had no home for a whole verification tier (#104, #105, #106). Those three now sit under M0 with a paragraph explaining why they exist: the machine that builds the nightly backups has a documented memory-corruption history, so verifying those backups on that same machine proves nothing
+- The roadmap's standing-risks table gained a row for that hardware instability. It had no entry despite driving three issues and an incident runbook, which made the table read as though the risk was not being tracked
+- Roadmap now records that #78 gates #86. #40's close-out described the machine returning to sleep on an idle timeout, which held only while a temporary setting was in force, so the duty-cycle note filed as an unscheduled improvement turned out to be the blocker for the sleep-overnight work
+- README's Project Status table ran to v2.2.0 while the version was v2.13.4, leaving cloud capture, the durable backup, catch-up ingestion, the learning track and the verification tier invisible. Extended through v2.14.0
+- `docs/cloud-capture.md`'s sizing figures were an April 2026 measurement. Re-measured: commodity snapshots now run 232,449 to 270,196 records (averaging 254,011 over 74 snapshots since 2026-07-25) against the documented ~314,000, and objects run 1.55 to 1.81 MiB gzipped against the documented ~2.2 MiB. The shrink is market-wide and shows on both capture paths, so it is not a capture defect; the sizing conclusions and the 50,000 sanity floor are unaffected
+- PLAN.md records that its four tool decisions are all still open, and that OD-1 is the one with a deadline since Phase 2 depends on it
+
+### Added
+- `docs/m1-model-validation-plan.md`: the M1 audit and forward plan, verified against the live database and the code on 2026-07-28. It had been written and left untracked
+
 ## [2.14.0] - 2026-07-29
 
 ### Added
