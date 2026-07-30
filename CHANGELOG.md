@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.14.6] - 2026-07-30
 
 ### Added
 - A 21-label taxonomy for issues and PRs, backfilled across all 70 issues and all 51 PRs in one pass. Before it, 3 labels covered 4 of 121 items, so M0's 20 closed issues (locks, health checks, DB indexes, backups, test fixes, docs) read from the list as one undifferentiated pile. `type:` mirrors the branch prefixes, so the label predicts the branch name. `area:` names the subsystem (ops, capture, modeling, warehouse, reporting, analysis, repo, publish), which is what lets a subsystem's whole history be listed across milestones: milestones are chronological arcs that close and stop being lookup tools. Three state labels join the existing `waiting: wall clock`: `blocked`, `needs: operator` (the class of work the no-secrets rule creates, on 5 issues), and `found: audit` (the 6 defects filed by the 2026-07-24 portfolio audit and the #11 day-one verification pass). Every label's description carries its own rule
