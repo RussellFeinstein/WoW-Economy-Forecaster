@@ -5,6 +5,14 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- [#129](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/129) added to the M1 work order: training runs leave no audit trail. `_register_model` writes `model_metadata` with `ON CONFLICT(slug) DO UPDATE` against a slug that is stable across retrains, so every daily `run-daily-forecast` overwrites the previous row. Because `forecast_outputs` reaches `model_metadata` through `run_metadata`, a forecast from three weeks ago points at a row whose validation metrics and artifact path have been replaced many times since. Scoring forecasts against realized prices is half an answer while the training configuration behind each one is unrecoverable. Filed as a schema design discussion rather than an implementation, and it waits on [#100](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/100) to define the split boundary it would record
+
+### Changed
+- [#100](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/100) acceptance sharpened after an audit of the outside comment on that thread. The invariant now includes the embargo (`max(train.target_date) < validation_start - embargo_days`); the previous wording pinned the purge alone and was satisfied by a zero-day embargo, which is half the fix the issue itself describes. Four further items: no early-stopping callback on an untrusted split, an explicit reason recorded when validation metrics are withheld, and `training_data_start` and `training_data_end` computed from the purged rows rather than from every date in the Parquet, which today records the last validation date as the end of training data
+
 ## [2.14.8] - 2026-07-30
 
 ### Fixed
