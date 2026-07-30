@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.14.2] - 2026-07-29
 
 ### Fixed
 - The test suite no longer renders on a GUI backend (issue #117). Nothing in the repo pinned one, so matplotlib picked TkAgg on Windows and every figure the viz tests build spun up a real Tcl/Tk interpreter. That is 47 figures per full run, none of them ever displayed. Under load the interpreter creation lost a race often enough to fail four different viz tests between 2026-07-19 and 2026-07-29, one per run, each reporting `This probably means that tk wasn't installed properly` and each passing on rerun. `tests/test_viz/conftest.py` now pins Agg, which is what headless CI already falls back to, so local runs match CI instead of diverging from it. This is why CI never reproduced it in any run
