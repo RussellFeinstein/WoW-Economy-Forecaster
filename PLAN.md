@@ -27,6 +27,11 @@ Four tool choices below. Each has a recommendation and the reasoning as it
 applies to this codebase, not in general. None is implemented. Confirm or
 override before the phase that needs it starts.
 
+**All four remain undecided as of 2026-07-29.** Phase 2 has not started, and
+OD-1 is its prerequisite, so that is the one with a deadline attached. Choosing
+an orchestrator deserves its own session rather than a decision folded into
+unrelated work.
+
 ### OD-1: Orchestrator. Recommend Dagster.
 
 The pipeline is already a well-formed DAG. `PipelineStage` in
