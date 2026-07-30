@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.14.9] - 2026-07-30
 
 ### Added
 - [#129](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/129) added to the M1 work order: training runs leave no audit trail. `_register_model` writes `model_metadata` with `ON CONFLICT(slug) DO UPDATE` against a slug that is stable across retrains, so every daily `run-daily-forecast` overwrites the previous row. Because `forecast_outputs` reaches `model_metadata` through `run_metadata`, a forecast from three weeks ago points at a row whose validation metrics and artifact path have been replaced many times since. Scoring forecasts against realized prices is half an answer while the training configuration behind each one is unrecoverable. Filed as a schema design discussion rather than an implementation, and it waits on [#100](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/100) to define the split boundary it would record
