@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.8] - 2026-07-30
+
+### Fixed
+- The roadmap pointer in CLAUDE.md said the milestones cover issues #1-#117, which went stale the moment [#127](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/pull/127) filed #123 through #126. The Documentation Sync rule puts that hunk in the PR that made it stale, and it was missed there
+
 ## [2.14.7] - 2026-07-30
 
 ### Added
