@@ -22,6 +22,8 @@ Numbers from a real snapshot (`commodities_us_20260415T111711Z.json`, the last h
 
 The envelope is indent-formatted JSON with repeated keys, which is why gzip does so well. At ~1.5 GiB per rolling 30-day window, a 10 GB free tier holds the full window with over 6x headroom. Uncompressed (~42 GB per window) no free tier fits, so the fetcher always compresses.
 
+**The table above is a April 2026 measurement and the market has since shrunk.** Re-measured 2026-07-29 from `ingestion_snapshots`, 74 direct-API commodity snapshots since 07-25 run **232,449 to 270,196 records, averaging 254,011**, and the objects in the bucket over the same period run 1.55 to 1.81 MiB gzipped (231 objects sampled for #42's acceptance on 07-27, median 1.68 MiB). The shrink is market-wide and shows identically on both capture paths, so it is not a capture defect. The sizing conclusions are unaffected, and so is the 50,000 sanity floor, which still sits well under the observed minimum.
+
 ## Decisions
 
 ### Runner: GitHub Actions scheduled workflow
@@ -103,7 +105,7 @@ Each object is the standard snapshot envelope, gzipped:
 The outage in #1 happened because a failure path exited 0. Every failure path here is loud:
 
 - A fetch, sanity, or upload failure exits nonzero, the run shows red, and GitHub emails the failure to the last committer of the workflow's cron line.
-- A sanity check refuses snapshots with implausibly few records (default minimum 50,000 against a normal ~314,000), so an API brownout cannot quietly store an empty hour.
+- A sanity check refuses snapshots with implausibly few records (default minimum 50,000 against a normal 230,000 to 270,000 as of late July 2026), so an API brownout cannot quietly store an empty hour.
 - After each upload, the run lists the trailing three day-prefixes (today, yesterday, day before yesterday) and fails (exit 3, snapshot already uploaded) when the trailing 24 hours cover fewer than 20 distinct capture hours. Counting distinct hours instead of raw objects keeps the guard meaning "hours are being missed" no matter how many triggers fire per hour (the Worker's :16/:46 plus the :06 fallback; #83), where a gappy day can still hold plenty of objects. A silent cron skip therefore surfaces within an hour, on the next run that does fire. The third prefix exists so the just-after-midnight window still sees objects older than 24 hours; with two prefixes that window misread sparse days as bootstrap (#68).
 - Residual blind spots, accepted: an outage of 48+ hours empties all listed prefixes and still looks like bootstrap on resume (the failed runs during it already emailed), and an Actions-platform outage stops the alerting along with the capture. Once #43 lands, the local health check (#5) adds an independent second check: newest-cloud-object age, measured from the desktop.
 
@@ -116,7 +118,7 @@ Steps for the repo owner; none of them belong in git:
 3. Create an R2 API token scoped to that bucket with read and write access.
 4. Add six repository secrets: `BLIZZARD_CLIENT_ID`, `BLIZZARD_CLIENT_SECRET`, `SNAPSHOT_S3_ENDPOINT` (the account R2 endpoint URL), `SNAPSHOT_S3_BUCKET`, `SNAPSHOT_S3_ACCESS_KEY_ID`, `SNAPSHOT_S3_SECRET_ACCESS_KEY`.
 5. Done 2026-07-12: the workflow reached `main` with the #10 merge and was then disabled by hand so the schedule cannot fire before the secrets exist. After step 4, enable it: `gh workflow enable "Cloud snapshot capture"` (or the Actions tab).
-6. Trigger once by hand (Actions tab, Cloud snapshot capture, Run workflow) and confirm the object appears in the bucket at a plausible size (~2.2 MiB).
+6. Trigger once by hand (Actions tab, Cloud snapshot capture, Run workflow) and confirm the object appears in the bucket at a plausible size (1.5 to 2.5 MiB; 1.55 to 1.81 MiB observed in late July 2026).
 7. Deploy the trigger Worker (issue #83), so capture no longer depends on GitHub's schedule. Create a fine-grained PAT scoped to this repo with the Actions permission set to read and write. Then from [../cloud-trigger/](../cloud-trigger/): `wrangler secret put GH_PAT` (paste the PAT), `wrangler deploy`. The non-secret config is already in `wrangler.toml`. Fine-grained PATs expire within a year, so set a renewal reminder. Confirm with `wrangler tail` and the Actions tab that dispatch runs appear at :16 and :46.
 8. Acceptance per #42/#83: a rolling 24 hours covers at least 20 distinct capture hours and the gap guard exits 0; killing the Worker or its PAT drops delivery to fallback-only and trips the guard red within a day; one forced failure (for example, temporarily rename a secret) produces the failure email; lifecycle deletion verified on a short-TTL test prefix or a manually aged object.
 

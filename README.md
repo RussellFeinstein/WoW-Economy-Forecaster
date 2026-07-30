@@ -58,6 +58,12 @@ graph LR
 | v1.5.0 — Crafting Advisor | Recipe seeder, margin compression/expansion, 6-window temporal analysis | Complete |
 | v2.0.0 — Execution Layer | TSM export, check-data-health, hourly exit codes | Complete |
 | v2.2.0 — Portfolio Showcase | Visualization layer, BI exports, Jupyter notebooks, CI pipeline | Complete |
+| v2.4.0 — Cloud Capture | Hourly snapshot capture on GitHub Actions into R2, external Worker cron trigger | Complete |
+| v2.9.0 — Durable Backup | Nightly restorable `.db.gz` of the durable tables, uploaded off-machine | Complete |
+| v2.10.0 — Catch-up Ingestion | `sync-snapshots` drains the cloud backlog whenever the desktop is next on | Complete |
+| v2.11.0 — Learning Track | 20-module study curriculum with citation drift guard and SM-2 scheduling | Complete |
+| v2.12.0-v2.13.0 — Verification | Off-box backup verification in CI, durable integrity scope, incident runbook | Complete |
+| v2.14.0 — Sleep-back | Machine returns to sleep after an unattended run that woke it | Complete |
 
 ---
 
