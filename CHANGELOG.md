@@ -5,6 +5,14 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- [#131](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/131) added to the M1 work order ahead of [#16](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/16), which it blocks. `generate_walk_forward_splits` walks the calendar between the requested dates without checking which of them carry rows, so it emits folds whose training window and test date both sit inside a period with no data. `run_backtest` then skips every series in such a fold at the `min_train_rows` guard and records nothing, and the command exits 0. Measured over the full observed range with the shipped config: 19 folds generated at 1d of which 2 are usable, and at 7d and 28d none are usable at all, so a backtest can report success having evaluated nothing. `--dry-run` reports the inflated fold count, which confirms an expectation the real run will not meet
+
+### Changed
+- [#16](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/16) acceptance replaced and the issue marked blocked. It previously read "backtest over the Feb-Apr rollup window completes", which that window satisfies with 2 folds at 1d, 1 at 7d and 0 at 28d, so a run evaluating a single fold, or none at the horizon that matters most, would have met it. The new acceptance requires reporting folds generated against folds that produced results, sets a minimum usable fold count per horizon, and reconciles the backtest horizons against the horizons the product ships: `horizons_days = [1, 3]` gives the LightGBM harness a 3d horizon with no model behind it while never evaluating 7d or 28d
+
 ## [2.14.9] - 2026-07-30
 
 ### Added
