@@ -5,6 +5,13 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Four operations defects filed to the roadmap work order, found by a routine check of the 2026-07-29/30 scheduled runs. All four scheduled tasks exited 0 and both health checks reported HEALTHY while three UTC hours of ingestion were lost and one hourly run hung for over three hours. [#123](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/123) is the cause and is the urgent one: the rolling-stats prefetch in `normalize.py` scans `market_observations_normalized` and has grown from 0.5 minutes a run on 07-21 to 28.2 average on 07-30, against the 60-minute budget an hourly schedule allows. Once a run crosses the hour the lock guard drops the next trigger, which is what lost those three hours. Reading the same three terms from `daily_rollup_item` instead measures 0.54 seconds, and is bounded by items times days rather than growing with observations
+- [#124](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/124) fills a gap the roadmap has named since [#43](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/43) closed and nobody had filed: `check-data-health` measures coverage in whole days, so an intraday gap is invisible to it. It is a prerequisite for [#86](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/86), because the 06:45 staleness check always sees the 06:16 direct-API run and so cannot detect a failed overnight drain
+- [#125](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/125) and [#126](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/126) are what made that night hard to reconstruct rather than what broke it: killed runs leave `run_metadata` rows stranded in `started` (six from 07-27 and 07-28 alone), and every log line stamps local time while labelling it `Z`, so correlating the Python log against the `.bat` markers and the database means reconciling three clocks, one of which is lying
+
 ## [2.14.6] - 2026-07-30
 
 ### Added
