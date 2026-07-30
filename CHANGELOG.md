@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.14.7] - 2026-07-30
 
 ### Added
 - Four operations defects filed to the roadmap work order, found by a routine check of the 2026-07-29/30 scheduled runs. All four scheduled tasks exited 0 and both health checks reported HEALTHY while three UTC hours of ingestion were lost and one hourly run hung for over three hours. [#123](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/123) is the cause and is the urgent one: the rolling-stats prefetch in `normalize.py` scans `market_observations_normalized` and has grown from 0.5 minutes a run on 07-21 to 28.2 average on 07-30, against the 60-minute budget an hourly schedule allows. Once a run crosses the hour the lock guard drops the next trigger, which is what lost those three hours. Reading the same three terms from `daily_rollup_item` instead measures 0.54 seconds, and is bounded by items times days rather than growing with observations
