@@ -1,0 +1,37 @@
+# Apply the type: and area: labels to every PR from its branch prefix and its
+# changed paths. Rules live in .github/labeler.yml; the namespaces themselves
+# are documented in CLAUDE.md under "Issue and PR labels".
+#
+# Why this exists: labels were backfilled by hand across 70 issues and 51 PRs
+# in one pass, and a one-time snapshot starts going stale at the next PR. The
+# branch prefix already encodes the type (CLAUDE.md Branch Workflow requires
+# it), so nothing has to be inferred to keep type: correct going forward.
+#
+# pull_request, not pull_request_target: every PR here comes from a branch in
+# this repo (the main-pr-only ruleset requires it, issue #46) and no fork PRs
+# are taken, so the head-content risk that pull_request_target exists to work
+# around does not apply. Dependabot-triggered runs get a read-only token by
+# default; the permissions block below restores the write scope the action
+# needs, the same way dependabot-automerge.yml does.
+#
+# No actor guard: dependabot.yml sets `labels: []`, so a bump arrives with no
+# labels at all, and `^dependabot/` maps to type: chore in the rules file.
+#
+# sync-labels is left at its default of false, so this only adds labels and
+# never removes one applied by hand.
+
+name: Label PRs
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/labeler@v5

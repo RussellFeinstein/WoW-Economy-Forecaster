@@ -1,0 +1,115 @@
+# Label rules for actions/labeler (see .github/workflows/labeler.yml).
+#
+# Two namespaces, two mechanisms:
+#
+#   type:  from the branch prefix. The prefixes are the ones CLAUDE.md
+#          Branch Workflow already requires, so this is exact rather than
+#          inferred. `^dependabot/` maps to chore because dependabot.yml
+#          sets `labels: []` and a bump is a chore.
+#
+#   area:  from the paths the diff touches. Deliberately coarse, so a PR
+#          spanning subsystems picks up several area labels. On a PR the
+#          area label is advisory; the issue carries the authoritative one.
+#          Two overlaps to expect rather than fight: reporting/health.py is
+#          ops work but lives under reporting/, and any PR touching
+#          docs/ROADMAP.md picks up `area: repo` alongside its real area.
+#
+# `area: publish` has no rule. That work is off-repo (Streamlit Community
+# Cloud, LinkedIn, the GitHub profile), so nothing in a diff implies it.
+#
+# sync-labels is left off in the workflow, so this only ever adds labels and
+# never removes one applied by hand.
+
+"type: feat":
+  - head-branch: ['^feat/']
+
+"type: fix":
+  - head-branch: ['^fix/']
+
+"type: improvement":
+  - head-branch: ['^improvement/']
+
+"type: docs":
+  - head-branch: ['^docs/']
+
+"type: chore":
+  - head-branch: ['^chore/', '^dependabot/']
+
+"type: refactor":
+  - head-branch: ['^refactor/']
+
+"type: test":
+  - head-branch: ['^test/']
+
+"area: ops":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'wow_forecaster/backup/**'
+          - 'wow_forecaster/scheduler.py'
+          - 'wow_forecaster/pipeline/orchestrator.py'
+          - 'wow_forecaster/governance/pruner.py'
+          - 'wow_forecaster/reporting/health.py'
+          - 'scripts/**'
+          - '.github/workflows/verify-backup.yml'
+          - 'docs/db-backup.md'
+          - 'docs/integrity-incidents.md'
+          - 'docs/postmortem-*.md'
+
+"area: capture":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'wow_forecaster/ingestion/**'
+          - 'wow_forecaster/pipeline/ingest.py'
+          - 'wow_forecaster/pipeline/sync_stage.py'
+          - 'wow_forecaster/governance/**'
+          - 'cloud-trigger/**'
+          - '.github/workflows/cloud-snapshot.yml'
+          - 'docs/cloud-capture.md'
+
+"area: modeling":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'wow_forecaster/ml/**'
+          - 'wow_forecaster/features/**'
+          - 'wow_forecaster/backtest/**'
+          - 'wow_forecaster/monitoring/**'
+          - 'wow_forecaster/recommendations/**'
+          - 'wow_forecaster/recipes/**'
+          - 'wow_forecaster/pipeline/forecast.py'
+          - 'wow_forecaster/pipeline/normalize.py'
+          - 'docs/m1-model-validation-plan.md'
+
+"area: warehouse":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'wow_forecaster/warehouse/**'
+          - 'warehouse_dbt/**'
+
+"area: reporting":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'wow_forecaster/reporting/**'
+          - 'wow_forecaster/viz/**'
+          - 'dashboard/**'
+          - 'notebooks/**'
+          - 'bi/**'
+
+"area: analysis":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'wow_forecaster/events/**'
+          - 'config/events/**'
+          - 'docs/events.md'
+
+"area: repo":
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**'
+          - 'tests/**'
+          - 'pyproject.toml'
+          - 'CLAUDE.md'
+          - 'README.md'
+          - 'CHANGELOG.md'
+          - 'LESSONS.md'
+          - 'PLAN.md'
+          - 'docs/ROADMAP.md'

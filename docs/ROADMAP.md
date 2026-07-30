@@ -63,7 +63,9 @@ Most urgent first. Milestone numbers match this sequence; within milestones, fol
 
 When the lowest open milestone's remaining issues are waiting on wall clock (#11 verification days, #42 lifecycle deletion around 2026-08-19, #33 A/B maturation), advance to the next milestone and circle back.
 
-Issues in that state carry the `waiting: wall clock` label, and each one's body opens with the earliest date it can be checked. The label is what makes the state legible from the issue list: without it a milestone sitting on a date looks identical to a milestone sitting on unstarted work, and the only way to tell them apart is to open every issue or read this file. It applies to work that is finished except for an acceptance item that needs a date to arrive, never to work that has not been built yet.
+Issues in that state carry the `waiting: wall clock` label, and each one's body opens with the earliest date it can be checked. The label is what makes the state legible from the issue list: without it a milestone sitting on a date looks identical to a milestone sitting on unstarted work, and the only way to tell them apart is to open every issue or read this file. It applies to work that is finished except for an acceptance item that needs a date to arrive, never to work that has not been built yet, which is why #33 does not carry it even though its A/B test needs weeks of wall clock to mature.
+
+That label is one of 21. The rest of the taxonomy (the `type:` and `area:` namespaces, the other state labels, and what is deliberately left out of them) is normative in CLAUDE.md under Issue and PR labels; this section keeps only the reasoning specific to wall clock. Every issue and PR was labelled in one backfill pass on 2026-07-30, and new PRs label themselves from the branch prefix and changed paths.
 
 ## Dependency graph
 
