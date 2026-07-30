@@ -93,3 +93,5 @@ M0 (gates everything)
 ## Backlog (not scheduled)
 
 Live news ingestion and `extract_wow_events()`; governance cooldown wiring (orchestrator never passes `last_call_at` to preflight); EU region expansion; top_n_per_category V2 remainder; data/outputs retention policy; drift-baseline seeding from rollups.
+
+A scheduled nudge for `waiting: wall clock` issues once their date passes: the label makes the state legible, but nothing announces the arrival of the date, so an issue can sit labelled past its check indefinitely. A workflow reading the date from the issue body and commenting when it passes would close that. Two issues carry the label today, which is not enough to justify building it. Revisit if the pattern recurs.
