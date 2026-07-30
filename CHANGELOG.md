@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.14.4] - 2026-07-30
 
 ### Added
 - A `waiting: wall clock` label for issues that are finished except for an acceptance item that cannot be checked until a date arrives, applied to #11 (gap verification, next check 2026-08-03) and #42 (cloud fetcher, lifecycle deletion around 2026-08-19). Both issue bodies now open with the earliest date they can be closed. Until now that state was recorded only in the roadmap and the milestone descriptions, so from the issue list a milestone sitting on a date looked the same as one sitting on unstarted work. M0.5 read as three open issues when only one of them was waiting on anyone
