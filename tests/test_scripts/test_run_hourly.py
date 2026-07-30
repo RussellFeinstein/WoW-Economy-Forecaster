@@ -38,6 +38,7 @@ pytestmark = pytest.mark.skipif(
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BAT_SOURCE = REPO_ROOT / "scripts" / "run_hourly.bat"
+PS1_SOURCE = REPO_ROOT / "scripts" / "sleep_back.ps1"
 CMD_EXE = os.environ.get("ComSpec", r"C:\Windows\System32\cmd.exe")
 
 STALE_MINUTES = 180  # mirrors STALE_MINUTES in run_hourly.bat
@@ -50,9 +51,15 @@ LOCK_SENTINEL = "lock-sentinel-issue-3"
 
 @pytest.fixture
 def bat_tree(tmp_path: Path) -> Path:
-    """Isolated project tree containing only what run_hourly.bat touches."""
+    """Isolated project tree containing only what run_hourly.bat touches.
+
+    sleep_back.ps1 comes along because the .bat calls it at both ends of the
+    run (issue #78); without it every test here would exercise a missing-file
+    path instead of the guard under test.
+    """
     (tmp_path / "scripts").mkdir()
     shutil.copyfile(BAT_SOURCE, tmp_path / "scripts" / "run_hourly.bat")
+    shutil.copyfile(PS1_SOURCE, tmp_path / "scripts" / "sleep_back.ps1")
     (tmp_path / "data" / "db").mkdir(parents=True)
     return tmp_path
 
@@ -71,13 +78,19 @@ def _make_lock(tree: Path, age_minutes: float = 0.0) -> Path:
 
 
 def _run_bat(tree: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    # WOWFC_NO_SLEEP is forced on every run and no test may unset it: the .bat
+    # hands off to sleep_back.ps1 at the end, and without the seam a test that
+    # happened to run within five minutes of a real WoWForecaster wake would
+    # suspend the developer's machine mid-suite.
+    run_env = dict(os.environ if env is None else env)
+    run_env["WOWFC_NO_SLEEP"] = "1"
     return subprocess.run(
         [CMD_EXE, "/c", str(tree / "scripts" / "run_hourly.bat")],
         capture_output=True,
         text=True,
         timeout=60,
         cwd=str(tree),
-        env=env,
+        env=run_env,
     )
 
 

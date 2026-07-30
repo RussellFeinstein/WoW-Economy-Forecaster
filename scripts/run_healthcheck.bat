@@ -27,6 +27,13 @@ rem           anyway: skip-on-uncertainty is how the 96-day silent outage
 rem           happened, and the worst case here is one extra window
 rem    4. On success: deletes the alert file and the flag file (a healthy run
 rem       ends the outage episode, so the next failure alerts immediately)
+rem    5. Hands off to sleep_back.ps1 on both paths (issue #78).  The ordering
+rem       is self-documenting: on the failure path the alert JSON has just
+rem       been written, so the helper's condition 4 refuses and this check
+rem       cannot sleep away its own alert; on the healthy path it has just
+rem       been deleted, so the machine may go back down.  Only the 00:45 and
+rem       06:45 runs are ever eligible anyway, since the helper's default
+rem       window ends at 08:00.
 rem
 rem  Exit code always mirrors check-data-health (0 = healthy).  Alert-surface
 rem  failures are logged but never change the exit code, so Task Scheduler's
@@ -36,6 +43,8 @@ rem  WOWFC may be preset in the environment to point at an alternate CLI
 rem  executable (test seam); it defaults to the project venv executable.
 rem  WOWFC_NO_ALERT_WINDOW, when defined, skips only the start window (test
 rem  seam so the suite never pops consoles); all logging still happens.
+rem  WOWFC_NO_SLEEP, when defined, likewise skips only the suspend in
+rem  sleep_back.ps1; its decision is still logged.
 rem ---------------------------------------------------------------------------
 
 cd /d "%~dp0.."
@@ -50,6 +59,15 @@ set "FLAGFILE=data\outputs\monitoring\health_window_raised.json"
 
 if not exist logs mkdir logs
 if not exist data\outputs\monitoring mkdir data\outputs\monitoring
+
+rem -- Sleep-back capture (issue #78) ------------------------------------------
+rem  Read before the check runs, so the end-of-run comparison covers the whole
+rem  run.  See run_hourly.bat for why this is an equality check and not a
+rem  threshold.
+set "INPUT_AT_START="
+set "RUN_STARTED_AT="
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0sleep_back.ps1" -Capture`) do set "INPUT_AT_START=%%i"
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -NonInteractive -Command "(Get-Date).ToString('s')"`) do set "RUN_STARTED_AT=%%i"
 
 echo [%DATE% %TIME%] ============================================================ >> logs\health.log
 echo [%DATE% %TIME%] Health check starting ^(stale threshold %STALE_HOURS%h^) >> logs\health.log
@@ -98,6 +116,7 @@ rem  failed; the title, color, and log pointer still carry the message.
 start "WOW FORECASTER: DATA STALE" cmd /k "color CF & echo WOW FORECASTER: DATA STALE & echo. & type %ALERTFILE% 2>nul & echo. & echo See logs\health.log for details"
 
 :finish_fail
+call :sleep_back
 exit /b !HC_CODE!
 
 :healthy
@@ -107,4 +126,15 @@ if exist "%ALERTFILE%" (
     echo [%DATE% %TIME%] cleared health_alert.json >> logs\health.log
 )
 if exist "%FLAGFILE%" del "%FLAGFILE%" 2>nul
+call :sleep_back
 exit /b 0
+
+rem ---- Sleep back (issue #78) ------------------------------------------------
+rem  DETACHED on purpose: SetSuspendState does not return until the machine
+rem  resumes and run_silent.vbs waits on this .bat, so an inline call would
+rem  hold the task Running for the whole sleep.  `start "" /b` lets the .bat
+rem  exit and the helper decide afterwards.  The helper always exits 0 and its
+rem  result is ignored here, so HC_CODE reaches Task Scheduler untouched.
+:sleep_back
+start "" /b powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0sleep_back.ps1" -Decide -InputAtStart "!INPUT_AT_START!" -RunStartedAt "!RUN_STARTED_AT!" -CallerTask "WoWForecaster-HealthCheck"
+goto :eof

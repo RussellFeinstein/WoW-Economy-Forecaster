@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.0] - 2026-07-29
+
+### Added
+- `scripts/sleep_back.ps1` (issue #78): the scheduled tasks now return the machine to sleep after an unattended run that woke it, instead of leaving it awake until the next trigger. Wake timers (#40) put the box back to sleep only while a temporary 30-minute idle timeout was in force; with AC idle sleep set to Never there was nothing to return it, so a deliberate overnight sleep ended at the first hourly wake. The helper suspends only when all four conditions hold at end of run: the run was itself a wake attributed by name to a WoWForecaster task, no keyboard or mouse input arrived during the run, no other WoWForecaster task is running and no hourly lock is held, and no unacknowledged health alert is waiting on screen. It runs only inside an overnight window, 20:00 to 08:00 by default, adjustable per machine with `WOWFC_SLEEP_FROM_HOUR` and `WOWFC_SLEEP_UNTIL_HOUR`. Anything it cannot evaluate leaves the machine awake, the opposite of the stale-lock and alert-window biases elsewhere, because a wrong sleep interrupts whoever is at the keyboard. Wired into the hourly and health-check wrappers; the 07:00 daily and 07:30 backup runs deliberately never sleep so the machine is up when you arrive
+
 ## [2.13.4] - 2026-07-29
 
 ### Fixed
