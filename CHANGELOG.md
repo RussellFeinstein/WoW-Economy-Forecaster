@@ -5,6 +5,11 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Roadmap backlog records the gap the `waiting: wall clock` label leaves open: the label says an issue is waiting on a date, but nothing announces when that date arrives, so a labelled issue can sit past its check indefinitely. A workflow that reads the date from the issue body and comments when it passes would close it. Parked rather than built, because two issues carry the label and that is not enough to justify the machinery
+
 ## [2.14.4] - 2026-07-30
 
 ### Added
