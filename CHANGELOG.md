@@ -5,6 +5,12 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- The milestone-sync rule in CLAUDE.md now scopes to a PR instead of a session. It said to update a milestone's work-order list "in the same session" as filing or closing an issue, and a session is not a reviewable unit: nothing inspects it and nothing diffs it. Filing #117 and opening the PR that fixed it counted as two separate acts, so the milestone update fell in the gap between them and three merges shipped without it. A PR is where a missing roadmap hunk shows up in a diff before anything lands
+- Roadmap and both M0 milestone descriptions caught up with the 2026-07-29 merges: #78 recorded as shipped in v2.14.0 rather than open as PR #115, with its overnight acceptance noted as still outstanding because that acceptance does not start on its own (the guard only fires on a run that was itself a wake, and this machine never sleeps unless someone sleeps it); #117 added to the M0 issue list and to the close-out work order with the TkAgg diagnosis that took ten days and four sightings to reach
+
 ## [2.14.2] - 2026-07-29
 
 ### Fixed
