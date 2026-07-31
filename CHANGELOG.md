@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.14.13] - 2026-07-31
 
 ### Fixed
 - NormalizeStage's rolling baseline now reads the pre-aggregated partial sums in `daily_rollup_item` instead of re-scanning `market_observations_normalized` ([#123](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/123)). The prefetch had become the whole runtime of an hourly run: 0.5 minutes on 2026-07-21, 28.2 average and 41.5 max on 2026-07-30, against a 60-minute trigger interval. Three UTC hours were lost on the night of 07-29/30 when a run outlived its own schedule and the next two hit a live lock, while every task exited 0 and both health checks read HEALTHY. Measured on the production DB the replacement runs in 0.54 s over 93,152 rows and returns the same 10,315 pairs
