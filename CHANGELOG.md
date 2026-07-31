@@ -5,6 +5,12 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.12] - 2026-07-30
+
+### Fixed
+- The operational-state note in CLAUDE.md said [#43](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/43) catch-up ingestion was "dormant until the read-only SNAPSHOT_S3_* token is added to .env on rex-desktop". It has not been dormant since 2026-07-30: the backlog drained to zero (47 objects, 11.5M records, Jul 25-27 restored to full hourly coverage), #43 closed on the acceptance evidence, and the drain has since repaired wake-failure gaps. Anyone reading that line would have concluded the catch-up path was still unavailable and planned around a gap that is already filled
+- The same clause was the wrong kind of fact for this file. Credential presence is machine-local state that changes without any commit touching the repo, so a doc tracking it goes stale silently and by default; the corrected text states what the drain has done instead. Machine-local credential notes belong in project memory, which already carries them per its own rule against copying "credentials present" claims into CLAUDE.md
+
 ## [2.14.11] - 2026-07-30
 
 ### Fixed
