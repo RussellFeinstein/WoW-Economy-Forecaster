@@ -18,7 +18,7 @@ things the z-score is actually used for downstream.
 """
 rubric = [
   "The baseline is per (item_id, realm_slug), not per archetype and not global",
-  "Mean and std come from market_observations_normalized over the last normalize_rolling_days (default 30), non-outlier rows only",
+  "Mean and std come from daily_rollup_item partial sums over the last normalize_rolling_days (default 30), non-outlier rows only (issue #123 moved the read off market_observations_normalized; the rows behind it are the same ones)",
   "It sets is_outlier when |z| > outlier_z_threshold (default 3.0)",
   "is_outlier = 1 rows are then excluded from both rollup tables and from every daily aggregate, so the flag removes the row from the series",
 ]
@@ -29,9 +29,12 @@ at a finer grain than the thing being forecast. An item whose price jumped is
 judged against its own history, not against the category average, which is the
 right call.
 
-Rows: prior rows in market_observations_normalized inside a rolling window of
+Rows: prior observations inside a rolling window of
 config.pipeline.normalize_rolling_days calendar days (default 30), filtered to
-is_outlier = 0.
+is_outlier = 0. Since issue #123 the query reads those rows through
+daily_rollup_item's per-day partial sums rather than scanning
+market_observations_normalized itself. Same rows, same filter, one layer of
+pre-aggregation in between.
 
 Use: the z-score itself is stored on the row, but the load-bearing output is the
 boolean it produces. is_outlier = |z| > outlier_z_threshold, default 3.0. Both
@@ -67,11 +70,21 @@ blank during exactly the regime change the forecaster most wants to see.
 It does self-heal, and the mechanism is worth tracing rather than assuming. The
 window is 30 days wide and rolling. Once the last pre-shift observation ages out,
 the only rows left in the window are flagged ones, so the pair fails HAVING
-COUNT(*) >= _MIN_ROLLING_OBS, drops out of rolling_stats entirely, and falls to
-the cold-start batch path. The batch path scores a single-observation group as
+SUM(obs_count) >= _MIN_ROLLING_OBS, drops out of rolling_stats entirely, and falls
+to the cold-start batch path. The batch path scores a single-observation group as
 z = None, which is not an outlier, so the row is written unflagged and the new
 level starts rebuilding a baseline. Recovery takes up to the full window plus a
 run. For a month, the series is degraded in a way nothing alerts on.
+
+Where the filter lives moved in issue #123 and none of the above changed with it.
+The baseline query no longer names is_outlier at all; it reads daily_rollup_item,
+and _UPSERT_ITEM_SQL carries WHERE mon.is_outlier = 0. Same predicate, applied
+one layer earlier, so a flagged row is absent from the partial sums rather than
+filtered out of a scan. Worth noticing what that does to the blast radius: the
+filter is now enforced in exactly one place for both the baseline and the daily
+series, instead of being repeated in each. The anchored sentence in the
+_fetch_rolling_stats docstring survives the rewrite for that reason. It still
+describes what the query gets, just not what the query itself does.
 """
 options = [
   { text = "It stops a spike from corrupting future baselines, but a real level shift is flagged as a run of outliers and is excluded from both the baseline and the daily rollups until the 30-day window rolls past the old regime", correct = true },
@@ -125,9 +138,10 @@ see_also = ["docs/postmortem-2026-04-lock-outage.md"]
 id = "m03-q04"
 kind = "recall"
 prompt = """
-SQLite has no STDEV, so the baseline query computes variance in one pass with
-AVG(price*price) - AVG(price)*AVG(price). The Python that reads the result clamps
-the value at zero before taking a square root.
+SQLite has no STDEV, so the baseline query computes variance in one pass as
+E[X^2] - E[X]^2, today by dividing summed partial sums out of daily_rollup_item.
+The Python that reads the result clamps the value at zero before taking a square
+root.
 
 Why is that clamp there, and what is the general name for the problem it papers
 over?
@@ -164,6 +178,19 @@ The honest read is that this is fine at the magnitudes involved, and the clamp i
 the right one-line defense. But note what it hides: the clamp turns an unusable
 negative into 0.0, and std 0.0 makes the z-score None. A precision failure and a
 genuinely constant price are indistinguishable in the output.
+
+Issue #123 made the clamp matter slightly more without changing a line of it. The
+query used to average price columns directly; it now sums per-day partial sums
+that were themselves accumulated over hundreds of rows, so both operands arrive
+having already absorbed rounding from an earlier summation. The cancellation is
+the same phenomenon, one rounding generation deeper. Two things keep it benign.
+The operands are not larger, since dividing by SUM(obs_count) puts them back on
+the same scale as the old AVG. And there are roughly 590 times fewer terms in the
+outer sum, which is its own small improvement. Sums are associative in exact
+arithmetic but not in floating point, so this is a real question and not a
+pedantic one: the answer is that the two implementations agree to far more digits
+than the clamp cares about, which is why the parity test asserts pytest.approx
+rather than equality.
 """
 source = "wow_forecaster/pipeline/normalize.py"
 anchor = "Guard against tiny negative floating-point variance"
@@ -210,7 +237,7 @@ id = "m03-q06"
 kind = "recall"
 prompt = """
 The rolling baseline is fetched once per run, before the batch loop, and its
-window is expressed as datetime('now', '-N days') with no upper bound.
+window is anchored on the clock at run time with no upper bound.
 
 Name the two consequences. One is documented and defensible; one is not
 documented and is a real property of the output.
@@ -232,8 +259,8 @@ is noise.
 
 Second consequence, undocumented: the window is relative to the clock at run
 time, not to the observation being scored, and it is open-ended on the right.
-The predicate is observed_at >= now - 30 days, with nothing capping it above. So
-the baseline is "the last 30 days of whatever is already normalized", not "the 30
+The predicate is obs_date >= now - 30 days, with nothing capping it above. So
+the baseline is "the last 30 days of whatever is already rolled up", not "the 30
 days preceding this row".
 
 In steady hourly operation the two are nearly the same thing and this does not
@@ -248,9 +275,22 @@ config_snapshot so the run can be reconstructed, but re-running normalization ov
 the same raw rows on a different day produces different z-scores and potentially
 different is_outlier flags, because the window moved. The stage is not a pure
 function of its inputs and config.
+
+Issue #123 rewrote this query onto daily_rollup_item and changed neither
+consequence. The clock became an injectable parameter instead of SQLite's
+datetime('now'), which is a testability win and nothing more: the default is
+still "now", so the window still floats with run time and is still open on the
+right. A backlog drain still scores old rows against newer history.
+
+One thing did move. The edge used to be a timestamp cutoff mid-way through a day
+and is now a calendar-day boundary, because the rollup's grain is a day and there
+is no finer edge available. That removes a sawtooth (the old cutoff swept through
+the day between runs, so the window's left edge shifted by an hour every hour)
+and costs sub-1% of a 30-day baseline. Both are worth less than the reproducibility
+point above, which is untouched.
 """
 source = "wow_forecaster/pipeline/normalize.py"
-anchor = "AND observed_at >= datetime('now', '-{window_days} days')"
+anchor = "cutoff = (now - timedelta(days=window_days)).date().isoformat()"
 see_also = ["wow_forecaster/ingestion/cloud_sync.py"]
 
 [[question]]
@@ -292,6 +332,53 @@ nullable column with the type system switched off.
 """
 source = "wow_forecaster/pipeline/normalize.py"
 anchor = "price_gold=price_gold if price_gold is not None else 0.0,"
+see_also = ["wow_forecaster/db/rollup.py", "wow_forecaster/db/schema.py"]
+
+[[question]]
+id = "m03-q19"
+kind = "mcq"
+prompt = """
+Issue #123 moved the rolling baseline off market_observations_normalized and onto
+daily_rollup_item's stored partial sums, on the argument that the swap is exact
+rather than approximate.
+
+q07 argues that price_gold should really be nullable, with NULL meaning "no price
+observed", since SQL aggregates already skip NULLs and every price_gold > 0 guard
+is reimplementing that by hand.
+
+Suppose someone acts on that argument. What happens to the baseline?
+"""
+answer = """
+It goes quietly wrong, and that is the interesting part.
+
+The exactness argument has one load-bearing precondition. SUM() skips NULLs and
+COUNT(*) does not, so obs_count and price_sum only line up as a denominator and a
+numerator while price_gold is never NULL. Today that holds twice over: the column
+is REAL NOT NULL, and normalize coerces a missing price to 0.0 on write. Make the
+column nullable and the rollup's obs_count starts counting rows whose price never
+entered price_sum, so SUM(price_sum) / SUM(obs_count) drifts below the true mean
+by exactly the NULL fraction. No error, no NULL in the output, just a mean that is
+too low and a variance computed from a mismatched pair.
+
+Reaching for price_sum_pos and price_obs_count_pos instead does not rescue it.
+Those are a > 0 filter, not a NULL filter, so they also drop genuine zero prices
+and therefore compute a different statistic from the one this baseline has always
+used. They are the wrong pair for this question.
+
+The real fix would be a non-NULL price counter in daily_rollup_item, which makes
+q07's proposal a schema change rather than the query change it looks like. That is
+worth holding onto beyond this repo: pre-aggregation buys speed by storing a
+denominator, and every stored denominator is a claim about the data that the
+schema has to keep true.
+"""
+options = [
+  { text = "The mean drifts silently low, because obs_count counts rows that SUM(price_sum) skipped; fixing it needs a non-NULL price counter in the rollup, so q07's proposal becomes a schema change", correct = true },
+  { text = "Nothing, because daily_rollup_item already stores price_obs_count_pos, which the baseline can use as the denominator instead", note = "The _pos columns are a > 0 filter, not a NULL filter. They also exclude genuine zero prices, so they compute a different statistic from the one the baseline has always used. Right shape, wrong pair." },
+  { text = "Nothing, because the baseline reads the normalized rows directly and would see the NULLs itself", note = "That was true before #123 and is what the change undid. The prefetch no longer touches market_observations_normalized at all, which the query-plan test pins." },
+  { text = "The query raises, since dividing by a NULL sum fails, so the breakage is loud rather than silent", note = "SQLite returns NULL rather than raising, and in any case a partial-NULL group still produces a number. A total failure would be the safer outcome; the actual one is a plausible mean that is wrong by the NULL fraction." },
+]
+source = "wow_forecaster/pipeline/normalize.py"
+anchor = "SUM skips NULLs while COUNT(*) counts them"
 see_also = ["wow_forecaster/db/rollup.py", "wow_forecaster/db/schema.py"]
 
 # ── The date spine: features/daily_agg.py ────────────────────────────────────
