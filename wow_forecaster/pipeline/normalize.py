@@ -5,9 +5,11 @@ Processing steps:
   1. Fetch unprocessed raw observations in batches from ``market_observations_raw``.
   2. Convert copper prices → gold (divide by 10_000).
   3. Compute a rolling z-score per (item_id, realm_slug) using historical mean/std
-     from ``market_observations_normalized`` over a configurable window
-     (``config.pipeline.normalize_rolling_days``, default 30 days).
+     from the pre-aggregated ``daily_rollup_item`` partial sums over a configurable
+     window (``config.pipeline.normalize_rolling_days``, default 30 days).
      Falls back to batch-level stats for items with no prior history (cold-start).
+     The rollup step runs after this one, so the current day's rollup row can be up
+     to an hour stale here; against a 30-day window that is negligible.
   4. Flag outliers: ``|z_score| > config.pipeline.outlier_z_threshold``.
   5. Write ``NormalizedMarketObservation`` records.
   6. Mark raw observations as processed (``is_processed = 1``).
@@ -21,10 +23,12 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import datetime, timedelta
 
 from wow_forecaster.models.market import NormalizedMarketObservation
 from wow_forecaster.models.meta import RunMetadata
 from wow_forecaster.pipeline.base import PipelineStage
+from wow_forecaster.utils.time_utils import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +89,7 @@ class NormalizeStage(PipelineStage):
             rolling_stats = _fetch_rolling_stats(
                 conn, pending_item_ids, pending_realm_slugs, rolling_days
             )
+            _check_rollup_freshness(conn, pending_realm_slugs)
             archetype_map = _fetch_archetype_map(conn, pending_item_ids)
 
             logger.info(
@@ -165,24 +170,63 @@ class NormalizeStage(PipelineStage):
 _MIN_ROLLING_OBS = 2
 
 
+# Baseline query template.  Exposed through _rolling_stats_sql() so tests can
+# pin its query plan against the exact string production runs, rather than a
+# copy that can drift.
+_ROLLING_STATS_SQL = """
+        SELECT item_id, realm_slug,
+               SUM(price_sum) / SUM(obs_count)                           AS mean_p,
+               SUM(price_sum_sq) / SUM(obs_count)
+                 - (SUM(price_sum) / SUM(obs_count))
+                   * (SUM(price_sum) / SUM(obs_count))                   AS variance,
+               SUM(obs_count)                                            AS n
+        FROM daily_rollup_item
+        WHERE item_id IN ({placeholders})
+          AND obs_date >= ?
+        GROUP BY item_id, realm_slug
+        HAVING SUM(obs_count) >= {min_obs};
+"""
+
+
+def _rolling_stats_sql(n_items: int) -> str:
+    """Return the baseline query for an ``item_id IN (...)`` list of ``n_items``."""
+    return _ROLLING_STATS_SQL.format(
+        placeholders=",".join("?" for _ in range(n_items)),
+        min_obs=_MIN_ROLLING_OBS,
+    )
+
+
 def _fetch_rolling_stats(
     conn: sqlite3.Connection,
     item_ids: set[int],
     realm_slugs: set[str],
     window_days: int,
+    now: datetime | None = None,
 ) -> dict[tuple[int, str], tuple[float, float]]:
-    """Fetch rolling mean and std from historical normalized data for a set of items.
+    """Fetch rolling mean and std from the daily item rollups for a set of items.
+
+    Reads the pre-aggregated partial sums in ``daily_rollup_item`` rather than
+    re-scanning every underlying observation.  COUNT, SUM and SUM of squares are
+    sufficient statistics for a mean and a variance, so summing them across days
+    reproduces the same numbers exactly.
+
+    ``daily_rollup_item`` is built from ``market_observations_normalized`` under
+    the same ``is_outlier = 0`` filter, so only non-outlier rows within the
+    rolling window are included so that previously flagged spikes don't corrupt
+    future baselines.  The swap depends on ``price_gold`` never being NULL, since
+    SUM skips NULLs while COUNT(*) counts them; the schema holds that with
+    ``REAL NOT NULL`` and normalize coerces a missing price to 0.0 on write.
 
     Uses the identity Var(X) = E[X²] - E[X]² to compute variance in a single
-    SQL pass (SQLite has no built-in STDEV).  Only non-outlier rows within the
-    rolling window are included so that previously flagged spikes don't corrupt
-    future baselines.
+    SQL pass (SQLite has no built-in STDEV).
 
     Args:
         conn:        Open SQLite connection with ``row_factory = sqlite3.Row``.
         item_ids:    Set of item_ids to look up.
         realm_slugs: Set of realm_slugs present in the batch (used to filter rows).
         window_days: How many calendar days of history to include.
+        now:         Reference clock for the window (default: current UTC time).
+                     Injectable so tests are deterministic at any wall-clock time.
 
     Returns:
         Mapping of ``(item_id, realm_slug)`` → ``(mean_price, std_price)``.
@@ -192,22 +236,13 @@ def _fetch_rolling_stats(
     if not item_ids:
         return {}
 
-    placeholders = ",".join("?" for _ in item_ids)
+    if now is None:
+        now = utcnow()
+    cutoff = (now - timedelta(days=window_days)).date().isoformat()
+
     rows = conn.execute(
-        f"""
-        SELECT item_id, realm_slug,
-               AVG(price_gold)                                          AS mean_p,
-               AVG(price_gold * price_gold) - AVG(price_gold) * AVG(price_gold)
-                                                                        AS variance,
-               COUNT(*)                                                 AS n
-        FROM market_observations_normalized
-        WHERE item_id IN ({placeholders})
-          AND is_outlier = 0
-          AND observed_at >= datetime('now', '-{window_days} days')
-        GROUP BY item_id, realm_slug
-        HAVING COUNT(*) >= {_MIN_ROLLING_OBS};
-        """,
-        tuple(item_ids),
+        _rolling_stats_sql(len(item_ids)),
+        (*item_ids, cutoff),
     ).fetchall()
 
     result: dict[tuple[int, str], tuple[float, float]] = {}
@@ -221,6 +256,69 @@ def _fetch_rolling_stats(
             float(variance ** 0.5),
         )
     return result
+
+
+def _check_rollup_freshness(
+    conn: sqlite3.Connection,
+    realm_slugs: set[str],
+    now: datetime | None = None,
+) -> None:
+    """Log a warning when the rollups backing the baseline have stopped updating.
+
+    Items below ``_MIN_ROLLING_OBS`` already fall back to batch statistics, so a
+    rollup outage degrades to cold-start behaviour rather than failing.  That is
+    the right behaviour and the wrong silence: the z-scores quietly get worse and
+    nothing says why.  ``backfill-rollups`` is the repair path.
+
+    A completely empty table is a cold start, not an outage, so it logs at INFO.
+
+    Args:
+        conn:        Open SQLite connection with ``row_factory = sqlite3.Row``.
+        realm_slugs: Set of realm_slugs present in the batch.
+        now:         Reference clock (default: current UTC time).
+    """
+    if not realm_slugs:
+        return
+    if now is None:
+        now = utcnow()
+
+    if not conn.execute("SELECT EXISTS(SELECT 1 FROM daily_rollup_item);").fetchone()[0]:
+        logger.info(
+            "NormalizeStage: daily_rollup_item is empty; every pair falls back to "
+            "batch stats until the first rollup runs (cold start)."
+        )
+        return
+
+    placeholders = ",".join("?" for _ in realm_slugs)
+    newest_by_realm = {
+        row["realm_slug"]: row["newest"]
+        for row in conn.execute(
+            f"SELECT realm_slug, MAX(obs_date) AS newest FROM daily_rollup_item "
+            f"WHERE realm_slug IN ({placeholders}) GROUP BY realm_slug;",
+            tuple(realm_slugs),
+        ).fetchall()
+    }
+
+    # The rollup step upserts both the previous and current UTC dates on every
+    # run, so a newest date of yesterday is the normal state just after UTC
+    # midnight.  Anything older means the step has stopped landing.
+    stale_before = (now - timedelta(days=1)).date().isoformat()
+    for realm in sorted(realm_slugs):
+        newest = newest_by_realm.get(realm)
+        if newest is None:
+            logger.warning(
+                "NormalizeStage: daily_rollup_item holds no rows for realm '%s' "
+                "although other realms are present; its rolling baseline is empty "
+                "and every pair falls back to batch stats.",
+                realm,
+            )
+        elif newest < stale_before:
+            logger.warning(
+                "NormalizeStage: newest daily_rollup_item date for realm '%s' is %s, "
+                "older than %s; the rolling baseline is running on stale rollups. "
+                "Repair with backfill-rollups.",
+                realm, newest, stale_before,
+            )
 
 
 def _fetch_archetype_map(
