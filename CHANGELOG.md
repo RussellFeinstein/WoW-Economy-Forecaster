@@ -5,6 +5,21 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- NormalizeStage's rolling baseline now reads the pre-aggregated partial sums in `daily_rollup_item` instead of re-scanning `market_observations_normalized` ([#123](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/123)). The prefetch had become the whole runtime of an hourly run: 0.5 minutes on 2026-07-21, 28.2 average and 41.5 max on 2026-07-30, against a 60-minute trigger interval. Three UTC hours were lost on the night of 07-29/30 when a run outlived its own schedule and the next two hit a live lock, while every task exited 0 and both health checks read HEALTHY. Measured on the production DB the replacement runs in 0.54 s over 93,152 rows and returns the same 10,315 pairs
+- The substitution is exact, not an approximation. COUNT, SUM and SUM of squares are sufficient statistics for a mean and a variance, and `daily_rollup_item` is built from the same table under the same `is_outlier = 0` filter, so summing its partial sums across days reproduces the identical numbers without revisiting a price. It rests on `price_gold` never being NULL, which the schema and the write path both hold today
+- A covering index was considered and rejected. It shrinks the constant while the scan still grows with the raw table, so the problem returns within weeks, and building one is a 2-3 GB sustained write against a 30 GB database on the machine that corrupted itself twice doing exactly that during the [#1](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/1) runbook
+
+### Changed
+- The rolling window's left edge moves from a mid-day timestamp cutoff to a calendar-day boundary, because a day is the rollup's grain. That is under 1% of a 30-day baseline and it removes a sawtooth: the old cutoff swept through the day between runs, so the window shifted by an hour every hour
+- That edge shift moves a small number of rows across the outlier threshold. Baseline mean and std feed the z-score, which sets `is_outlier`, which feeds the rollups and the features, so the forward feature stream sees a one-time small discontinuity. History is not rewritten. Worth knowing before a backtest spanning the change reads it as a modeling result
+- The window clock is now an injectable parameter, matching the pruner and the rollup step, so the window is testable at any wall-clock time
+
+### Added
+- `check-data-health` is not the only thing that can see a rollup outage now: NormalizeStage warns when a batch realm's newest `daily_rollup_item` date is more than a day old, or when the realm has no rollup rows at all while other realms do. Pairs below the minimum observation count already fall back to batch statistics, which is the right behavior and the wrong silence. An empty table is a cold start and logs at INFO rather than warning on every run of a fresh database
+
 ## [2.14.12] - 2026-07-30
 
 ### Fixed
