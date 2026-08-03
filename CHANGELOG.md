@@ -5,6 +5,12 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Dependabot now watches the GitHub Actions workflow pins as well as ruff ([#136](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/136)). Nothing watched them before, so the only sign of drift was a warning in every run log: `actions/checkout@v4` and `actions/setup-python@v5` target the deprecated Node 20 and are being forced onto Node 24. That is warn-only until GitHub withdraws the shim, at which point four workflows that have not changed start failing at once. Bumps are grouped into a single monthly PR, because updating four pins across four workflows is one decision
+- Both watched ecosystems are dev-only, so action bumps inherit the existing stamp and CHANGELOG exemption unchanged, and they auto-merge on green CI through the same workflow (its gate is the Dependabot actor, never anything ruff-specific). Worth knowing what that gate covers: the required checks are the two test jobs in `ci.yml`, so a bump that breaks `cloud-snapshot.yml` or `verify-backup.yml` still merges and surfaces at the next capture or the 14:00 UTC backup verification instead. Both already fail loudly on their own schedule, which is why that is acceptable rather than a hole, but it is not what a green merge gate appears to promise
+
 ## [2.14.13] - 2026-07-31
 
 ### Fixed

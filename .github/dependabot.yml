@@ -1,6 +1,14 @@
-# Scoped to ruff only: the linter is exact-pinned (issue #44), so new rule
+# Two ecosystems, both dev-only, so neither bump is a product change.
+#
+# pip is scoped to ruff: the linter is exact-pinned (issue #44), so new rule
 # sets arrive as reviewable PRs whose CI run shows exactly what they flag.
 # Runtime dependencies keep their floating floors in pyproject.toml.
+#
+# github-actions covers the workflow pins (issue #136). Nothing watched them
+# before, so drift only ever surfaced as a runner warning: checkout@v4 and
+# setup-python@v5 target the deprecated Node 20 and are being forced onto
+# Node 24. Grouped into one PR because bumping four pins across four workflows
+# is one decision, and four separate PRs would each pay the full CI cost.
 version: 2
 updates:
   - package-ecosystem: "pip"
@@ -9,4 +17,14 @@ updates:
       interval: "monthly"
     allow:
       - dependency-name: "ruff"
+    labels: []
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      actions:
+        patterns:
+          - "*"
     labels: []

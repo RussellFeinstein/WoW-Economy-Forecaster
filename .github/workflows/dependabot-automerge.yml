@@ -1,11 +1,18 @@
 # Auto-merge Dependabot dependency bumps once CI is green.
 #
-# The repo's Dependabot config (.github/dependabot.yml) is scoped to ruff only,
-# and the linter is exact-pinned (issue #44), so each bump arrives as a small PR
-# whose CI run shows exactly what the new rule set flags. When CI passes there is
-# nothing for a human to decide, so this workflow enables GitHub auto-merge on the
-# PR and lets the required status checks (test (3.11), test (3.12)) gate the merge.
-# A bump that breaks lint or tests simply never merges and waits for a human.
+# The repo's Dependabot config (.github/dependabot.yml) covers two dev-only
+# ecosystems: ruff, exact-pinned so each new rule set arrives as a small PR whose
+# CI run shows exactly what it flags (issue #44), and the GitHub Actions workflow
+# pins, grouped into one PR (issue #136). Neither is a product change. When CI
+# passes there is nothing for a human to decide, so this workflow enables GitHub
+# auto-merge on the PR and lets the required status checks (test (3.11),
+# test (3.12)) gate the merge. A bump that breaks lint or tests simply never
+# merges and waits for a human.
+#
+# The required checks only run ci.yml, so an action bump that breaks
+# cloud-snapshot.yml or verify-backup.yml can still auto-merge. Both self-surface
+# within hours (the next dispatch capture, the 14:00 UTC backup verification),
+# which is the same detection path any other workflow regression takes.
 #
 # Safety model: this only works because CI is a REQUIRED status check on the
 # main-pr-only ruleset. Without that, auto-merge would land the PR before CI runs.

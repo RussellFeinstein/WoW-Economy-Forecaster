@@ -401,10 +401,17 @@ Dependabot PRs in this repo are exempt from both the version stamp and the
 CHANGELOG entry, and they auto-merge on green CI. Why is that not just laziness?
 """
 answer = """
-Because the pinned dependency is dev-only. Dependabot here is scoped to ruff, a
-linter that never ships in the product, so a bump changes nothing about what the
-software does. Stamping the product version for it would make the version number
-assert something false: that the thing users run is different.
+Because everything Dependabot watches here is dev-only. Both ecosystems qualify:
+ruff, a linter that never ships in the product, and the GitHub Actions workflow
+pins, which are CI infrastructure. A bump to either changes nothing about what
+the software does. Stamping the product version for it would make the version
+number assert something false: that the thing users run is different.
+
+Note the test that decides the exemption. It is not "is this a small change" or
+"did a bot write it", it is "does a user of this software experience anything
+different". That is why the rule survived the scope widening in issue #136: the
+actions ecosystem was added to the same config and inherited the same exemption
+without anyone re-deciding it, because it answers the test the same way.
 
 The exemption is safe specifically because CI is a required status check. That is
 the pairing to remember: auto-merge without a gate is reckless, auto-merge behind
@@ -418,7 +425,7 @@ Dependabot branch, never a parallel takeover PR. A takeover discards the bot's
 rebase and its compatibility signal, and it does not scale past one repo.
 """
 options = [
-  { text = "The pinned tool is dev-only, so a bump is not a product change; stamping the product version for it would make the number claim something false", correct = true },
+  { text = "Everything watched is dev-only, so a bump is not a product change; stamping the product version for it would make the number claim something false", correct = true },
   { text = "Because bot PRs skip CI, so there is nothing for a stamp to be gated on", note = "Exactly backwards, and this is the detail that makes the whole convention safe. CI is a required status check on these PRs, which is why auto-merge is acceptable: a bump that breaks lint or tests never lands." },
   { text = "Because a bot cannot edit the version file, so the stamp would have to be added by hand anyway", note = "Nothing technical stops it. The exemption is semantic: the question is whether the change is a product change at all, not who or what is able to type the number." },
   { text = "Because dependency bumps are always patch-level, and patch bumps are optional under the stamp convention", note = "Patch bumps are not optional here. Every product PR gets exactly one stamp regardless of class. The exemption is about the change not being a product change, not about the bump being small." },
@@ -426,6 +433,49 @@ options = [
 source = "CLAUDE.md"
 anchor = "Dependabot dependency-bump PRs are exempt from stamping and CHANGELOG."
 see_also = ["CHANGELOG.md"]
+
+[[question]]
+id = "m13-q19"
+kind = "mcq"
+prompt = """
+Issue #136 put the GitHub Actions pins under Dependabot, so action bumps now
+auto-merge on green CI like the ruff bumps do. The repo has four workflows.
+What does "green CI" actually prove about an action bump, and what does it not?
+"""
+answer = """
+It proves the bump did not break ci.yml, and nothing more. The required status
+checks are test (3.11) and test (3.12), both jobs in ci.yml. The other three
+workflows (cloud-snapshot.yml, verify-backup.yml, labeler.yml) pin the same
+actions and are not exercised by any pre-merge check, because nothing about a
+pull request causes an hourly capture or a nightly backup verification to run.
+
+So a bump that breaks checkout in a way ci.yml tolerates and cloud-snapshot.yml
+does not will merge itself, and the first evidence is a red capture run some
+hours later.
+
+The reason that is acceptable rather than a hole is worth stating, because it is
+the same reasoning used elsewhere in this project: those two workflows already
+self-surface on their own schedule. The capture runs every half hour with a gap
+guard behind it, and the backup verification runs daily at 14:00 UTC and fails
+rather than skips when its newest object is missing or stale. An action bump that
+breaks either is detected by the monitoring that already exists for every other
+way they can break, which is a different situation from being undetected.
+
+What would be wrong is believing the merge gate covered it. That is the failure
+shape this repo keeps re-encountering: the hourly wrapper exiting 0 on a skip,
+the health checks reading HEALTHY through three lost hours. A gate that reports
+success on something it never examined is worse than no gate, because it moves
+the failure from visible to invisible.
+"""
+options = [
+  { text = "Only that ci.yml still works; the other three workflows pin the same actions but no pre-merge check runs them, so they surface a breakage later through their own scheduled runs", correct = true },
+  { text = "That every workflow still works, since the required checks install the same actions the others use", note = "The required checks are the two test jobs in ci.yml. Installing an action in one workflow says nothing about whether another workflow's use of it still works, and no PR event triggers the capture or the verification." },
+  { text = "Nothing useful, because Dependabot PRs get a read-only token and their CI runs are not real", note = "The token restriction is real and is why dependabot-automerge.yml declares its own permissions block, but the CI run is a genuine run. It just covers one workflow out of four." },
+  { text = "That the bump is safe, because grouping all action bumps into one PR means CI sees them together rather than in isolation", note = "Grouping controls how many PRs arrive, not what the checks cover. One PR containing four bumps still only proves ci.yml survives all four." },
+]
+source = "CLAUDE.md"
+anchor = "note that the required checks only exercise ci.yml"
+see_also = [".github/workflows/dependabot-automerge.yml", ".github/dependabot.yml"]
 
 # ── Reading the changelog as evidence ────────────────────────────────────────
 
