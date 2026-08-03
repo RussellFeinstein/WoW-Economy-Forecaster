@@ -5,6 +5,12 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.15] - 2026-08-02
+
+### Changed
+- Roadmap and the M0A milestone record two defects found while verifying [#136](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/136), both the same shape as the failures this milestone exists for: a check that reports success without having looked. [#140](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/140) is that pytest runs at `-qq`, because `addopts` supplies `-q` and ci.yml passes it again, so no CI log has ever recorded how many tests ran or skipped while CLAUDE.md maintains that count by hand. [#141](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/141) is that the cloud backup verification uses a 30h staleness limit but runs 2.4h after the backup it checks, so one missed daily backup is 26.4h old at the next verification and passes it
+- That second one was live rather than theoretical. The 2026-08-02 durable backup never landed, the 08-02 scheduled verification passed in front of the gap, and a manual dispatch on 08-03 is what surfaced it. The missing backup itself needs an operator check of the WoWForecaster-Backup task
+
 ## [2.14.14] - 2026-08-02
 
 ### Changed
