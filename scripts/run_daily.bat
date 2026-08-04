@@ -32,7 +32,9 @@ if not defined WOWFC set "WOWFC=.venv\Scripts\wowfc.exe"
 
 if not exist logs mkdir logs
 
-echo [%DATE% %TIME%] ============================================================ >> logs\daily.log
+rem  Entry separator, untimestamped so it does not read as one more log line.
+rem  Redirection leads: cmd keeps the space before a trailing `>>` in the text.
+>> logs\daily.log echo =========================================================================================
 echo [%DATE% %TIME%] Daily pipeline starting >> logs\daily.log
 
 rem ---- Step 1: freshness gate ------------------------------------------------

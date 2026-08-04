@@ -31,7 +31,9 @@ if not defined WOWFC set "WOWFC=.venv\Scripts\wowfc.exe"
 
 if not exist logs mkdir logs
 
-echo [%DATE% %TIME%] ============================================================ >> logs\backup.log
+rem  Entry separator, untimestamped so it does not read as one more log line.
+rem  Redirection leads: cmd keeps the space before a trailing `>>` in the text.
+>> logs\backup.log echo =========================================================================================
 echo [%DATE% %TIME%] Durable backup starting >> logs\backup.log
 
 call "%WOWFC%" backup-durable-db --upload >> logs\backup.log 2>&1

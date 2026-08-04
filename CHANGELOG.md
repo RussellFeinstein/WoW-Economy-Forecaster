@@ -5,6 +5,12 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- The four scheduled scripts now open each run's entry in their log with a bare rule of `=` on a line of its own, so the start of a run can be found by eye in a file months of runs have been appended to. All four already wrote a separator, but it carried the same `[date time]` prefix as every other line and was shorter than the lines around it, so it read as more of the same text instead of as a break. logs/hourly.log is 86 MB, which is where this is felt most
+- In run_hourly.bat the rule also moved above the lock guard. That guard logs on both of its paths, so a skipped run used to append its one line under the previous run's rule and read as part of that run, and a stale-lock takeover line sat orphaned above the rule for its own entry. A skip is the entry most worth finding, since a run that skips while reporting success is the shape of the 96-day outage
+
 ## [2.14.15] - 2026-08-02
 
 ### Changed

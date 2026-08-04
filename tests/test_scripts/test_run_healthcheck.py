@@ -30,6 +30,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_scripts.conftest import ENTRY_SEPARATOR
+
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
     reason="run_healthcheck.bat requires cmd.exe and Windows PowerShell",
@@ -147,6 +149,7 @@ def test_healthy_run_clears_alert_and_flag(bat_tree: Path) -> None:
     stub = _make_stub(bat_tree, exit_code=0)
     result = _run_bat(bat_tree, stub)
     log = _read_log(bat_tree)
+    assert log.splitlines()[0] == ENTRY_SEPARATOR  # entry starts on a bare rule
     assert "STUB check-data-health" in log
     assert "Health check OK" in log
     assert "cleared health_alert.json" in log

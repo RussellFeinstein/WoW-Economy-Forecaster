@@ -69,7 +69,9 @@ set "RUN_STARTED_AT="
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0sleep_back.ps1" -Capture`) do set "INPUT_AT_START=%%i"
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -NonInteractive -Command "(Get-Date).ToString('s')"`) do set "RUN_STARTED_AT=%%i"
 
-echo [%DATE% %TIME%] ============================================================ >> logs\health.log
+rem  Entry separator, untimestamped so it does not read as one more log line.
+rem  Redirection leads: cmd keeps the space before a trailing `>>` in the text.
+>> logs\health.log echo =========================================================================================
 echo [%DATE% %TIME%] Health check starting ^(stale threshold %STALE_HOURS%h^) >> logs\health.log
 
 call "%WOWFC%" check-data-health --stale-hours %STALE_HOURS% --backup-stale-hours %BACKUP_STALE_HOURS% --integrity-scope durable >> logs\health.log 2>&1

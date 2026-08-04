@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_scripts.conftest import ENTRY_SEPARATOR
+
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
     reason="run_daily.bat requires cmd.exe",
@@ -107,6 +109,7 @@ def test_fresh_health_runs_all_steps(bat_tree: Path) -> None:
     stub = _make_stub(bat_tree)
     result = _run_bat(bat_tree, stub)
     log = _read_log(bat_tree)
+    assert log.splitlines()[0] == ENTRY_SEPARATOR  # entry opens on a bare rule
     assert "Freshness gate OK" in log
     assert "STUB build-datasets" in log
     assert "STUB run-daily-forecast" in log

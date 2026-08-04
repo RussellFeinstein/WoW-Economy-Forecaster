@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_scripts.conftest import ENTRY_SEPARATOR
+
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
     reason="run_backup.bat requires cmd.exe",
@@ -72,6 +74,7 @@ def test_invokes_backup_command_with_upload(bat_tree: Path) -> None:
     stub = _make_stub(bat_tree, exit_code=0)
     result = _run_bat(bat_tree, stub)
     log = _read_log(bat_tree)
+    assert log.splitlines()[0] == ENTRY_SEPARATOR  # entry opens on a bare rule
     assert "STUB backup-durable-db --upload" in log
     assert "Durable backup starting" in log
     assert "Durable backup complete" in log
