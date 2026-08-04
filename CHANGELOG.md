@@ -5,7 +5,7 @@ All notable changes to the WoW Economy Forecaster.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.14.16] - 2026-08-04
 
 ### Changed
 - The four scheduled scripts now open each run's entry in their log with a bare rule of `=` on a line of its own, so the start of a run can be found by eye in a file months of runs have been appended to. All four already wrote a separator, but it carried the same `[date time]` prefix as every other line and was shorter than the lines around it, so it read as more of the same text instead of as a break. logs/hourly.log is 86 MB, which is where this is felt most
