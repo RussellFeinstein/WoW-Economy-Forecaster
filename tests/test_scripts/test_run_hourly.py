@@ -31,6 +31,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_scripts.conftest import ENTRY_SEPARATOR
+
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
     reason="run_hourly.bat requires cmd.exe and Windows PowerShell",
@@ -106,6 +108,7 @@ def test_no_lock_run_proceeds(bat_tree: Path) -> None:
     """Without a lock, the run starts and the exit code mirrors the CLI's."""
     result = _run_bat(bat_tree)
     log = _read_log(bat_tree)
+    assert log.splitlines()[0] == ENTRY_SEPARATOR  # entry opens on a bare rule
     assert "Hourly refresh starting" in log
     assert f"Hourly refresh complete (exit {MISSING_CLI_EXIT})" in log
     assert "SKIPPED" not in log
@@ -115,10 +118,18 @@ def test_no_lock_run_proceeds(bat_tree: Path) -> None:
 
 
 def test_fresh_lock_skips_and_preserves_lock(bat_tree: Path) -> None:
-    """A fresh lock logs SKIPPED, exits 0, and is left untouched."""
+    """A fresh lock logs SKIPPED, exits 0, and is left untouched.
+
+    The separator assertion is the load-bearing one for the skip path: the rule
+    used to sit below the lock guard, so a skipped run appended its one line
+    with no rule at all and read as a continuation of the previous entry.  A
+    skip is exactly the entry worth finding, since silent skips are how the
+    96-day outage stayed invisible.
+    """
     lock = _make_lock(bat_tree)
     result = _run_bat(bat_tree)
     log = _read_log(bat_tree)
+    assert log.splitlines()[0] == ENTRY_SEPARATOR
     assert "SKIPPED: previous run still active" in log
     assert "Hourly refresh starting" not in log
     assert "TAKEOVER" not in log

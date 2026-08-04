@@ -32,6 +32,19 @@ cd /d "%~dp0.."
 
 if not exist logs mkdir logs
 
+rem  Entry separator.  It sits ABOVE the lock guard, unlike the other three
+rem  scripts, because the guard logs on both of its paths: a SKIPPED run exits
+rem  at the guard and would otherwise append its one line under the previous
+rem  run's rule and read as part of it, and a TAKEOVER line would sit orphaned
+rem  above its own entry.  A skip is the entry most worth finding, since silent
+rem  skips are how the 96-day outage stayed invisible.
+rem  Redirection leads on this one line: cmd keeps the space before a trailing
+rem  `>>` as part of the echoed text, and a rule is the one line where invisible
+rem  trailing whitespace is worth avoiding.  No timestamp on purpose -- a
+rem  timestamped rule looked like every other line in the file, which is what
+rem  made entry starts hard to find.  The lines that follow are all stamped.
+>> logs\hourly.log echo =========================================================================================
+
 set LOCKFILE=data\db\.hourly.lock
 rem  Locks older than this many minutes are considered leaked. A healthy
 rem  hourly run finishes in well under an hour.
@@ -68,7 +81,6 @@ set "RUN_STARTED_AT="
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0sleep_back.ps1" -Capture`) do set "INPUT_AT_START=%%i"
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -NonInteractive -Command "(Get-Date).ToString('s')"`) do set "RUN_STARTED_AT=%%i"
 
-echo [%DATE% %TIME%] ============================================================ >> logs\hourly.log
 echo [%DATE% %TIME%] Hourly refresh starting >> logs\hourly.log
 
 .venv\Scripts\wowfc.exe run-hourly-refresh >> logs\hourly.log 2>&1
