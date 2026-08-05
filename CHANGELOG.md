@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.17] - 2026-08-04
+
 ### Changed
 - Project CLAUDE.md is restructured for progressive disclosure: subsystem detail (ingestion and cloud capture, modeling, ops and health, viz, governance and events, learning track, test suite) moved verbatim into seven path-scoped rules files under .claude/rules/, which load only when a session works with matching files. The root file keeps the always-relevant sections plus a layer guide and a counts-free entry-points block, and drops from 52,163 to 13,711 bytes of always-loaded context
 - .gitignore now tracks .claude/rules/ while the rest of .claude/ stays local. The pattern is `.claude/*` plus a negation for rules/, because git never descends into a fully excluded directory, so a negation under an excluded parent never fires
