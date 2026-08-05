@@ -98,4 +98,4 @@ M0 (gates everything)
 
 Live news ingestion and `extract_wow_events()`; governance cooldown wiring (orchestrator never passes `last_call_at` to preflight); EU region expansion; top_n_per_category V2 remainder; data/outputs retention policy; drift-baseline seeding from rollups.
 
-The scheduled `waiting: wall clock` nudge left this list on 2026-08-05, filed as #146 in M0A. Its revisit condition was "two issues carry the label today, which is not enough to justify building it. Revisit if the pattern recurs." Both halves fired: #11's stated check date of 2026-08-03 passed with nothing surfacing it, and #143 becomes a third carrier once its fix ships.
+The scheduled `waiting: wall clock` nudge left this list on 2026-08-05, filed as #146 in M0A. Its revisit condition was "two issues carry the label today, which is not enough to justify building it. Revisit if the pattern recurs." Both halves fired: #11's stated check date of 2026-08-03 passed with nothing surfacing it, and #143 became a third carrier when its fix shipped in v2.14.19.

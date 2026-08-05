@@ -14,8 +14,12 @@
 # default; the permissions block below restores the write scope the action
 # needs, the same way dependabot-automerge.yml does.
 #
-# No actor guard: dependabot.yml sets `labels: []`, so a bump arrives with no
-# labels at all, and `^dependabot/` maps to type: chore in the rules file.
+# No actor guard: `^dependabot/` maps to type: chore in the rules file, so a
+# bump is labelled by the same path as everything else. dependabot.yml also
+# names type: chore and area: repo itself (issue #143), which is the primary
+# path; this workflow is the backstop. The earlier claim here, that a bump
+# arrived with no labels because dependabot.yml set `labels: []`, was wrong:
+# an empty list never suppressed Dependabot's own defaults.
 #
 # sync-labels is left at its default of false, so this only adds labels and
 # never removes one applied by hand.
