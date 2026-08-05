@@ -4,8 +4,10 @@
 #
 #   type:  from the branch prefix. The prefixes are the ones CLAUDE.md
 #          Branch Workflow already requires, so this is exact rather than
-#          inferred. `^dependabot/` maps to chore because dependabot.yml
-#          sets `labels: []` and a bump is a chore.
+#          inferred. `^dependabot/` maps to chore because a bump is a chore.
+#          dependabot.yml also names `type: chore` and `area: repo` directly
+#          (issue #143), so bot PRs are labelled either way; this rule is the
+#          backstop, not the only path.
 #
 #   area:  from the paths the diff touches. Deliberately coarse, so a PR
 #          spanning subsystems picks up several area labels. On a PR the

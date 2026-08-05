@@ -1,5 +1,10 @@
 # Two ecosystems, both dev-only, so neither bump is a product change.
 #
+# Both carry an explicit `labels:` list (issue #143). Dependabot applies its own
+# default labels unless this option is set to a non-empty list, so the earlier
+# `labels: []` suppressed nothing and every bump arrived outside this repo's
+# taxonomy. A non-empty list is the documented override.
+#
 # pip is scoped to ruff: the linter is exact-pinned (issue #44), so new rule
 # sets arrive as reviewable PRs whose CI run shows exactly what they flag.
 # Runtime dependencies keep their floating floors in pyproject.toml.
@@ -17,7 +22,7 @@ updates:
       interval: "monthly"
     allow:
       - dependency-name: "ruff"
-    labels: []
+    labels: ["type: chore", "area: repo"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -27,4 +32,4 @@ updates:
       actions:
         patterns:
           - "*"
-    labels: []
+    labels: ["type: chore", "area: repo"]

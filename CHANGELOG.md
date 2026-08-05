@@ -7,6 +7,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Dependabot PRs now carry `type: chore` and `area: repo` from dependabot.yml itself ([#143](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/143)). Both ecosystems set `labels: []` on the belief that an empty list suppressed the bot's own default labels. It does not. Dependabot applies its defaults unless the option holds a non-empty list, so every bump has arrived labelled outside this repo's taxonomy, and a newly watched ecosystem mints a fresh label of its own on first run. The labeler's `^dependabot/` rule was already supplying `type: chore` from the branch prefix, so the symptom was extra labels rather than missing ones, which is why it went unnoticed through the 2026-07-30 backfill
+- The comment in .github/labeler.yml carried the same wrong premise in writing, mapping `^dependabot/` to chore "because dependabot.yml sets `labels: []`". It now says a bump is a chore, and records that dependabot.yml names both labels directly, so the branch rule is a backstop rather than the only path
+
 ## [2.14.18] - 2026-08-05
 
 ### Changed

@@ -63,7 +63,7 @@ Each milestone's list is ordered by workability. Workable issues lead in the int
 10. **Close the loop.** Analyze #33 once enough pairs mature. M5 (#34-#36) formally sits here but is the designated filler: it needs only rollups and events, so pull it forward whenever work is blocked on wall clock.
 11. **Publish (M6).** #37, #38, #39, with all measured numbers in hand.
 
-When the lowest open milestone's remaining issues are waiting on wall clock (#11 verification days, #42 lifecycle deletion around 2026-08-19, #33 A/B maturation), advance to the next milestone and circle back.
+When the lowest open milestone's remaining issues are waiting on wall clock (#11 verification days, #42 lifecycle deletion around 2026-08-19, #143 the 2026-09-01 monthly Dependabot run, #33 A/B maturation), advance to the next milestone and circle back.
 
 Issues in that state carry the `waiting: wall clock` label, and each one's body opens with the earliest date it can be checked. The label is what makes the state legible from the issue list: without it a milestone sitting on a date looks identical to a milestone sitting on unstarted work, and the only way to tell them apart is to open every issue or read this file. It applies to work that is finished except for an acceptance item that needs a date to arrive, never to work that has not been built yet, which is why #33 does not carry it even though its A/B test needs weeks of wall clock to mature.
 
