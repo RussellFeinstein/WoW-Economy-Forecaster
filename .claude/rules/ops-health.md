@@ -1,6 +1,7 @@
 ---
 paths:
   - "scripts/**"
+  - "wow_forecaster/monitoring/**"
   - "wow_forecaster/reporting/**"
   - "wow_forecaster/backup/**"
   - "wow_forecaster/pipeline/orchestrator.py"

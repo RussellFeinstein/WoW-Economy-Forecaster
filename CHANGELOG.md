@@ -12,6 +12,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 - Project CLAUDE.md is restructured for progressive disclosure: subsystem detail (ingestion and cloud capture, modeling, ops and health, viz, governance and events, learning track, test suite) moved verbatim into seven path-scoped rules files under .claude/rules/, which load only when a session works with matching files. The root file keeps the always-relevant sections plus a layer guide and a counts-free entry-points block, and drops from 52,163 to 13,711 bytes of always-loaded context
 - .gitignore now tracks .claude/rules/ while the rest of .claude/ stays local. The pattern is `.claude/*` plus a negation for rules/, because git never descends into a fully excluded directory, so a negation under an excluded parent never fires
+- ops-health.md matches `wow_forecaster/monitoring/**`, which nothing did. Its own header says it loads when working with monitoring, and the drift detection and adaptive CI chain notes live in it, but drift.py, adaptive.py and provenance.py sat outside every rules file's globs, so the one file that documents them was the one file that would not load while editing them
 
 ## [2.14.16] - 2026-08-04
 
