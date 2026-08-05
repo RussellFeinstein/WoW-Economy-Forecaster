@@ -172,10 +172,12 @@ write the implementation.
   `[Unreleased]` and the stamp commit at PR open moves it under the version
   header. The PR ships to main through a pull request, since branch protection
   blocks direct pushes.
-- Documentation sync: the repo `CLAUDE.md` gains a Layer Summary entry for the
-  new module, the migration count line moves from "end at 0009" to "end at 0010",
-  and the schema table count updates. The `LESSONS.md` directional-reference note
-  belongs here if the origin-reference trap bites during implementation.
+- Documentation sync: the new module gets its entry in the matching path-scoped
+  rules file under `.claude/rules/` (modeling.md for a forecasting module), the
+  migration count line in the repo `CLAUDE.md` moves from "end at 0009" to
+  "end at 0010", and the schema table count updates. The `LESSONS.md`
+  directional-reference note belongs here if the origin-reference trap bites
+  during implementation.
 - Version: minor. This adds a new table, a new module, and a new CLI command,
   all surface a consumer must learn about. Not a patch.
 
