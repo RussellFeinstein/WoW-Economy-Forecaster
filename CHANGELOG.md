@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.18] - 2026-08-05
+
 ### Changed
 - Milestone work-order lists are ordered by workability, and the rule is written down in CLAUDE.md and docs/ROADMAP.md instead of being carried in someone's head. Workable issues lead in the intended order; gated issues trail, each line opening with `gated (<label>):` and the reason it cannot be picked up, which is an operator step, a wall-clock date, or a blocking issue. The next item anyone can start is therefore always the first ungated line. Until now a milestone sitting on a date read exactly like a milestone sitting on unstarted work, which is the illegibility the `waiting: wall clock` label already fixes one level down at the issue. M0A and M0B are normalized; later milestones pick it up the next time they are touched
 - M0A's remaining order is #143, #125, #126, #141, #140, [#146](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/146), with [#123](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/123) and [#11](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/11) in the gated tail. M0B's is [#124](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/124), with [#86](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/86) and [#42](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/42) gated. [#141](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/141) and [#140](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/140) swap places in the roadmap narrative so it matches the milestone
