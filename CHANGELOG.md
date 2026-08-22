@@ -7,6 +7,16 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- The retention prune can now finish ([#149](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/149)). `market_observations_normalized.obs_id` is the foreign key to `market_observations_raw` and had no index, and connections run with `PRAGMA foreign_keys = ON`, so deleting a parent row meant scanning the whole child table to prove nothing referenced it. Against 11.2M rows to delete and 158M children that is work with no end, and it is why the prune ran for 24 hours and moved the write-ahead log by a single page. Migration 0010 adds the index; schema.py carries the same DDL so a fresh database is born with it
+- The prune deletes in half-open hour slices and commits each one, instead of holding the whole backlog in a single transaction. An interrupted prune now keeps the slices it finished and the next run picks up from the new oldest row. Under the old shape a kill discarded everything, which is exactly what happened when the wedged run was finally stopped by hand
+- Per-run delete work is bounded by rows rather than slices. The cutoff is a calendar date, so the first run after UTC midnight sees a whole day become prunable at once, around 6M rows at current volume, which does not fit an hourly run. The rest waits for the following runs, which have several times the throughput needed to keep up. Empty hours cost nothing and do not spend the budget
+- A prune that fails part-way no longer reports zero rows deleted. That was correct when one transaction covered everything and became untrue once slices commit independently
+
+### Notes
+- The wedge stopped ingestion from 2026-08-20 22:16Z until it was cleared by hand on 2026-08-22, took the oldest raw row 2.5 days past the 30-day ToS window, and kept the machine awake overnight because the held lock told sleep-back a run was in progress. Cloud capture stayed green throughout, so the missed hours were recoverable with `sync-snapshots`. Full timeline and evidence on [#149](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/149)
+- Two Windows-only sleep-back wiring tests fail on any run started outside 20:00-08:00 local, because `sleep_back.ps1` checks its sleep window before the conditions they assert on. Pre-existing and reproduced on unmodified main; filed as [#150](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/150) rather than fixed here, since it is a separate concern
+
 ## [2.14.19] - 2026-08-05
 
 ### Fixed
