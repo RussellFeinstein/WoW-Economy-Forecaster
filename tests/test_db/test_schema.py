@@ -42,7 +42,6 @@ class TestApplySchema:
     def test_key_indexes_created(self, in_memory_db):
         indexes = get_existing_indexes(in_memory_db)
         expected_indexes = [
-            "idx_obs_raw_item_time",
             "idx_obs_raw_observed",
             "idx_obs_raw_realm_ingested",
             "idx_obs_norm_item_time",
@@ -53,6 +52,17 @@ class TestApplySchema:
             assert idx in indexes, (
                 f"Expected index '{idx}' not found. Found: {indexes}"
             )
+
+    def test_raw_item_time_index_not_created(self, in_memory_db):
+        """A fresh database must not carry idx_obs_raw_item_time (issue #153).
+
+        Dropped because nothing queries market_observations_raw by item_id, it
+        cost maintenance on every insert and delete, and it was the only index
+        implicated when the table corrupted. apply_schema runs before
+        run_migrations in init-db, so leaving the DDL in place would rebuild the
+        index that migration 0011 had just dropped.
+        """
+        assert "idx_obs_raw_item_time" not in get_existing_indexes(in_memory_db)
 
 
 class TestForeignKeyEnforcement:
