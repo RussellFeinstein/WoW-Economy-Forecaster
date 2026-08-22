@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.21] - 2026-08-22
+
 ### Fixed
 - cloud-trigger/README.md said fine-grained PATs "expire within a year", which is no longer true and was never the reason the trigger token was set to 30 days. Nothing chose 30 days: it is what GitHub's creation UI offers by default, and accepting it is how the token created on 2026-07-23 expired unannounced on 2026-08-22. The README now says to set no expiration and gives the reason, which is that the two risks are lopsided. A leak of this token permits dispatching one workflow on one repo and nothing else, while an expiry degrades capture silently and costs market data the API will not serve again
 
