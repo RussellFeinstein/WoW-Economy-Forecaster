@@ -7,6 +7,13 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- cloud-trigger/README.md said fine-grained PATs "expire within a year", which is no longer true and was never the reason the trigger token was set to 30 days. Nothing chose 30 days: it is what GitHub's creation UI offers by default, and accepting it is how the token created on 2026-07-23 expired unannounced on 2026-08-22. The README now says to set no expiration and gives the reason, which is that the two risks are lopsided. A leak of this token permits dispatching one workflow on one repo and nothing else, while an expiry degrades capture silently and costs market data the API will not serve again
+
+### Added
+- A rotation procedure and a failure-diagnosis section in cloud-trigger/README.md. The failure is quiet by design (capture falls back to the `:06` schedule rather than stopping), so the section names the signature to look for, which is `workflow_dispatch` runs disappearing from the Actions tab while `schedule` runs continue, and lists the checks cheapest first. Included because each was needed to work out a real outage: dispatching by hand with `gh` to prove the workflow is fine and isolate the fault to the Worker, `wrangler deployments list` to confirm whether a rotation actually landed and when, and `wrangler tail` to read the HTTP status the Worker got back
+- Two wrangler invocation traps that cost time during that outage, recorded next to the commands they break. Wrangler must run from `cloud-trigger/` or be given `--name`, because from the repo root it finds no `wrangler.toml`; and `wrangler tail` takes the Worker name as a positional argument while `secret` and `deployments` take `--name`
+
 ## [2.14.20] - 2026-08-22
 
 ### Fixed

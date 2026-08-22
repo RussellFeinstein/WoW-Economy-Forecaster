@@ -32,8 +32,74 @@ wrangler deploy
 The non-secret config (owner, repo, workflow, ref) lives in `wrangler.toml`.
 `GH_PAT` is a fine-grained Personal Access Token scoped to this repo only, with
 the **Actions** permission set to read and write. It is stored as an encrypted
-Worker secret and is never committed. Fine-grained PATs expire within a year,
-so set a renewal reminder when you create it.
+Worker secret and is never committed.
+
+Deploy from `cloud-trigger/`, not the repo root. From the root, wrangler finds
+no `wrangler.toml` and fails with a misleading error about static files, and
+`wrangler secret put` fails with "Required Worker name missing".
+
+## Token expiry
+
+**Set the token to no expiration.** GitHub's creation UI defaults the
+expiration dropdown to 30 days, and accepting that default is how the first
+token died: created 2026-07-23, expired 2026-08-22, silently. Nothing chose 30
+days, it was just never changed.
+
+No expiration is the right call for this token specifically, because the two
+risks are lopsided. A leak lets someone dispatch one workflow on one repo and
+nothing else, which is the smallest blast radius the API offers. An expiry, by
+contrast, degrades capture without announcing itself and costs hours of market
+data that the API cannot serve again.
+
+## Rotating the token
+
+1. Create the replacement at github.com, Settings, Developer settings,
+   Personal access tokens, Fine-grained tokens. Repository access: only this
+   repo. Permissions: **Actions, read and write**, nothing else. Expiration:
+   none.
+2. Set it on the Worker. From `cloud-trigger/`:
+   ```
+   wrangler secret put GH_PAT
+   ```
+   From anywhere else, name the Worker explicitly:
+   ```
+   wrangler secret put GH_PAT --name wow-forecaster-cloud-trigger
+   ```
+   This uploads a new Worker version by itself. No separate `wrangler deploy`
+   is needed, and the secret survives later deploys.
+3. Confirm a dispatch lands at the next `:16` or `:46`:
+   ```
+   gh run list --workflow=cloud-snapshot.yml --limit 5
+   ```
+   The new run should say `workflow_dispatch`, not `schedule`.
+
+## When the trigger dies
+
+The symptom is quiet, because capture does not stop. `workflow_dispatch` runs
+disappear from the Actions tab and only the `:06` `schedule` runs remain, so
+delivery drops to roughly 11 hours a day and the in-run gap guard goes red
+within a day.
+
+Diagnosing it, cheapest first:
+
+- `gh run list --workflow=cloud-snapshot.yml --limit 10` and look at the
+  `event` column. All `schedule` and no `workflow_dispatch` is the signature.
+- `gh workflow run cloud-snapshot.yml` dispatches by hand using your own
+  GitHub credentials rather than the Worker's. If that succeeds, the workflow
+  and the repo are fine and the fault is in the Worker or its token. It also
+  captures a real snapshot, so it is worth doing regardless.
+- `wrangler deployments list --name wow-forecaster-cloud-trigger` shows a
+  "Secret Change" entry with a timestamp, which tells you whether a rotation
+  actually landed and when.
+- `wrangler secret list --name wow-forecaster-cloud-trigger` shows that
+  `GH_PAT` exists. It prints names only, never values.
+- `wrangler tail wow-forecaster-cloud-trigger` streams the next cron firing.
+  Note the Worker name is a positional argument here; `--name` is not accepted
+  by `tail`, unlike `secret` and `deployments`. `worker.js` throws on any
+  non-2xx, so the log carries the HTTP status and GitHub's response body: 204
+  is success, 401 or 403 means the token is missing **Actions: read and
+  write** on this repo, and silence at a `:16` or `:46` slot means the cron
+  itself is not firing rather than the token being rejected.
 
 ## Verify
 
