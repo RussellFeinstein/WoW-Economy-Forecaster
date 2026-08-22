@@ -7,6 +7,14 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.24] - 2026-08-22
+
+### Changed
+- M0A's work order and the matching ROADMAP text now carry [#155](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/155) and [#157](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/157), both filed out of the 2026-08-22 recovery after the PR that would normally have recorded them had already merged. #155 is third because it has a date on it, around 2026-08-30, and the index it names cannot be dropped the way #153's was, since health.py queries it. #157 sits late because its volume impact is modest, but it widens on its own
+
+### Notes
+- Worth recording next to #157 so nobody re-derives it: a raw sum says unknown items are 36% of a snapshot's listed value, and that number is an artifact. One record for item 10513 is listed at 9,999,999,990 gold, near the gold cap, and is 96.2% of the total on its own. Excluding listings over 1M gold per unit gives 1.7%, and the dropped items turn out to be ordinary goods, median 14.99g against 13.05g for the ones kept
+
 ## [2.14.23] - 2026-08-22
 
 ### Added
