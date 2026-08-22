@@ -581,6 +581,63 @@ def test_db_interrupted_prune_reports_committed_counts(tmp_path: Path, monkeypat
     assert result.norm_rows_deleted == 2
 
 
+def test_db_prune_stops_at_the_row_budget_and_resumes_next_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Per-run delete work is bounded, and the remainder is not abandoned.
+
+    The cutoff is a calendar date, so the first run after UTC midnight sees a
+    whole day of rows become prunable at once. Deleting all of it in one hourly
+    run would not fit the run budget. Empty hours cost nothing, so the budget
+    counts rows rather than slices.
+    """
+    monkeypatch.setattr("wow_forecaster.governance.pruner.MAX_ROWS_PER_RUN", 2)
+
+    db_path = _make_file_db(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    _insert_item(conn, 1)
+    for hour in (1, 2, 3, 4, 5):
+        _insert_raw_row(conn, 1, _stale_ts(40, hour))
+    conn.close()
+
+    pruner = _make_pruner(tmp_path, db_path=db_path, retention_days=30)
+
+    first = pruner.prune(dry_run=False, now=FIXED_NOW)
+    assert first.raw_rows_deleted == 2
+    assert first.errors == []
+
+    second = pruner.prune(dry_run=False, now=FIXED_NOW)
+    assert second.raw_rows_deleted == 2
+
+    conn2 = sqlite3.connect(db_path)
+    remaining = conn2.execute(
+        "SELECT COUNT(*) FROM market_observations_raw"
+    ).fetchone()[0]
+    conn2.close()
+    assert remaining == 1
+
+
+def test_db_dry_run_is_not_limited_by_the_row_budget(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Dry run reports the whole backlog; it deletes nothing, so nothing to bound."""
+    monkeypatch.setattr("wow_forecaster.governance.pruner.MAX_ROWS_PER_RUN", 2)
+
+    db_path = _make_file_db(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    _insert_item(conn, 1)
+    for hour in (1, 2, 3, 4, 5):
+        _insert_raw_row(conn, 1, _stale_ts(40, hour))
+    conn.close()
+
+    pruner = _make_pruner(tmp_path, db_path=db_path, retention_days=30)
+    result = pruner.prune(dry_run=True, now=FIXED_NOW)
+
+    assert result.raw_rows_deleted == 5
+
+
 def test_db_dry_run_counts_across_slices_and_deletes_nothing(tmp_path: Path) -> None:
     db_path = _make_file_db(tmp_path)
     conn = sqlite3.connect(db_path)
