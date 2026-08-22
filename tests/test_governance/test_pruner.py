@@ -360,6 +360,7 @@ def test_prune_result_str_live() -> None:
     assert "2026-02-08" in s
     assert "files=5" in s
     assert "raw_rows=100" in s
+    assert "[DRY RUN]" not in s
 
 
 # ── Tests: hour slicing (issue #149) ──────────────────────────────────────────
@@ -664,7 +665,6 @@ def test_db_dry_run_counts_across_slices_and_deletes_nothing(tmp_path: Path) -> 
     conn2.close()
     assert raw_left == 3
     assert norm_left == 3
-    assert "[DRY RUN]" not in s
 
 
 def test_prune_result_str_dry_run() -> None:
