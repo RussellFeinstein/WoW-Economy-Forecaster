@@ -90,9 +90,9 @@ write the implementation.
 
 1. **Schema.** Add `forecast_realizations` to `wow_forecaster/db/schema.py`
    (its own `_DDL_*` constant plus registration, so a fresh DB gets it via
-   `apply_schema()`), and add `migration_0011_add_forecast_realizations` to
+   `apply_schema()`), and add `migration_0012_add_forecast_realizations` to
    `wow_forecaster/db/migrations.py` registered in `MIGRATIONS` (so existing DBs
-   get it). Migrations end at 0010 today; this is 0011. Follow the 0002 pattern,
+   get it). Migrations end at 0011 today; this is 0012. Follow the 0002 pattern,
    which puts the same table in both places. Grain: one row per `forecast_id`.
    Columns: `forecast_id` (FK to `forecast_outputs`, UNIQUE), `archetype_id`,
    `item_id`, `realm_slug`, `horizon_days`, `target_date`, `origin_date`,
@@ -174,8 +174,8 @@ write the implementation.
   blocks direct pushes.
 - Documentation sync: the new module gets its entry in the matching path-scoped
   rules file under `.claude/rules/` (modeling.md for a forecasting module), the
-  migration count line in the repo `CLAUDE.md` moves from "end at 0010" to
-  "end at 0011", and the schema table count updates. The `LESSONS.md`
+  migration count line in the repo `CLAUDE.md` moves from "end at 0011" to
+  "end at 0012", and the schema table count updates. The `LESSONS.md`
   directional-reference note belongs here if the origin-reference trap bites
   during implementation.
 - Version: minor. This adds a new table, a new module, and a new CLI command,

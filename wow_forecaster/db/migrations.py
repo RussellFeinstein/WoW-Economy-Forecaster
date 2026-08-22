@@ -323,6 +323,32 @@ def migration_0010_add_norm_obs_id_index(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def migration_0011_drop_raw_item_time_index(conn: sqlite3.Connection) -> None:
+    """Drop idx_obs_raw_item_time from market_observations_raw.
+
+    Nothing queries that table by item_id. Every read filters on observed_at,
+    is_processed or realm_slug, so the index earned nothing while costing
+    maintenance on every insert and every prune delete. It was also the only
+    structure implicated when the table corrupted on 2026-08-22 (100 reported
+    "row missing from index" errors, all naming it), which blocked the
+    retention prune, and the same index had already been repaired once on
+    2026-07-28. Dropping it is the smallest-write repair available, which is
+    what matters on a machine with a history of corrupting large index builds
+    (issue #153, docs/integrity-incidents.md).
+
+    The DDL is removed from schema.py in the same change, and that pairing is
+    load-bearing: init-db calls apply_schema() before run_migrations(), and the
+    raw-index constant uses IF NOT EXISTS, so a surviving line there would
+    rebuild the index this migration had just dropped, on every run.
+
+    Migration 0009 re-executes that same constant, so on a legacy upgrade path
+    it no longer creates this index either. That is intended rather than an
+    oversight: 0009 runs first and 0011 would drop it immediately afterward.
+    """
+    conn.execute("DROP INDEX IF EXISTS idx_obs_raw_item_time;")
+    conn.commit()
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 # Add new migrations here. They will run once, in order.
 
@@ -366,6 +392,10 @@ MIGRATIONS: dict[str, tuple[MigrationFn, str]] = {
     "0010_norm_obs_id_index": (
         migration_0010_add_norm_obs_id_index,
         "Add obs_id FK index on market_observations_normalized",
+    ),
+    "0011_drop_raw_item_time_index": (
+        migration_0011_drop_raw_item_time_index,
+        "Drop unused idx_obs_raw_item_time on market_observations_raw",
     ),
 }
 
