@@ -19,7 +19,12 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from wow_forecaster.db.schema import apply_schema
-from wow_forecaster.governance.pruner import PruneResult, SnapshotPruner
+from wow_forecaster.governance.pruner import (
+    MAX_SLICES_PER_RUN,
+    PruneResult,
+    SnapshotPruner,
+    hour_slices,
+)
 
 # Injected into prune() so file-fixture dates and the pruner cutoff share one
 # clock; fixtures built with local date.today() flaked whenever the local date
@@ -355,6 +360,253 @@ def test_prune_result_str_live() -> None:
     assert "2026-02-08" in s
     assert "files=5" in s
     assert "raw_rows=100" in s
+
+
+# ── Tests: hour slicing (issue #149) ──────────────────────────────────────────
+#
+# The prune deletes in half-open hour slices with a commit per slice, so an
+# interrupted run keeps the slices it finished instead of discarding the lot.
+# hour_slices is pure over strings, so the boundary rules are testable without
+# a database.
+
+
+def test_hour_slices_covers_oldest_row_from_its_floored_hour() -> None:
+    slices = hour_slices("2026-07-21T02:43:49.649565+00:00", "2026-07-21T05:00:00")
+    assert slices[0][0] == "2026-07-21T02:00:00"
+
+
+def test_hour_slices_are_half_open_and_contiguous() -> None:
+    slices = hour_slices("2026-07-21T02:00:00", "2026-07-21T05:00:00")
+    assert slices == [
+        ("2026-07-21T02:00:00", "2026-07-21T03:00:00"),
+        ("2026-07-21T03:00:00", "2026-07-21T04:00:00"),
+        ("2026-07-21T04:00:00", "2026-07-21T05:00:00"),
+    ]
+
+
+def test_hour_slices_final_end_is_clamped_to_the_cutoff() -> None:
+    """The union of the slices must equal the target set exactly.
+
+    The cutoff is a bare calendar date, so the last hour boundary overshoots
+    it and has to be clamped or the final partial hour is never pruned.
+    """
+    slices = hour_slices("2026-07-22T22:10:00Z", "2026-07-23")
+    assert slices[-1][1] == "2026-07-23"
+    assert slices[-1][0] == "2026-07-22T23:00:00"
+
+
+def test_hour_slices_parses_both_stored_timestamp_formats() -> None:
+    """Production rows carry '+00:00' with microseconds, fixtures carry 'Z'."""
+    a = hour_slices("2026-07-21T02:43:49.649565+00:00", "2026-07-21T04:00:00")
+    b = hour_slices("2026-07-21T02:43:49Z", "2026-07-21T04:00:00")
+    assert a == b
+
+
+def test_hour_slices_empty_when_nothing_precedes_cutoff() -> None:
+    assert hour_slices("2026-07-23T00:00:00", "2026-07-23") == []
+
+
+def test_hour_slices_capped_and_resumable() -> None:
+    """One ancient row must not generate an unbounded slice list.
+
+    The cap is not a silent truncation: the run deletes what it covers, the
+    oldest row moves forward, and the next run continues from there.
+    """
+    slices = hour_slices("1970-01-01T00:00:00Z", "2026-07-23")
+    assert len(slices) == MAX_SLICES_PER_RUN
+    assert slices[0][0] == "1970-01-01T00:00:00"
+
+
+# ── Tests: batched DB pruning (issue #149) ────────────────────────────────────
+
+
+def _stale_ts(days: int, hour: int, minute: int = 30) -> str:
+    """A timestamp `days` before FIXED_NOW at a given hour, in stored format."""
+    d = (FIXED_NOW - timedelta(days=days)).date()
+    return f"{d.isoformat()}T{hour:02d}:{minute:02d}:00Z"
+
+
+def test_db_rows_across_many_hours_all_deleted(tmp_path: Path) -> None:
+    """Rows spread over several hours are all pruned, not just the first hour."""
+    db_path = _make_file_db(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    _insert_item(conn, 1)
+    for hour in (1, 2, 5, 9, 23):
+        _insert_raw_row(conn, 1, _stale_ts(40, hour))
+    conn.close()
+
+    pruner = _make_pruner(tmp_path, db_path=db_path, retention_days=30)
+    result = pruner.prune(dry_run=False, now=FIXED_NOW)
+
+    assert result.raw_rows_deleted == 5
+    conn2 = sqlite3.connect(db_path)
+    remaining = conn2.execute(
+        "SELECT COUNT(*) FROM market_observations_raw"
+    ).fetchone()[0]
+    conn2.close()
+    assert remaining == 0
+
+
+def test_db_norm_children_deleted_across_slices(tmp_path: Path) -> None:
+    """FK children in different hour slices are all removed with their parents."""
+    db_path = _make_file_db(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    _insert_item(conn, 1)
+    for hour in (3, 7, 14):
+        obs_id = _insert_raw_row(conn, 1, _stale_ts(40, hour))
+        _insert_norm_row(conn, obs_id)
+    conn.close()
+
+    pruner = _make_pruner(tmp_path, db_path=db_path, retention_days=30)
+    result = pruner.prune(dry_run=False, now=FIXED_NOW)
+
+    assert result.raw_rows_deleted == 3
+    assert result.norm_rows_deleted == 3
+    conn2 = sqlite3.connect(db_path)
+    raw_left = conn2.execute(
+        "SELECT COUNT(*) FROM market_observations_raw"
+    ).fetchone()[0]
+    norm_left = conn2.execute(
+        "SELECT COUNT(*) FROM market_observations_normalized"
+    ).fetchone()[0]
+    conn2.close()
+    assert raw_left == 0
+    assert norm_left == 0
+
+
+def test_db_fresh_rows_survive_a_batched_prune(tmp_path: Path) -> None:
+    """Slicing must not walk past the cutoff into rows inside the window."""
+    db_path = _make_file_db(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    _insert_item(conn, 1)
+    for hour in (1, 6, 18):
+        _insert_raw_row(conn, 1, _stale_ts(40, hour))
+    fresh_ts = _stale_ts(5, 12)
+    _insert_raw_row(conn, 1, fresh_ts)
+    conn.close()
+
+    pruner = _make_pruner(tmp_path, db_path=db_path, retention_days=30)
+    result = pruner.prune(dry_run=False, now=FIXED_NOW)
+
+    assert result.raw_rows_deleted == 3
+    conn2 = sqlite3.connect(db_path)
+    rows = conn2.execute("SELECT observed_at FROM market_observations_raw").fetchall()
+    conn2.close()
+    assert [r[0] for r in rows] == [fresh_ts]
+
+
+def test_db_interrupted_prune_keeps_completed_slices(tmp_path: Path, monkeypatch) -> None:
+    """A failure part-way through keeps the slices already committed.
+
+    This is the whole point of batching. The monolithic version rolled back
+    everything, so 24 hours of prune work was discarded on the kill that ended
+    the incident in issue #149.
+    """
+    db_path = _make_file_db(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    _insert_item(conn, 1)
+    hours = (1, 2, 3, 4, 5)
+    for hour in hours:
+        _insert_raw_row(conn, 1, _stale_ts(40, hour))
+    conn.close()
+
+    real_delete = SnapshotPruner._delete_slice
+    calls: list[tuple[str, str]] = []
+
+    def flaky(self, conn, start, end):  # noqa: ANN001
+        calls.append((start, end))
+        if len(calls) == 3:
+            raise sqlite3.OperationalError("simulated failure mid-prune")
+        return real_delete(self, conn, start, end)
+
+    monkeypatch.setattr(SnapshotPruner, "_delete_slice", flaky)
+
+    pruner = _make_pruner(tmp_path, db_path=db_path, retention_days=30)
+    result = pruner.prune(dry_run=False, now=FIXED_NOW)
+
+    assert result.errors, "the failure must be reported, not swallowed"
+
+    conn2 = sqlite3.connect(db_path)
+    remaining = [
+        r[0]
+        for r in conn2.execute(
+            "SELECT observed_at FROM market_observations_raw ORDER BY observed_at"
+        )
+    ]
+    conn2.close()
+
+    # The two slices that completed before the failure stay deleted.
+    assert _stale_ts(40, 1) not in remaining
+    assert _stale_ts(40, 2) not in remaining
+    # Everything from the failing slice onward is untouched and retried later.
+    assert _stale_ts(40, 3) in remaining
+    assert len(remaining) == 3
+
+
+def test_db_interrupted_prune_reports_committed_counts(tmp_path: Path, monkeypatch) -> None:
+    """Counts must reflect work that was actually committed.
+
+    The old error path reset both counters to zero on any failure, which was
+    right when one transaction covered everything and is a lie once slices
+    commit independently.
+    """
+    db_path = _make_file_db(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    _insert_item(conn, 1)
+    for hour in (1, 2, 3, 4):
+        obs_id = _insert_raw_row(conn, 1, _stale_ts(40, hour))
+        _insert_norm_row(conn, obs_id)
+    conn.close()
+
+    real_delete = SnapshotPruner._delete_slice
+    calls: list[int] = []
+
+    def flaky(self, conn, start, end):  # noqa: ANN001
+        calls.append(1)
+        if len(calls) == 3:
+            raise sqlite3.OperationalError("simulated failure mid-prune")
+        return real_delete(self, conn, start, end)
+
+    monkeypatch.setattr(SnapshotPruner, "_delete_slice", flaky)
+
+    pruner = _make_pruner(tmp_path, db_path=db_path, retention_days=30)
+    result = pruner.prune(dry_run=False, now=FIXED_NOW)
+
+    assert result.raw_rows_deleted == 2
+    assert result.norm_rows_deleted == 2
+
+
+def test_db_dry_run_counts_across_slices_and_deletes_nothing(tmp_path: Path) -> None:
+    db_path = _make_file_db(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    _insert_item(conn, 1)
+    for hour in (2, 8, 20):
+        obs_id = _insert_raw_row(conn, 1, _stale_ts(40, hour))
+        _insert_norm_row(conn, obs_id)
+    conn.close()
+
+    pruner = _make_pruner(tmp_path, db_path=db_path, retention_days=30)
+    result = pruner.prune(dry_run=True, now=FIXED_NOW)
+
+    assert result.raw_rows_deleted == 3
+    assert result.norm_rows_deleted == 3
+
+    conn2 = sqlite3.connect(db_path)
+    raw_left = conn2.execute(
+        "SELECT COUNT(*) FROM market_observations_raw"
+    ).fetchone()[0]
+    norm_left = conn2.execute(
+        "SELECT COUNT(*) FROM market_observations_normalized"
+    ).fetchone()[0]
+    conn2.close()
+    assert raw_left == 3
+    assert norm_left == 3
     assert "[DRY RUN]" not in s
 
 
