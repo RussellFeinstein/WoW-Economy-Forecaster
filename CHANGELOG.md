@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.20] - 2026-08-22
+
 ### Fixed
 - The retention prune can now finish ([#149](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/149)). `market_observations_normalized.obs_id` is the foreign key to `market_observations_raw` and had no index, and connections run with `PRAGMA foreign_keys = ON`, so deleting a parent row meant scanning the whole child table to prove nothing referenced it. Against 11.2M rows to delete and 158M children that is work with no end, and it is why the prune ran for 24 hours and moved the write-ahead log by a single page. Migration 0010 adds the index; schema.py carries the same DDL so a fresh database is born with it
 - The prune deletes in half-open hour slices and commits each one, instead of holding the whole backlog in a single transaction. An interrupted prune now keeps the slices it finished and the next run picks up from the new oldest row. Under the old shape a kill discarded everything, which is exactly what happened when the wedged run was finally stopped by hand
