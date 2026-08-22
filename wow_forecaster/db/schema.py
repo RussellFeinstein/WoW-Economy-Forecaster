@@ -102,9 +102,15 @@ CREATE TABLE IF NOT EXISTS market_observations_raw (
 );
 """
 
+# No (item_id, observed_at) index here, deliberately (issue #153). Nothing
+# queries this table by item_id: every read filters on observed_at,
+# is_processed or realm_slug, and per-item history is served from
+# market_observations_normalized and the rollups. The index that used to sit
+# here cost maintenance on every insert and every prune delete for no reader,
+# and was the only structure implicated when the table corrupted. Do not
+# reintroduce it without a query that needs it: apply_schema runs before
+# run_migrations in init-db, so a line here silently outranks migration 0011.
 _DDL_MARKET_OBS_RAW_INDEXES = """
-CREATE INDEX IF NOT EXISTS idx_obs_raw_item_time
-    ON market_observations_raw(item_id, observed_at);
 CREATE INDEX IF NOT EXISTS idx_obs_raw_unprocessed
     ON market_observations_raw(is_processed)
     WHERE is_processed = 0;

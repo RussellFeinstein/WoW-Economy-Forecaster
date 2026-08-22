@@ -7,6 +7,15 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.22] - 2026-08-22
+
+### Removed
+- `idx_obs_raw_item_time` on `market_observations_raw`, via migration 0011 ([#153](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/153)). Nothing queried that table by item_id. Every read filters on `observed_at`, `is_processed` or `realm_slug`, and per-item history comes from `market_observations_normalized` and the rollups, so the index was maintained on each of the roughly 250,000 hourly inserts and on every prune delete without serving a single reader. Dropping it makes both ingestion and pruning cheaper for good
+- The same index was also the one thing standing between the v2.14.20 prune fix and a working prune. A scoped integrity check found 100 "row missing from index" errors, every one naming it, which is the condition that makes a delete fail: removing a row means removing its index entry, and SQLite reports the database as malformed when the entry is not there. Dropping the index is the smallest-write repair available, which is the point on a machine with a history of corrupting large index builds, and it retires a structure that had already been repaired once on 2026-07-28
+
+### Changed
+- The raw-index DDL in schema.py carries a comment saying the index is absent on purpose and must not be reintroduced without a query that needs it. `init-db` runs `apply_schema()` before `run_migrations()` and the DDL uses `IF NOT EXISTS`, so a line there would rebuild the index migration 0011 had just dropped, on every run. A test pins the two halves against each other
+
 ## [2.14.21] - 2026-08-22
 
 ### Fixed
