@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.23] - 2026-08-22
+
+### Added
+- The trigger Worker's failure table in cloud-trigger/README.md now covers the status that actually happened, an empty-bodied HTTP 400, alongside 204, 401/403 and silence. A 400 there is not a credential problem: it means the value pasted into `wrangler secret put` is not the token, whether truncated, wrapped across lines, carrying an embedded space, or missing the `github_pat_` prefix that is part of the token rather than a label. A rejected credential answers 401 with a JSON body explaining itself; a rejected request answers this
+- The reason it stayed hidden for four hours: `wrangler secret put` does not echo what it receives, so a bad paste is indistinguishable from a good one and `wrangler deployments list` still records a successful "Secret Change". The original cause was Ctrl+V in `cmd.exe`, which does not paste there. The README now says to verify a rotation by watching for a `workflow_dispatch` run at the next `:16` or `:46`, rather than by trusting that the command returned
+
 ## [2.14.22] - 2026-08-22
 
 ### Removed

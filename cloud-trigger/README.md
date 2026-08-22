@@ -96,10 +96,32 @@ Diagnosing it, cheapest first:
 - `wrangler tail wow-forecaster-cloud-trigger` streams the next cron firing.
   Note the Worker name is a positional argument here; `--name` is not accepted
   by `tail`, unlike `secret` and `deployments`. `worker.js` throws on any
-  non-2xx, so the log carries the HTTP status and GitHub's response body: 204
-  is success, 401 or 403 means the token is missing **Actions: read and
-  write** on this repo, and silence at a `:16` or `:46` slot means the cron
-  itself is not firing rather than the token being rejected.
+  non-2xx, so the log carries the HTTP status and GitHub's response body.
+
+Reading the status:
+
+| Status | Meaning |
+|---|---|
+| 204 | Success. This is what a healthy firing logs. |
+| 401 or 403 | The token is rejected: expired, revoked, or missing **Actions: read and write** on this repo. |
+| 400 with an empty body | The token value itself is mangled. See below. |
+| nothing at a `:16` or `:46` slot | The cron is not firing at all, so the token is not the problem. Re-deploy from this directory to re-apply `wrangler.toml`'s triggers. |
+
+The empty-bodied 400 is the one worth knowing, because it does not look like a
+credential problem and it is easy to acquire. It means the request was
+rejected before GitHub's API answered it, which happens when the value pasted
+into `wrangler secret put` is not the token: truncated, wrapped across lines,
+carrying an embedded space, or missing the `github_pat_` prefix, which is part
+of the token rather than a label. A rejected *credential* returns 401 with a
+JSON body saying so; a rejected *request* returns this.
+
+It went undetected for four hours on 2026-08-22 because the prompt does not
+echo what it receives, so a bad paste looks exactly like a good one and
+`wrangler deployments list` still records a successful "Secret Change". The
+original cause was Ctrl+V in `cmd.exe`, which does not paste there. Use
+PowerShell, Windows Terminal, or Git Bash, or right-click to paste in `cmd`,
+and confirm the fix by watching for a `workflow_dispatch` run at the next
+`:16` or `:46` rather than by trusting that the command succeeded.
 
 ## Verify
 
