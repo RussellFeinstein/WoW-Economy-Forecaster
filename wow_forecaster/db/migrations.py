@@ -300,6 +300,29 @@ def migration_0009_add_health_check_indexes(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def migration_0010_add_norm_obs_id_index(conn: sqlite3.Connection) -> None:
+    """Add the obs_id index on market_observations_normalized.
+
+    obs_id is the FK to market_observations_raw and had no index, so with
+    PRAGMA foreign_keys = ON each parent delete scanned the entire child table
+    to prove no child referenced it. The retention prune therefore could not
+    complete once it had a real backlog to delete (issue #149). Re-executes the
+    whole normalized-index DDL constant; IF NOT EXISTS makes the pre-existing
+    indexes a no-op.
+
+    On a database that has already grown, this builds an index over every row
+    in the child table, so run it deliberately rather than inside a scheduled
+    job.
+    """
+    from wow_forecaster.db.schema import _DDL_MARKET_OBS_NORMALIZED_INDEXES
+
+    for statement in _DDL_MARKET_OBS_NORMALIZED_INDEXES.strip().split(";"):
+        stmt = statement.strip()
+        if stmt:
+            conn.execute(stmt)
+    conn.commit()
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 # Add new migrations here. They will run once, in order.
 
@@ -339,6 +362,10 @@ MIGRATIONS: dict[str, tuple[MigrationFn, str]] = {
     "0009_health_check_indexes": (
         migration_0009_add_health_check_indexes,
         "Add observed_at and (realm_slug, ingested_at) indexes on market_observations_raw",
+    ),
+    "0010_norm_obs_id_index": (
+        migration_0010_add_norm_obs_id_index,
+        "Add obs_id FK index on market_observations_normalized",
     ),
 }
 

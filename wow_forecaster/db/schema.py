@@ -141,6 +141,12 @@ CREATE INDEX IF NOT EXISTS idx_obs_norm_archetype_time
     ON market_observations_normalized(archetype_id, observed_at);
 CREATE INDEX IF NOT EXISTS idx_obs_norm_realm_outlier_time
     ON market_observations_normalized(realm_slug, is_outlier, observed_at);
+-- obs_id is this table's FK to market_observations_raw. Connections run with
+-- PRAGMA foreign_keys = ON, so without this index every parent delete has to
+-- scan the whole child table to prove nothing references the row. That is what
+-- made the retention prune unable to finish (issue #149).
+CREATE INDEX IF NOT EXISTS idx_obs_norm_obs_id
+    ON market_observations_normalized(obs_id);
 """
 
 _DDL_ARCHETYPE_MAPPINGS = """

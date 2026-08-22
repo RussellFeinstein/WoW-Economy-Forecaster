@@ -37,11 +37,65 @@ Usage
 from __future__ import annotations
 
 import logging
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+# Rows deleted before a run stops and leaves the rest for the next one.
+#
+# The cutoff is a calendar date, so the first run after UTC midnight sees a
+# whole day of rows become prunable at once (around 6M at current capture
+# volume). Deleting that in a single hourly run does not fit the run budget, so
+# the work spreads over the following runs instead. At 24 runs a day this has
+# several times the throughput needed to keep up.
+MAX_ROWS_PER_RUN = 1_500_000
+
+# Hour slices walked in one run, whether or not they hold rows. Only a guard
+# against an absurd oldest timestamp (a bad backfill, a clock error) turning
+# the walk from the oldest row to the cutoff into an endless one. Empty slices
+# are nearly free, which is why the real limit above counts rows.
+MAX_SLICES_PER_RUN = 2160  # 90 days
+
+
+def hour_slices(oldest_iso: str, cutoff_iso: str) -> list[tuple[str, str]]:
+    """Half-open ``[start, end)`` hour ranges covering rows older than the cutoff.
+
+    Pure over strings, so the boundary rules are testable without a database.
+    Boundaries are bare ``YYYY-MM-DDTHH:00:00`` with no zone suffix, which is
+    what makes them comparable to both stored timestamp formats: production
+    rows carry ``+00:00`` with microseconds and older rows carry ``Z``, and
+    both sort after the bare boundary for the same instant.
+
+    Comparison is on the raw column so ``idx_obs_raw_observed`` can seek. Never
+    wrap ``observed_at`` in ``DATE()`` here; that defeats the seek.
+
+    Args:
+        oldest_iso: ``MIN(observed_at)`` among rows older than the cutoff.
+        cutoff_iso: Exclusive upper bound, the cutoff calendar date.
+
+    Returns:
+        Contiguous slices from the hour containing ``oldest_iso`` up to
+        ``cutoff_iso``, the last one clamped so the union is exactly the
+        target set. Empty when nothing precedes the cutoff.
+    """
+    # Parse only the YYYY-MM-DDTHH prefix: format-agnostic across both stored
+    # shapes, and the boundaries are label strings rather than instants.
+    start = datetime.strptime(oldest_iso[:13], "%Y-%m-%dT%H")
+
+    slices: list[tuple[str, str]] = []
+    while len(slices) < MAX_SLICES_PER_RUN:
+        start_str = start.strftime("%Y-%m-%dT%H:00:00")
+        if start_str >= cutoff_iso:
+            break
+        nxt = start + timedelta(hours=1)
+        slices.append((start_str, min(nxt.strftime("%Y-%m-%dT%H:00:00"), cutoff_iso)))
+        start = nxt
+
+    return slices
 
 
 # ── Result type ───────────────────────────────────────────────────────────────
@@ -232,10 +286,55 @@ class SnapshotPruner:
                 except Exception:
                     pass
 
+    def _delete_slice(
+        self, conn: sqlite3.Connection, start: str, end: str
+    ) -> tuple[int, int]:
+        """Delete one half-open hour slice, FK children first.
+
+        Args:
+            conn:  Open connection. The caller commits.
+            start: Inclusive lower bound, a bare hour boundary string.
+            end:   Exclusive upper bound.
+
+        Returns:
+            ``(normalized_deleted, raw_deleted)`` for this slice.
+        """
+        norm_deleted = conn.execute(
+            """
+            DELETE FROM market_observations_normalized
+            WHERE obs_id IN (
+                SELECT obs_id FROM market_observations_raw
+                WHERE observed_at >= ? AND observed_at < ?
+            );
+            """,
+            (start, end),
+        ).rowcount
+
+        raw_deleted = conn.execute(
+            """
+            DELETE FROM market_observations_raw
+            WHERE observed_at >= ? AND observed_at < ?;
+            """,
+            (start, end),
+        ).rowcount
+
+        return norm_deleted, raw_deleted
+
     def _prune_db_rows(
         self, result: PruneResult, cutoff: date, dry_run: bool
     ) -> None:
-        """Delete stale rows from market_observations_raw (and normalized FK children)."""
+        """Delete stale rows from market_observations_raw (and normalized FK children).
+
+        Deletes in half-open hour slices with a commit per slice. Interruptibility
+        is the point: a killed prune keeps the slices it finished and the next run
+        resumes from the new oldest row. The single-transaction version this
+        replaced discarded a full day of work when it was killed (issue #149).
+
+        Both tables are seekable for this: ``idx_obs_raw_observed`` for the range
+        and ``idx_obs_norm_obs_id`` for the child lookup and the FK parent check.
+        Without the latter each parent delete scans the whole child table, which
+        is what made the prune unable to finish at all.
+        """
         cutoff_iso = cutoff.isoformat()
 
         try:
@@ -246,67 +345,84 @@ class SnapshotPruner:
                 wal_mode=self.wal_mode,
                 busy_timeout_ms=self.busy_timeout_ms,
             ) as conn:
-                # Count rows that would be affected
-                (raw_count,) = conn.execute(
-                    "SELECT COUNT(*) FROM market_observations_raw WHERE observed_at < ?;",
-                    (cutoff_iso,),
-                ).fetchone()
-
-                if raw_count == 0:
-                    logger.debug("No stale market_observations_raw rows to prune.")
-                    return
-
-                # Count child normalized rows that would be deleted
-                (norm_count,) = conn.execute(
+                (oldest,) = conn.execute(
                     """
-                    SELECT COUNT(*) FROM market_observations_normalized
-                    WHERE obs_id IN (
-                        SELECT obs_id FROM market_observations_raw
-                        WHERE observed_at < ?
-                    );
+                    SELECT MIN(observed_at) FROM market_observations_raw
+                    WHERE observed_at < ?;
                     """,
                     (cutoff_iso,),
                 ).fetchone()
 
-                result.raw_rows_deleted  = raw_count
-                result.norm_rows_deleted = norm_count
+                if oldest is None:
+                    logger.debug("No stale market_observations_raw rows to prune.")
+                    return
+
+                slices = hour_slices(oldest, cutoff_iso)
+                if len(slices) == MAX_SLICES_PER_RUN:
+                    logger.warning(
+                        "Prune slice walk hit its %d slice guard. Oldest row %s is "
+                        "far behind cutoff %s; check for a bad timestamp. The next "
+                        "run resumes from whatever is oldest then.",
+                        MAX_SLICES_PER_RUN, oldest, cutoff_iso,
+                    )
 
                 if dry_run:
+                    for start, end in slices:
+                        (raw_n,) = conn.execute(
+                            """
+                            SELECT COUNT(*) FROM market_observations_raw
+                            WHERE observed_at >= ? AND observed_at < ?;
+                            """,
+                            (start, end),
+                        ).fetchone()
+                        (norm_n,) = conn.execute(
+                            """
+                            SELECT COUNT(*) FROM market_observations_normalized
+                            WHERE obs_id IN (
+                                SELECT obs_id FROM market_observations_raw
+                                WHERE observed_at >= ? AND observed_at < ?
+                            );
+                            """,
+                            (start, end),
+                        ).fetchone()
+                        result.raw_rows_deleted  += raw_n
+                        result.norm_rows_deleted += norm_n
+
                     logger.info(
-                        "[DRY RUN] Would delete %d raw + %d normalized rows older than %s",
-                        raw_count, norm_count, cutoff_iso,
+                        "[DRY RUN] Would delete %d raw + %d normalized rows older "
+                        "than %s across %d hour slices",
+                        result.raw_rows_deleted, result.norm_rows_deleted,
+                        cutoff_iso, len(slices),
                     )
                     return
 
-                # Delete normalized rows first (FK child)
-                if norm_count > 0:
-                    conn.execute(
-                        """
-                        DELETE FROM market_observations_normalized
-                        WHERE obs_id IN (
-                            SELECT obs_id FROM market_observations_raw
-                            WHERE observed_at < ?
-                        );
-                        """,
-                        (cutoff_iso,),
-                    )
+                slices_done = 0
+                for start, end in slices:
+                    if result.raw_rows_deleted >= MAX_ROWS_PER_RUN:
+                        logger.info(
+                            "Prune stopped at the %d row budget after %d of %d hour "
+                            "slices. Rows before %s remain and the next run continues "
+                            "from there.",
+                            MAX_ROWS_PER_RUN, slices_done, len(slices), start,
+                        )
+                        break
 
-                # Delete raw rows (FK parent)
-                conn.execute(
-                    "DELETE FROM market_observations_raw WHERE observed_at < ?;",
-                    (cutoff_iso,),
-                )
-                conn.commit()
+                    norm_n, raw_n = self._delete_slice(conn, start, end)
+                    conn.commit()
+                    result.norm_rows_deleted += norm_n
+                    result.raw_rows_deleted  += raw_n
+                    slices_done += 1
 
                 logger.info(
-                    "Pruned %d raw + %d normalized rows older than %s",
-                    raw_count, norm_count, cutoff_iso,
+                    "Pruned %d raw + %d normalized rows older than %s across %d "
+                    "hour slices",
+                    result.raw_rows_deleted, result.norm_rows_deleted,
+                    cutoff_iso, slices_done,
                 )
 
         except Exception as exc:
+            # Counts are not reset: slices commit independently, so whatever is
+            # already counted is already deleted and durable.
             err = f"DB prune failed: {exc}"
             logger.error(err, exc_info=True)
             result.errors.append(err)
-            # Reset counts since deletion may not have occurred
-            result.raw_rows_deleted  = 0
-            result.norm_rows_deleted = 0

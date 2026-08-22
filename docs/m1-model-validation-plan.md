@@ -21,7 +21,7 @@ M0A is done except #11 (wall-clock verification tail through early August) and M
 
 ### Issue-text drift found
 
-- **#13 says "Migration 0009"**: 0009 was consumed by the health-check indexes (v2.7.4, issue #59). The ledger migration is **0010**. Comment on #13 at PR time.
+- **#13 says "Migration 0009"**: 0009 was consumed by the health-check indexes (v2.7.4, issue #59) and 0010 by the normalized obs_id FK index (v2.14.20, issue #149). The ledger migration is **0011**. Comment on #13 at PR time.
 - **#13's "~305K matured forecasts have actuals"**: the actual scoreable-today count is ~155K (see above). This does not change the design; it changes the expected coverage report.
 
 ### Code standing: ML/training/backtest (verified by Explore agent, file:line evidence)
@@ -41,7 +41,7 @@ M0A is done except #11 (wall-clock verification tail through early August) and M
 - **#101 confirmed exactly** (all three defects: drift.py:608-617, pipeline/backtest.py:174-186 inside the per-horizon loop, drift.py:282-283 returning NONE for None). Sharper: backtest horizons `[1, 3]` share only h=1 with the product horizons `[1, 7, 28]`, so every health horizon misses. And `live_dir_acc` is structurally always NULL because the anchor price is not stored (health.py:132-134), which the ledger's anchor_price_gold fixes for free.
 - **compute_health_summary** (health.py:69-202) joins forecast_outputs to the prunable normalized table, the exact thing #15 replaces with the ledger.
 - **run_daily.bat**: 3 fail-fast steps (health gate -> build-datasets -> run-daily-forecast), each `call "%WOWFC%" <cmd> >> logs\daily.log 2>&1` plus an errorlevel capture. #15's addition is a *fourth* step (the issue says "step 3", which is stale text), non-fatal per the issue.
-- **Migrations**: a single module wow_forecaster/db/migrations.py with a registry dict; the highest is 0009. New tables go in BOTH schema.py (fresh DBs) and migrations.py (existing DBs). The ledger migration is `0010_forecast_realizations`.
+- **Migrations**: a single module wow_forecaster/db/migrations.py with a registry dict; the highest is 0010. New tables go in BOTH schema.py (fresh DBs) and migrations.py (existing DBs). The ledger migration is `0011_forecast_realizations`.
 - **RunMetadata**: VALID_PIPELINE_STAGES (models/meta.py:23-26) has no evaluate/health value; the real precedent for a CLI command getting a genuine run_id is instantiating a PipelineStage and calling .run() (base.py:85-90, insert at base.py:169).
 - **Learning-track tie-ins**: lab-01 is #100, lab-02 is #16 (it prescribes the `[1,3]` to `[1,7,28]` backtest horizon change), lab-04 is #13. Doing the issues completes the labs' backing work.
 
@@ -51,7 +51,7 @@ Order follows the ROADMAP work-order and the M1 milestone description (verified 
 
 | PR | Issue | Branch | Bump | Depends on | Notes |
 |----|-------|--------|------|-----------|-------|
-| 1 | #13 ledger | feat/13-forecast-realizations-ledger | minor | none | Migration 0010. Keystone: unblocks #14, #101, #15, #19 evidence, and M2. Detailed design below. |
+| 1 | #13 ledger | feat/13-forecast-realizations-ledger | minor | none | Migration 0011. Keystone: unblocks #14, #101, #15, #19 evidence, and M2. Detailed design below. |
 | 2 | #100 purge/embargo | fix/100-purge-embargo-training-split | patch | none | Also fixes the short-data fallback (audit: it splits by archetype, not time). Lab-01 backing work. |
 | 3 | #71 gap-row filter | fix/71-gap-rows-training | patch | none | Require price_mean non-null at the fit-time filter (lgbm_model.py:152), the issue's "simplest precise rule". Also protects #16's folds. |
 | 4 | #14 report-accuracy | feat/14-report-accuracy | minor | #13 | CLI + 9th dashboard tab + viz/charts/accuracy.py. |
@@ -72,10 +72,10 @@ Order follows the ROADMAP work-order and the M1 milestone description (verified 
 
 ### GitHub hygiene at execution time
 
-- Comment on #13: the migration number is 0010 (0009 was taken by #59); the scoreable-today count is ~155K of 318K matured, and the rest are realized_source='missing'.
+- Comment on #13: the migration number is 0011 (0009 was taken by #59, 0010 by #149); the scoreable-today count is ~155K of 318K matured, and the rest are realized_source='missing'.
 - Comment on #70 at PR: check-drift shares the bug, and run_id is already nullable so option 1 needs no migration.
 - File a new small issue for the report-backtest DirAcc defect (always N/A; cli.py:1218 plus metrics.py:165-182). Fix it in or before PR 8, since #16's acceptance leans on report-backtest.
-- Per-PR Documentation Sync: CHANGELOG under [Unreleased]; repo CLAUDE.md (table count 23 to 24 and "migrations end at 0010" in PR 1; CLI command count; layer summaries; test counts); README for new user-facing commands; milestone work-order list updates when issues close.
+- Per-PR Documentation Sync: CHANGELOG under [Unreleased]; repo CLAUDE.md (table count 23 to 24 and "migrations end at 0011" in PR 1; CLI command count; layer summaries; test counts); README for new user-facing commands; milestone work-order list updates when issues close.
 
 ## Session scope (per Russell, 2026-07-28)
 
@@ -94,7 +94,7 @@ Branch `feat/13-forecast-realizations-ledger`. Minor bump at stamp time (new tab
 > 5. **Storing 'missing' rows at all** (see the design rule below): the one genuinely two-sided call, and the one that most changes the table's row count and meaning.
 > 6. **Three indexes** proposed off #14's and #101's expected query shapes, which are not written yet. Possibly one too many at this row count.
 
-### Schema (migration `0010_forecast_realizations` plus identical DDL in schema.py, the model_health_snapshots dual-site pattern)
+### Schema (migration `0011_forecast_realizations` plus identical DDL in schema.py, the model_health_snapshots dual-site pattern)
 
 ```sql
 CREATE TABLE IF NOT EXISTS forecast_realizations (
@@ -144,13 +144,13 @@ Denormalized slicing axes are copied from forecast_outputs on purpose: ForecastO
 
 ### Tests (TDD, red first)
 
-- `tests/test_db/test_migration_0010.py` (mirror test_migration_0009.py): registry entry; apply_schema creates the table and indexes; upgrade path via run_migrations on a pre-0010 DB; ALL_TABLE_NAMES parity; UNIQUE enforcement; CHECK rejections; EXPLAIN QUERY PLAN pins for the coverage and model-slicing queries (assert seek terms where the 07-22 lesson applies).
+- `tests/test_db/test_migration_0011.py` (mirror test_migration_0009.py): registry entry; apply_schema creates the table and indexes; upgrade path via run_migrations on a pre-0011 DB; ALL_TABLE_NAMES parity; UNIQUE enforcement; CHECK rejections; EXPLAIN QUERY PLAN pins for the coverage and model-slicing queries (assert seek terms where the 07-22 lesson applies).
 - `tests/test_reporting/test_realization.py` (fixtures via apply_schema, NEVER hand-rolled DDL, per the 2026-07-19 lesson): maturity/grace/window/realm selection; item join math; archetype join math; item-wins; no cross-grain fallback; degenerate rollup becomes missing; missing NULL shape; abs/pct error including the realized=0 guard; within_ci boundary inclusive; direction semantics including realized==anchor giving NULL and absent-anchor giving NULL; anchor ignores created_at (a row whose created_at date differs from target minus horizon); unknown-horizon skip; idempotent re-run (realized AND missing); rescore_missing fills and preserves realized rows; dry_run counts match the subsequent real run and write nothing; coverage_by_horizon math; a static no-`market_observations` guard on the module SQL. Plus one test exercising the production default clock/as_of shape (2026-07-27 injectable-seam lesson: at least one test per seam with the real default).
 - `tests/test_cli/`: add to the test_cli_smoke.py parametrized help list (exit 0 plus "Usage:" only); dry-run banner; end-to-end insert-then-zero on a tmp init-db DB; bad-date and inverted-window exit 1. Red-phase caution: count expected failures (2026-07-28 lesson: Typer exits 2 for unknown options too).
 
 ### Implementation order
 
-1. Branch off latest main. 2. Write failing tests. 3. schema.py DDL plus ALL_TABLE_NAMES plus docstring count 23 to 24. 4. migrations.py `0010_forecast_realizations`. 5. realization.py module. 6. cli.py command. 7. Full suite green (`pytest --tb=no`, no extra -q; lint `ruff check wow_forecaster/ tests/`). 8. Docs: CHANGELOG [Unreleased]/Added; README CLI section; repo CLAUDE.md (24 tables, migrations end at 0010, command count, M1 layer note, test count). 9. Live acceptance on rex-desktop (below). 10. Stamp commit plus PR `(vX.Y.Z)` plus comment the audit corrections on #13.
+1. Branch off latest main. 2. Write failing tests. 3. schema.py DDL plus ALL_TABLE_NAMES plus docstring count 23 to 24. 4. migrations.py `0011_forecast_realizations`. 5. realization.py module. 6. cli.py command. 7. Full suite green (`pytest --tb=no`, no extra -q; lint `ruff check wow_forecaster/ tests/`). 8. Docs: CHANGELOG [Unreleased]/Added; README CLI section; repo CLAUDE.md (24 tables, migrations end at 0011, command count, M1 layer note, test count). 9. Live acceptance on rex-desktop (below). 10. Stamp commit plus PR `(vX.Y.Z)` plus comment the audit corrections on #13.
 
 ### Live acceptance (production DB, rex-desktop)
 
