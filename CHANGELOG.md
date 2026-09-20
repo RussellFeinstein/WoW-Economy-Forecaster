@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.26] - 2026-09-20
+
 ### Changed
 - The tracker and the docs were re-aligned with production after a full audit on 2026-09-20. Three items joined M0A at the head of its work order: [#107](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/107) moved from M1 and was retitled, because the normalized-table scan it names runs inside the forecast stage's write transaction and locks the 07:16 hourly out on every day the daily runs (its IngestStage failed with `database is locked` on 08-29, 08-30, 08-31 and 09-20); [#165](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/165), four rows in the rollup tables one character from valid that no integrity check can see; and [#164](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/164), a run that ingested nothing reporting `[PARTIAL]` at exit 0 with a hint about API keys. The M0A, M0B and M1 milestone descriptions, docs/ROADMAP.md items 4 to 6, CLAUDE.md, the ops and governance rules files and docs/integrity-incidents.md carry the same state
 - [#100](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/100) reopened. It had been closed on 2026-07-30 seconds after an unrelated docs PR merged, with no closing keyword, commit or comment, and trainer.py holds no purge or embargo. The M1 work order had kept it at position 2 throughout, which is how the mismatch surfaced
