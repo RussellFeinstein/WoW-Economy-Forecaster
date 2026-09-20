@@ -7,6 +7,14 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.29] - 2026-09-20
+
+### Changed
+- CLAUDE.md's operational state carries the post-drain timing that the 2.14.26 notes left open: the first clean hourly run on the drained 30-day table (2026-09-20 17:16) took 63.7 minutes, 59 of them in the drift check, the same length as the last run on the 45-day table, and the trigger after it was dropped. On that number [#162](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/162) moved from the last build row of M0A to row 7 on the tracker ([#167](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/167)), directly behind #160, with the timing and its confound (WoW running, 3 GB of RAM free) recorded on the issue.
+
+### Notes
+- The #155 remainder was cleared by hand the same afternoon, as the 2.14.26 notes record; the per-call record (55 calls, 87,588,409 rows from each table, 72 to 90 s each, every exit 0) is on #155. The 15:16 hourly that followed lost its ingest to the daily's write lock (#107, built in 2.14.28 and waiting on its first daily-run morning), so the day's locally uncaptured hours are 13:16 and 14:16 (tasks stopped for the drain) and 15:16; cloud capture holds all three.
+
 ## [2.14.28] - 2026-09-20
 
 ### Fixed
