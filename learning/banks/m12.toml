@@ -579,7 +579,7 @@ options = [
   { text = "The bug was that the tests did not use foreign keys, which would have rejected the invented table", note = "Foreign keys constrain values between tables, not column names within one. The fixture's invented columns are legal DDL; nothing about referential integrity would object. The fixture in question turns foreign keys off on purpose so helpers can insert minimal rows." },
 ]
 source = "wow_forecaster/reporting/health.py"
-anchor = "# (ingestion_snapshots has neither a realm_slug nor an ingested_at column;"
+anchor = "# has neither a realm_slug nor an ingested_at column, and"
 
 # ── Where the classes meet ───────────────────────────────────────────────────
 

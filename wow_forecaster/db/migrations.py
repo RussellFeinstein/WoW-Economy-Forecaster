@@ -290,6 +290,11 @@ def migration_0009_add_health_check_indexes(conn: sqlite3.Connection) -> None:
     observed_at range deletes use the first index as well. Re-executes the
     whole raw-index DDL constant; IF NOT EXISTS makes the pre-existing
     indexes a no-op.
+
+    Since migration 0012 the constant no longer carries the (realm_slug,
+    ingested_at) index, so on a legacy upgrade path this migration creates
+    only idx_obs_raw_observed; the last-ingest probe moved to the normalized
+    table (issue #155).
     """
     from wow_forecaster.db.schema import _DDL_MARKET_OBS_RAW_INDEXES
 
@@ -349,6 +354,39 @@ def migration_0011_drop_raw_item_time_index(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def migration_0012_drop_raw_realm_ingested_index(conn: sqlite3.Connection) -> None:
+    """Drop idx_obs_raw_realm_ingested from market_observations_raw.
+
+    Two rows were missing from this index on the production database (issue
+    #155, found by the post-drop check on #153). When their hour slice entered
+    the retention window on 2026-08-31 the raw DELETE for that slice raised
+    "database disk image is malformed" on every hourly run for twenty days,
+    and since the pruner stops at the first failing slice nothing behind it
+    was pruned either: about 105M raw rows and their normalized children went
+    past the 30-day ToS window and the daily forecast gate stayed red.
+
+    The index served exactly one query, the health check's last-ingest probe
+    (MAX(ingested_at) per realm, issue #59). That probe now reads the newest
+    normalized observation through idx_obs_norm_realm_outlier_time, which is
+    the same signal ForecastStage's own freshness gate uses, so nothing reads
+    (realm_slug, ingested_at) on the raw table any more. Dropping the index is
+    the smallest-write repair available (a REINDEX over ~270M rows is exactly
+    the multi-GB write job this machine has corrupted before, see
+    docs/integrity-incidents.md), and it retires maintenance on every hourly
+    insert and every prune delete for one reader.
+
+    The DDL is removed from schema.py in the same change, and that pairing is
+    load-bearing for the same reason as 0011: init-db calls apply_schema()
+    before run_migrations() and the raw-index constant uses IF NOT EXISTS, so
+    a surviving line there would rebuild the index this migration drops, on
+    every run. Migration 0009 re-executes that constant on a legacy upgrade
+    path and therefore no longer creates this index either; 0009 runs first
+    and 0012 would drop it immediately afterward.
+    """
+    conn.execute("DROP INDEX IF EXISTS idx_obs_raw_realm_ingested;")
+    conn.commit()
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 # Add new migrations here. They will run once, in order.
 
@@ -396,6 +434,10 @@ MIGRATIONS: dict[str, tuple[MigrationFn, str]] = {
     "0011_drop_raw_item_time_index": (
         migration_0011_drop_raw_item_time_index,
         "Drop unused idx_obs_raw_item_time on market_observations_raw",
+    ),
+    "0012_drop_raw_realm_ingested_index": (
+        migration_0012_drop_raw_realm_ingested_index,
+        "Drop idx_obs_raw_realm_ingested on market_observations_raw",
     ),
 }
 

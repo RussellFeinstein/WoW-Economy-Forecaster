@@ -2588,7 +2588,10 @@ def check_data_health_cmd(
     stale_hours: float = typer.Option(
         4.0,
         "--stale-hours",
-        help="Hours without a successful ingest before marking stale (default 4).",
+        help=(
+            "Hours since the newest normalized observation before marking "
+            "stale (default 4)."
+        ),
     ),
     backup_stale_hours: float = typer.Option(
         0.0,
@@ -2623,8 +2626,9 @@ def check_data_health_cmd(
       - Last successful hourly and daily-forecast run timestamps.
       - Per-realm: first/last observation dates, days of coverage, and
         any calendar dates in the lookback window that have no data.
-      - [STALE] flag when the last successful ingest is older than
-        --stale-hours.
+      - [STALE] flag when the newest normalized observation for a realm
+        is older than --stale-hours (the same signal the forecast's own
+        freshness gate reads).
       - [STALE LOCK] flag when data/db/.hourly.lock is older than the
         run_hourly.bat takeover threshold (the hourly pipeline is wedged).
       - [RETENTION VIOLATION] flag when the oldest raw observation is older

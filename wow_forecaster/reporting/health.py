@@ -40,10 +40,17 @@ class RealmHealthStats:
         coverage_pct:     ``days_with_data / days_checked * 100``.
         gap_dates:        UTC calendar dates within the lookback window that have
                           zero observations.  Sorted ascending.
-        last_ingest_at:   Timestamp when ingestion last landed rows for this
-                          realm (MAX(ingested_at) over market_observations_raw;
-                          only successful ingests insert raw rows).
-        last_ingest_age_hours: Hours since last_ingest_at (None if no ingests found).
+        newest_obs_at:    observed_at of the realm's newest non-outlier
+                          normalized observation (MAX(observed_at) over
+                          market_observations_normalized). This is the
+                          freshness signal: it is what ForecastStage's own
+                          gate reads, and a raw row with no normalized child
+                          (an ingest whose normalize step failed) does not
+                          count. Until issue #155 this was MAX(ingested_at)
+                          over the raw table, whose only index was dropped
+                          after it corrupted.
+        newest_obs_age_hours: Hours since newest_obs_at (None when the realm
+                          has no normalized rows).
     """
 
     realm_slug:            str
@@ -53,8 +60,8 @@ class RealmHealthStats:
     days_checked:          int             = 0
     coverage_pct:          float           = 0.0
     gap_dates:             list[str]       = field(default_factory=list)
-    last_ingest_at:        str | None   = None
-    last_ingest_age_hours: float | None = None
+    newest_obs_at:         str | None   = None
+    newest_obs_age_hours:  float | None = None
 
 
 @dataclass
@@ -71,8 +78,9 @@ class HealthReport:
         last_forecast_run: Timestamp of the most recent successful daily forecast run.
         last_forecast_age_hours: Hours since last_forecast_run.
         item_forecast_count: Distinct item_ids with item-level forecasts in the DB.
-        is_stale:         True when last successful ingest is older than
-                          ``stale_threshold_hours`` for any realm.
+        is_stale:         True when any realm's newest normalized observation
+                          is older than ``stale_threshold_hours`` (or the
+                          realm has none).
         stale_threshold_hours: Threshold used to compute ``is_stale``.
         lock_age_hours:   Age of the hourly lock file (None when no lock file
                           exists or no lock path was given).
@@ -213,33 +221,45 @@ def _collect_realm_stats(
     """
     stats = RealmHealthStats(realm_slug=realm_slug)
 
-    # ── Observation date range ────────────────────────────────────────────────
-    # Two single-aggregate queries, DATE() outside the aggregate: SQLite's
-    # one-probe min/max optimization needs a bare column and exactly one
-    # MIN/MAX per query, and idx_obs_norm_realm_outlier_time then serves each
-    # via a single seek instead of a scan (issue #59). observed_at is
-    # zero-padded ISO-8601 text, so the lexicographic MIN/MAX is the
-    # chronological one and DATE(MIN(x)) == MIN(DATE(x)).
+    # ── Observation range and freshness ──────────────────────────────────────
+    # Two single-aggregate queries with a bare column inside the aggregate:
+    # SQLite's one-probe min/max optimization needs exactly one MIN/MAX per
+    # query, and idx_obs_norm_realm_outlier_time then serves each via a single
+    # seek instead of a scan (issue #59). observed_at is zero-padded ISO-8601
+    # text, so the lexicographic MIN/MAX is the chronological one and the
+    # first ten characters are the date.
+    #
+    # The MAX probe is also the freshness signal (issue #155). It used to be
+    # MAX(ingested_at) over market_observations_raw, served by an index that
+    # corrupted and had no other reader, so it was dropped rather than
+    # rebuilt. The newest normalized observation is the better signal anyway:
+    # it is what ForecastStage's StaleDataError gate reads, an ingest whose
+    # normalize step failed reads stale instead of fresh, and a catch-up drain
+    # of old snapshots no longer counts as fresh data. (ingestion_snapshots
+    # has neither a realm_slug nor an ingested_at column, and
+    # run_metadata.realm_slug is not populated by the ingest stage.)
     first_row = conn.execute(
         """
-        SELECT DATE(MIN(observed_at)) AS d
+        SELECT MIN(observed_at) AS ts
         FROM market_observations_normalized
         WHERE realm_slug = ? AND is_outlier = 0
         """,
         (realm_slug,),
     ).fetchone()
-    last_row = conn.execute(
+    newest_row = conn.execute(
         """
-        SELECT DATE(MAX(observed_at)) AS d
+        SELECT MAX(observed_at) AS ts
         FROM market_observations_normalized
         WHERE realm_slug = ? AND is_outlier = 0
         """,
         (realm_slug,),
     ).fetchone()
-    if first_row:
-        stats.first_obs_date = first_row["d"]
-    if last_row:
-        stats.last_obs_date = last_row["d"]
+    if first_row and first_row["ts"] is not None:
+        stats.first_obs_date = first_row["ts"][:10]
+    if newest_row and newest_row["ts"] is not None:
+        stats.newest_obs_at        = newest_row["ts"]
+        stats.newest_obs_age_hours = _age_hours(newest_row["ts"])
+        stats.last_obs_date        = newest_row["ts"][:10]
 
     # ── Days with data in lookback window ─────────────────────────────────────
     # The predicate compares the raw column, not DATE(observed_at): a bare
@@ -273,23 +293,6 @@ def _collect_realm_stats(
 
     if lookback_days > 0:
         stats.coverage_pct = stats.days_with_data / lookback_days * 100.0
-
-    # ── Last successful ingest ────────────────────────────────────────────────
-    # market_observations_raw.ingested_at records when each row landed; only
-    # successful ingest runs insert rows, so MAX() is the last good ingest.
-    # (ingestion_snapshots has neither a realm_slug nor an ingested_at column;
-    # querying it here crashed check-data-health on real DBs until issue #12.)
-    snap = conn.execute(
-        """
-        SELECT MAX(ingested_at) AS last_ingest
-        FROM market_observations_raw
-        WHERE realm_slug = ?
-        """,
-        (realm_slug,),
-    ).fetchone()
-    if snap and snap["last_ingest"] is not None:
-        stats.last_ingest_at        = snap["last_ingest"]
-        stats.last_ingest_age_hours = _age_hours(snap["last_ingest"])
 
     return stats
 
@@ -414,8 +417,8 @@ def collect_health_report(
 
     # ── Staleness check ───────────────────────────────────────────────────────
     report.is_stale = any(
-        (s.last_ingest_age_hours is None or
-         s.last_ingest_age_hours > stale_threshold_hours)
+        (s.newest_obs_age_hours is None or
+         s.newest_obs_age_hours > stale_threshold_hours)
         for s in report.realms
     )
 
@@ -578,14 +581,14 @@ def format_health_report(report: HealthReport) -> str:
             f"{stats.days_with_data} / {stats.days_checked} days "
             f"({stats.coverage_pct:.0f}%)"
         )
-        ingest_ts  = stats.last_ingest_at or "none"
-        ingest_age = _age_str(stats.last_ingest_age_hours)
+        newest_ts  = stats.newest_obs_at or "none"
+        newest_age = _age_str(stats.newest_obs_age_hours)
         stale_mark = " [STALE]" if (
-            stats.last_ingest_age_hours is None or
-            stats.last_ingest_age_hours > report.stale_threshold_hours
+            stats.newest_obs_age_hours is None or
+            stats.newest_obs_age_hours > report.stale_threshold_hours
         ) else ""
         lines.append(
-            f"    Last ingest      : {ingest_ts}  ({ingest_age}){stale_mark}"
+            f"    Newest obs       : {newest_ts}  ({newest_age}){stale_mark}"
         )
         if stats.gap_dates:
             gap_preview = ", ".join(stats.gap_dates[:7])
