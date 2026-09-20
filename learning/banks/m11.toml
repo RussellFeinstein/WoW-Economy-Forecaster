@@ -718,3 +718,60 @@ options = [
 source = "wow_forecaster/monitoring/drift.py"
 anchor = "None → NONE (can't detect)."
 see_also = ["PLAN.md", "docs/cloud-capture.md"]
+
+[[question]]
+id = "m11-q19"
+kind = "mcq"
+prompt = """
+On every day the daily forecast ran in late August and again on 2026-09-20, the
+07:16 hourly's IngestStage failed with `database is locked` and the hour was lost
+locally. The forecast stage was inserting 60 archetype rows and then building
+about 27,000 item-level forecasts on the same connection, which took 23 to 38
+minutes because `_fetch_items_with_history` walked every row of the normalized
+table.
+
+Issue #107 fixed it. Which change is the one that removes the failure class,
+rather than the one that happens to make it rare?
+"""
+answer = """
+Building the item forecasts on a read-only connection before the write
+connection opens, so the transaction holds inserts only.
+
+The failure class is a write transaction that spans a long read. Python's sqlite3
+opens the transaction at the first INSERT and holds it until commit, so everything
+read on that connection afterwards is read under the write lock; in WAL mode
+readers never block anyone, but a second writer waits out its busy timeout and
+fails. Moving the reads ahead of the first INSERT means no query, however slow,
+can ever hold the lock, which is why the test for it inserts from a second
+connection while the item forecasts are being built rather than timing anything.
+
+The other half of #107, reading `daily_rollup_item` instead of the normalized
+table, takes the read from 23 minutes to under a second. It matters (it is also
+what lets the forecast run from a restored backup, which excludes both observation
+tables), but on its own it would only have shrunk the window: a slow query is a
+property of the data and the machine, and the day the rollup table grows or the
+disk is busy, the lock comes back. A structural guarantee does not have a size.
+
+The same shape sat one stage later. The recommend stage inserts its
+recommendations and then runs the item-overlay enrichment inside that transaction
+for 43 to 61 minutes, and the re-audit of #107 found it because making the
+forecast stage sub-second is exactly what would have exposed it at 07:16 the next
+morning (#169). A repo that has fixed a failure class once should grep for the
+shape, not the symptom.
+
+One more thing worth taking from the rollup half: `daily_rollup_item` carries two
+column pairs, zero-inclusive (`price_sum`, `obs_count`) and positive-only
+(`qty_weighted_price_sum_pos`, `qty_weight_sum_pos`). The baseline in #123 needs the
+first, because it never filtered zero prices; the item-forecast helpers need the
+second, because they always did. Same table, opposite answers, and picking the
+wrong pair changes the statistic without an error.
+"""
+options = [
+  { text = "Building the item forecasts on a read-only connection before the write transaction opens, so the transaction holds inserts only; the rollup rewrite shrinks the window but a structural guarantee does not depend on query speed", correct = true },
+  { text = "Reading daily_rollup_item instead of the normalized table, since a sub-second read cannot hold a lock long enough for anyone to notice", note = "That is the change that makes the collision rare, and it is the one that would have quietly come back the day the rollup table grew or the disk was busy. The transaction still spans the read; it just spans a shorter one." },
+  { text = "Raising busy_timeout_ms on the hourly's connections so the ingest waits the daily out", note = "The busy timeout is already 30 seconds against a lock held for 25 to 40 minutes, and raising it to an hour would make the hourly overrun into the next hour, which is a different outage (#162). Waiting is not a fix for a lock nothing needs to hold." },
+  { text = "Moving the daily task so it never overlaps an hourly run", note = "The daily runs for over an hour end to end, so there is no hour it does not overlap; and the fix has to hold for a hand-fired daily too, which is exactly how the 09-20 collision reproduced at 15:16." },
+]
+source = "wow_forecaster/pipeline/forecast.py"
+anchor = "# the write transaction below holds inserts only and never spans a read"
+see_also = ["wow_forecaster/pipeline/recommend.py", "wow_forecaster/db/rollup.py", "wow_forecaster/pipeline/normalize.py"]

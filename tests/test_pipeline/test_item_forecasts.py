@@ -1,15 +1,26 @@
-"""Tests for _generate_item_forecasts() and the item-level forecast helpers."""
+"""Tests for _generate_item_forecasts() and the item-level forecast helpers.
+
+Since issue #107 the three price and history helpers read ``daily_rollup_item``
+and ``daily_rollup_archetype`` rather than ``market_observations_normalized``.
+The fixtures here still seed normalized rows and then build the rollups from
+them through the real ``upsert_rollups_for_date()``, never hand-written rollup
+rows: the argument for reading the rollup is that it aggregates the same rows
+under the same filter, and a hand-written fixture could drift off that silently.
+"""
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import date, timedelta
 
 import pytest
 
+from wow_forecaster.db.rollup import upsert_rollups_for_date
 from wow_forecaster.db.schema import apply_schema
 from wow_forecaster.models.forecast import ForecastOutput
 from wow_forecaster.pipeline.forecast import (
+    _archetype_prices_sql,
     _fetch_archetype_prices,
     _fetch_cold_start_blend_data,
     _fetch_item_archetypes,
@@ -17,6 +28,8 @@ from wow_forecaster.pipeline.forecast import (
     _fetch_items_with_history,
     _fetch_recipe_item_ids,
     _generate_item_forecasts,
+    _item_prices_sql,
+    _items_with_history_sql,
 )
 
 # Fixture prices are inserted on fixed 2026-03 dates, so the 7-day price
@@ -84,19 +97,25 @@ def _insert_reagent(conn, recipe_id: int, ingredient_id: int, qty: int = 1) -> N
     )
 
 
-def _insert_price(conn, item_id: int, obs_date: str, price: float, qty: int = 100) -> None:
+def _insert_price(
+    conn, item_id: int, obs_date: str, price: float, qty: int = 100,
+    is_outlier: int = 0, hour: str = "12",
+) -> None:
+    """Seed one normalized observation and rebuild that day's rollups from it."""
+    ts = f"{obs_date}T{hour}:00:00Z"
     obs_id = conn.execute(
         "INSERT INTO market_observations_raw "
         "(item_id, realm_slug, faction, observed_at, source, is_processed) "
         "VALUES (?, 'us', 'neutral', ?, 'test', 1) RETURNING obs_id;",
-        (item_id, f"{obs_date}T12:00:00Z"),
+        (item_id, ts),
     ).fetchone()[0]
     conn.execute(
         "INSERT INTO market_observations_normalized "
         "(obs_id, item_id, realm_slug, observed_at, price_gold, quantity_listed, is_outlier) "
-        "VALUES (?, ?, 'us', ?, ?, ?, 0);",
-        (obs_id, item_id, f"{obs_date}T12:00:00Z", price, qty),
+        "VALUES (?, ?, 'us', ?, ?, ?, ?);",
+        (obs_id, item_id, ts, price, qty, is_outlier),
     )
+    upsert_rollups_for_date(conn, "us", obs_date)
 
 
 def _make_archetype_forecast(
@@ -517,21 +536,24 @@ class TestFetchColdStartBlendData:
 
 def _insert_price_on_date(
     conn, item_id: int, obs_date: str, price: float = 50.0, qty: int = 100,
-    realm_slug: str = "us",
+    realm_slug: str = "us", is_outlier: int = 0, hour: str = "12",
 ) -> None:
-    """Insert a price observation on a specific calendar date."""
+    """Insert a price observation on a specific calendar date and rebuild that
+    day's rollups for the realm from the rows it now holds."""
+    ts = f"{obs_date}T{hour}:00:00Z"
     obs_id = conn.execute(
         "INSERT INTO market_observations_raw "
         "(item_id, realm_slug, faction, observed_at, source, is_processed) "
         "VALUES (?, ?, 'neutral', ?, 'test', 1) RETURNING obs_id;",
-        (item_id, realm_slug, f"{obs_date}T12:00:00Z"),
+        (item_id, realm_slug, ts),
     ).fetchone()[0]
     conn.execute(
         "INSERT INTO market_observations_normalized "
         "(obs_id, item_id, realm_slug, observed_at, price_gold, quantity_listed, is_outlier) "
-        "VALUES (?, ?, ?, ?, ?, ?, 0);",
-        (obs_id, item_id, realm_slug, f"{obs_date}T12:00:00Z", price, qty),
+        "VALUES (?, ?, ?, ?, ?, ?, ?);",
+        (obs_id, item_id, realm_slug, ts, price, qty, is_outlier),
     )
+    upsert_rollups_for_date(conn, realm_slug, obs_date)
 
 
 class TestFetchItemsWithHistory:
@@ -569,19 +591,9 @@ class TestFetchItemsWithHistory:
         for day in range(13):
             obs_date = f"2026-02-{day + 1:02d}"
             _insert_price_on_date(conn, 100, obs_date)
-        # Extra obs on day 1 — does not add a new distinct day
-        obs_id = conn.execute(
-            "INSERT INTO market_observations_raw "
-            "(item_id, realm_slug, faction, observed_at, source, is_processed) "
-            "VALUES (?, 'us', 'neutral', '2026-02-01T18:00:00Z', 'test', 1) RETURNING obs_id;",
-            (100,),
-        ).fetchone()[0]
-        conn.execute(
-            "INSERT INTO market_observations_normalized "
-            "(obs_id, item_id, realm_slug, observed_at, price_gold, quantity_listed, is_outlier) "
-            "VALUES (?, ?, 'us', '2026-02-01T18:00:00Z', 50.0, 100, 0);",
-            (obs_id, 100),
-        )
+        # Extra obs on day 1 at another hour: the rollup row for that day is
+        # rebuilt from both rows and still counts as one day.
+        _insert_price_on_date(conn, 100, "2026-02-01", hour="18")
         conn.commit()
 
         result = _fetch_items_with_history(conn, "us", min_days=14)
@@ -608,28 +620,54 @@ class TestFetchItemsWithHistory:
         """Outlier observations do not contribute to the distinct-day count."""
         conn = _make_db()
         _insert_item(conn, 100)
-        # 13 non-outlier days + 5 outlier days = still only 13 valid days
+        # 13 non-outlier days + 5 outlier days = still only 13 valid days.
+        # The outlier days go through the same rollup rebuild, which is what
+        # excludes them: the rollup is built from non-outlier rows only.
         for day in range(13):
             _insert_price_on_date(conn, 100, f"2026-02-{day + 1:02d}")
         for day in range(5):
-            obs_date = f"2026-03-{day + 1:02d}"
-            obs_id = conn.execute(
-                "INSERT INTO market_observations_raw "
-                "(item_id, realm_slug, faction, observed_at, source, is_processed) "
-                "VALUES (?, 'us', 'neutral', ?, 'test', 1) RETURNING obs_id;",
-                (100, f"{obs_date}T12:00:00Z"),
-            ).fetchone()[0]
-            conn.execute(
-                "INSERT INTO market_observations_normalized "
-                "(obs_id, item_id, realm_slug, observed_at, "
-                "price_gold, quantity_listed, is_outlier) "
-                "VALUES (?, ?, 'us', ?, 50.0, 100, 1);",
-                (obs_id, 100, f"{obs_date}T12:00:00Z"),
-            )
+            _insert_price_on_date(conn, 100, f"2026-03-{day + 1:02d}", is_outlier=1)
         conn.commit()
 
         result = _fetch_items_with_history(conn, "us", min_days=14)
         assert 100 not in result
+
+    def test_zero_price_only_day_does_not_count(self):
+        """A day whose only rows carry price_gold = 0 is not an observation day.
+
+        The old query filtered ``price_gold > 0`` per row; on the rollup that is
+        ``price_obs_count_pos > 0`` per day, which is exactly the same test.
+        """
+        conn = _make_db()
+        _insert_item(conn, 100)
+        for day in range(13):
+            _insert_price_on_date(conn, 100, f"2026-02-{day + 1:02d}")
+        _insert_price_on_date(conn, 100, "2026-02-14", price=0.0)
+        conn.commit()
+
+        assert 100 not in _fetch_items_with_history(conn, "us", min_days=14)
+
+        # One positive-price row on that day makes it count.
+        _insert_price_on_date(conn, 100, "2026-02-14", price=1.0, hour="18")
+        conn.commit()
+        assert 100 in _fetch_items_with_history(conn, "us", min_days=14)
+
+    def test_history_is_lifetime_not_a_rolling_window(self):
+        """The count runs over every rollup day the item has, however old.
+
+        Before #107 the count ran over the normalized table, which retention
+        trims to a rolling window; the rollups keep the whole history, which is
+        the definition v1.12.0 wrote against.
+        """
+        conn = _make_db()
+        _insert_item(conn, 100)
+        for day in range(7):
+            _insert_price_on_date(conn, 100, f"2025-06-{day + 1:02d}")
+        for day in range(7):
+            _insert_price_on_date(conn, 100, f"2026-02-{day + 1:02d}")
+        conn.commit()
+
+        assert 100 in _fetch_items_with_history(conn, "us", min_days=14)
 
 
 class TestGenerateItemForecastsExtended:
@@ -702,3 +740,299 @@ class TestGenerateItemForecastsExtended:
         # item 100 should appear exactly once for horizon "7d"
         count_7d = sum(1 for fc in results if fc.item_id == 100 and fc.forecast_horizon == "7d")
         assert count_7d == 1
+
+    def test_warns_when_the_rollup_window_prices_no_candidate(self, caplog):
+        """Candidates exist but the 7-day rollup window holds nothing for them:
+        the run produces no item forecasts, and says why, naming the table and
+        the repair path, rather than going quiet (the #123 rule)."""
+        conn = _make_db()
+        _insert_archetype(conn, 10)
+        _insert_item(conn, 100, archetype_id=10)
+        _insert_recipe(conn, 1, 100)
+        _insert_price(conn, 100, "2026-01-06", 50.0)  # far outside the window
+        conn.commit()
+
+        arch_forecasts = [
+            _make_archetype_forecast(10, "7d", predicted=60.0, ci_lower=54.0, ci_upper=66.0),
+        ]
+        with caplog.at_level(logging.WARNING, logger="wow_forecaster.pipeline.forecast"):
+            results = _generate_item_forecasts(
+                conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us",
+                run_date=RUN_DATE,
+            )
+
+        assert results == []
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "daily_rollup_item" in warnings[0].getMessage()
+        assert "backfill-rollups" in warnings[0].getMessage()
+
+    def test_no_warning_when_the_window_holds_prices(self, caplog):
+        conn = _make_db()
+        _insert_archetype(conn, 10)
+        _insert_item(conn, 100, archetype_id=10)
+        _insert_recipe(conn, 1, 100)
+        _insert_price(conn, 100, "2026-03-06", 50.0)
+        conn.commit()
+
+        arch_forecasts = [
+            _make_archetype_forecast(10, "7d", predicted=60.0, ci_lower=54.0, ci_upper=66.0),
+        ]
+        with caplog.at_level(logging.WARNING, logger="wow_forecaster.pipeline.forecast"):
+            results = _generate_item_forecasts(
+                conn, run_id=1, archetype_forecasts=arch_forecasts, realm_slug="us",
+                run_date=RUN_DATE,
+            )
+
+        assert len(results) == 1
+        assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+# ── Price windows on the rollup ───────────────────────────────────────────────
+
+
+class TestPriceWindowEdges:
+    """The 7-day window is [run_date - 6, run_date] inclusive on ``obs_date``,
+    the same calendar window the old timestamp-string comparison produced."""
+
+    def test_item_window_boundaries(self):
+        conn = _make_db()
+        _insert_item(conn, 100)
+        _insert_price(conn, 100, "2026-03-02", 1000.0)  # run_date - 7: out
+        _insert_price(conn, 100, "2026-03-03", 10.0)    # run_date - 6: in
+        _insert_price(conn, 100, "2026-03-09", 30.0)    # run_date:     in
+        _insert_price(conn, 100, "2026-03-10", 1000.0)  # run_date + 1: out
+        conn.commit()
+
+        result = _fetch_item_prices(conn, [100], "us", RUN_DATE)
+        assert result[100] == pytest.approx(20.0)
+
+    def test_archetype_window_boundaries(self):
+        conn = _make_db()
+        _insert_archetype(conn, 10)
+        _insert_item(conn, 101, archetype_id=10)
+        _insert_price(conn, 101, "2026-03-02", 1000.0)
+        _insert_price(conn, 101, "2026-03-03", 10.0)
+        _insert_price(conn, 101, "2026-03-09", 30.0)
+        _insert_price(conn, 101, "2026-03-10", 1000.0)
+        conn.commit()
+
+        result = _fetch_archetype_prices(conn, [10], "us", RUN_DATE)
+        assert result[10] == pytest.approx(20.0)
+
+    def test_item_with_no_positive_price_weight_has_no_current_price(self):
+        """Zero-price rows carry no weight in the ``_pos`` pair, so the item is
+        absent rather than priced at zero: the old ``price_gold > 0`` filter
+        produced no group for it either."""
+        conn = _make_db()
+        _insert_item(conn, 100)
+        _insert_price(conn, 100, "2026-03-06", 0.0)
+        _insert_price(conn, 100, "2026-03-07", 0.0)
+        conn.commit()
+
+        assert _fetch_item_prices(conn, [100], "us", RUN_DATE) == {}
+
+    def test_zero_price_rows_do_not_dilute_the_weighted_mean(self):
+        conn = _make_db()
+        _insert_item(conn, 100)
+        _insert_price(conn, 100, "2026-03-06", 0.0, qty=1000)
+        _insert_price(conn, 100, "2026-03-07", 40.0, qty=100)
+        conn.commit()
+
+        result = _fetch_item_prices(conn, [100], "us", RUN_DATE)
+        assert result[100] == pytest.approx(40.0)
+
+    def test_outlier_rows_are_excluded_from_prices(self):
+        conn = _make_db()
+        _insert_archetype(conn, 10)
+        _insert_item(conn, 100, archetype_id=10)
+        _insert_price(conn, 100, "2026-03-06", 40.0)
+        _insert_price(conn, 100, "2026-03-07", 999_999.0, is_outlier=1)
+        conn.commit()
+
+        assert _fetch_item_prices(conn, [100], "us", RUN_DATE)[100] == pytest.approx(40.0)
+        assert _fetch_archetype_prices(conn, [10], "us", RUN_DATE)[10] == pytest.approx(40.0)
+
+
+# ── Parity with the pre-#107 implementation ───────────────────────────────────
+
+# The three queries the helpers ran before issue #107, kept here only as a
+# parity reference against the same seeded observations.
+
+_LEGACY_ITEMS_WITH_HISTORY_SQL = """
+    SELECT item_id
+    FROM market_observations_normalized
+    WHERE realm_slug = ?
+      AND is_outlier = 0
+      AND price_gold > 0
+    GROUP BY item_id
+    HAVING COUNT(DISTINCT DATE(observed_at)) >= ?
+"""
+
+_LEGACY_ITEM_PRICES_SQL = """
+    SELECT item_id,
+           SUM(price_gold * COALESCE(quantity_listed, 1))
+               / NULLIF(SUM(COALESCE(quantity_listed, 1)), 0)
+    FROM market_observations_normalized
+    WHERE realm_slug = ?
+      AND is_outlier = 0
+      AND observed_at >= ?
+      AND observed_at <  ?
+      AND price_gold > 0
+      AND item_id IN ({placeholders})
+    GROUP BY item_id
+"""
+
+_LEGACY_ARCHETYPE_PRICES_SQL = """
+    SELECT i.archetype_id,
+           SUM(mon.price_gold * COALESCE(mon.quantity_listed, 1))
+               / NULLIF(SUM(COALESCE(mon.quantity_listed, 1)), 0)
+    FROM market_observations_normalized mon
+    JOIN items i ON mon.item_id = i.item_id
+    WHERE mon.realm_slug = ?
+      AND mon.is_outlier = 0
+      AND mon.observed_at >= ?
+      AND mon.observed_at <  ?
+      AND mon.price_gold > 0
+      AND i.archetype_id IN ({placeholders})
+    GROUP BY i.archetype_id
+"""
+
+
+def _seed_parity_fixture(conn) -> None:
+    """Two archetypes, four items, mixed prices and quantities across the window
+    edge, an outlier, a zero-price row, and a second realm."""
+    _insert_archetype(conn, 10, "arch.a")
+    _insert_archetype(conn, 20, "arch.b")
+    for item_id, arch in ((101, 10), (102, 10), (201, 20), (301, None)):
+        _insert_item(conn, item_id, archetype_id=arch)
+    rows = [
+        (101, "2026-03-02", 100.0, 10),   # outside the window
+        (101, "2026-03-03", 20.0, 50),
+        (101, "2026-03-05", 24.5, 10),
+        (101, "2026-03-09", 22.0, 200),
+        (102, "2026-03-04", 80.0, 5),
+        (102, "2026-03-06", 0.0, 500),    # zero price: no weight
+        (102, "2026-03-08", 77.75, 7),
+        (201, "2026-03-07", 3.25, 1000),
+        (201, "2026-03-09", 3.5, 800),
+        (301, "2026-03-08", 12.0, 1),
+    ]
+    for item_id, day, price, qty in rows:
+        _insert_price(conn, item_id, day, price, qty=qty)
+    _insert_price(conn, 101, "2026-03-07", 999_999.0, qty=1, is_outlier=1)
+    _insert_price_on_date(conn, 101, "2026-03-08", price=1.0, qty=1, realm_slug="eu")
+    # History: 16 positive-price days for item 201 (14 in January plus two in the
+    # window), 13 for item 102 (11 in January plus two in the window; its
+    # zero-price days do not count).
+    for day in range(1, 15):
+        _insert_price_on_date(conn, 201, f"2026-01-{day:02d}")
+    for day in range(1, 12):
+        _insert_price_on_date(conn, 102, f"2026-01-{day:02d}")
+    _insert_price_on_date(conn, 102, "2026-01-12", price=0.0)
+    conn.commit()
+
+
+class TestRollupParity:
+    def test_items_with_history_matches_legacy_query(self):
+        conn = _make_db()
+        _seed_parity_fixture(conn)
+
+        new = set(_fetch_items_with_history(conn, "us", min_days=14))
+        legacy = {
+            int(r[0]) for r in conn.execute(_LEGACY_ITEMS_WITH_HISTORY_SQL, ("us", 14))
+        }
+        assert new == legacy == {201}
+
+    def test_item_prices_match_legacy_query_and_ground_truth(self):
+        conn = _make_db()
+        _seed_parity_fixture(conn)
+        item_ids = [101, 102, 201, 301]
+
+        new = _fetch_item_prices(conn, item_ids, "us", RUN_DATE)
+        start = (RUN_DATE - timedelta(days=6)).isoformat()
+        end = (RUN_DATE + timedelta(days=1)).isoformat()
+        legacy = {
+            int(r[0]): float(r[1])
+            for r in conn.execute(
+                _LEGACY_ITEM_PRICES_SQL.format(placeholders=",".join("?" * len(item_ids))),
+                ["us", start, end, *item_ids],
+            )
+            if r[1] is not None
+        }
+        assert set(new) == set(legacy) == {101, 102, 201, 301}
+        for item_id, price in new.items():
+            assert price == pytest.approx(legacy[item_id])
+        # Ground truth for item 101: (20*50 + 24.5*10 + 22*200) / 260
+        assert new[101] == pytest.approx((20.0 * 50 + 24.5 * 10 + 22.0 * 200) / 260)
+        # Item 102: the zero-price row carries no weight
+        assert new[102] == pytest.approx((80.0 * 5 + 77.75 * 7) / 12)
+
+    def test_archetype_prices_match_legacy_query_and_ground_truth(self):
+        conn = _make_db()
+        _seed_parity_fixture(conn)
+        archetype_ids = [10, 20]
+
+        new = _fetch_archetype_prices(conn, archetype_ids, "us", RUN_DATE)
+        start = (RUN_DATE - timedelta(days=6)).isoformat()
+        end = (RUN_DATE + timedelta(days=1)).isoformat()
+        legacy = {
+            int(r[0]): float(r[1])
+            for r in conn.execute(
+                _LEGACY_ARCHETYPE_PRICES_SQL.format(placeholders=",".join("?" * 2)),
+                ["us", start, end, *archetype_ids],
+            )
+            if r[1] is not None
+        }
+        assert set(new) == set(legacy) == {10, 20}
+        for arch_id, price in new.items():
+            assert price == pytest.approx(legacy[arch_id])
+        assert new[10] == pytest.approx(
+            (20.0 * 50 + 24.5 * 10 + 22.0 * 200 + 80.0 * 5 + 77.75 * 7) / (260 + 12)
+        )
+        assert new[20] == pytest.approx((3.25 * 1000 + 3.5 * 800) / 1800)
+
+
+# ── Query plans ───────────────────────────────────────────────────────────────
+
+
+class TestRollupQueryPlans:
+    """Which table the helpers read is the point of #107, and a correctness
+    test cannot tell the two implementations apart once both return the same
+    numbers.  The plans are pinned on the exact strings production runs, and
+    on the seek terms rather than index names (the seek is what a revert to
+    the normalized table loses)."""
+
+    @staticmethod
+    def _plan(conn, sql: str, params) -> str:
+        rows = conn.execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall()
+        return " | ".join(str(row[-1]) for row in rows)
+
+    @pytest.fixture
+    def seeded(self):
+        conn = _make_db()
+        _seed_parity_fixture(conn)
+        return conn
+
+    def test_history_query_seeks_the_rollup_by_realm(self, seeded):
+        plan = self._plan(seeded, _items_with_history_sql(), ("us", 14))
+        assert "SEARCH daily_rollup_item" in plan, plan
+        assert "realm_slug=?" in plan, plan
+        assert "market_observations_normalized" not in plan
+
+    def test_item_prices_query_seeks_the_rollup_by_item_and_date(self, seeded):
+        plan = self._plan(
+            seeded, _item_prices_sql(2), ("us", "2026-03-03", "2026-03-10", 101, 102)
+        )
+        assert "SEARCH daily_rollup_item" in plan, plan
+        assert "item_id=?" in plan and "obs_date>" in plan, plan
+        assert "market_observations_normalized" not in plan
+
+    def test_archetype_prices_query_seeks_the_rollup_by_archetype_and_date(self, seeded):
+        plan = self._plan(
+            seeded, _archetype_prices_sql(2), ("us", "2026-03-03", "2026-03-10", 10, 20)
+        )
+        assert "SEARCH daily_rollup_archetype" in plan, plan
+        assert "archetype_id=?" in plan and "obs_date>" in plan, plan
+        assert "market_observations_normalized" not in plan
+        assert "items" not in plan, plan  # no JOIN through items any more

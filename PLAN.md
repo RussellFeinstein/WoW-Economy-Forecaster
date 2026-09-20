@@ -407,8 +407,10 @@ scheduled sooner because the hardware argues for it. The hosting choice (a
 Hetzner-class VPS at roughly $5 to $8 a month, or a comparable option) is
 decided when this phase starts, not before. Hardware spend on the box itself
 waits for a free MemTest86 per-stick diagnosis; #107 (item forecasts from
-daily_rollup_item) is the prerequisite that lets the daily ML run from a
-restored durable backup wherever it lands.
+daily_rollup_item, landed in v2.14.28) is the prerequisite that lets the daily
+ML run from a restored durable backup wherever it lands, with one setting to
+carry: the freshness gate still reads the observation table, which the backup
+does not hold, so an off-box run sets forecast.max_data_age_hours = 0.
 
 - Stand up the orchestrator chosen in OD-1 over the existing stage classes. Do
   not rewrite the stages. Wrap them.

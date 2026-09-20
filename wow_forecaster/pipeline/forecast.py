@@ -10,14 +10,15 @@ For each realm:
      data/processed/features/inference/.
   3. Batch-predict prices for all archetypes in the inference Parquet.
   4. Compute heuristic CIs (rolling_std × z, widened for cold-start items).
-  5. Persist ForecastOutput rows to forecast_outputs SQLite table.
-  6. Generate and persist item-level forecasts for recipe-linked items
-     (output items and required reagents) via trend-ratio scaling.
+  5. Generate item-level forecasts for recipe-linked items and items with
+     history via trend-ratio scaling, on a read-only connection.
+  6. Persist the archetype and item ForecastOutput rows to forecast_outputs
+     in one short write transaction.
 
 Item-level forecasts
 --------------------
-After archetype-level forecasts are written, _generate_item_forecasts()
-computes item-specific predictions using the trend-ratio method:
+_generate_item_forecasts() computes item-specific predictions from the
+in-memory archetype forecasts using the trend-ratio method:
 
     item_forecast = item_current × (archetype_forecast / archetype_current)
 
@@ -33,6 +34,15 @@ Coverage (union of two sets):
 
 Items in both sets are de-duplicated.  Items without a current price
 observation or without an archetype mapping are skipped.
+
+Since issue #107 the history count and the 7-day current prices come from the
+daily rollup tables (daily_rollup_item, daily_rollup_archetype), not from
+market_observations_normalized: the rollups hold the same aggregates at the
+day grain these queries reduce to, they survive retention and the durable
+backup, and reading them takes well under a second where the normalized scan
+took 23 to 38 minutes.  The item forecasts are built before the write
+connection opens, so no write transaction ever spans a read of the
+observation tables and the hourly ingest is never locked out by the daily.
 
 Freshness gate
 --------------
@@ -145,8 +155,10 @@ class ForecastStage(PipelineStage):
             realm_slug: Single realm to target. If None, uses config defaults.
             horizons:   Horizon list override (int days). If None, uses
                         config.features.target_horizons_days.
-            now:        Reference time for the freshness gate (default: current
-                        UTC). Injectable for deterministic tests.
+            now:        Reference time for the freshness gate and, when given,
+                        the anchor date of the item-forecast price window
+                        (default: current UTC, and today's date for the
+                        window). Injectable for deterministic tests.
 
         Returns:
             Total ForecastOutput rows written to DB.
@@ -277,7 +289,21 @@ class ForecastStage(PipelineStage):
                 logger.error("Inference failed for realm=%s: %s", realm, exc, exc_info=True)
                 continue
 
-            # Persist archetype-level forecasts and generate item-level forecasts
+            # Item-level forecasts derive from the in-memory archetype outputs and
+            # the rollup tables, so they are built on a read-only connection first:
+            # the write transaction below holds inserts only and never spans a read
+            # of the observation tables (issue #107, the 07:16 hourly lock-out).
+            with get_connection(
+                self.db_path,
+                wal_mode=self.config.database.wal_mode,
+                busy_timeout_ms=self.config.database.busy_timeout_ms,
+            ) as conn:
+                item_outputs = _generate_item_forecasts(
+                    conn, run.run_id, outputs, realm,
+                    run_date=now.date() if now is not None else None,
+                )
+
+            # Persist archetype-level forecasts, then the item-level rows
             with get_connection(
                 self.db_path,
                 wal_mode=self.config.database.wal_mode,
@@ -288,9 +314,6 @@ class ForecastStage(PipelineStage):
                     fc_id = repo.insert_forecast(fc)
                     # Attach the DB-assigned forecast_id (needed by RecommendStage)
                     object.__setattr__(fc, "forecast_id", fc_id)
-
-                # Generate and persist item-level forecasts for recipe-linked items
-                item_outputs = _generate_item_forecasts(conn, run.run_id, outputs, realm)
                 for ifc in item_outputs:
                     repo.insert_forecast(ifc)
 
@@ -333,10 +356,16 @@ def _generate_item_forecasts(
     are skipped.  Results are stored with item_id set and archetype_id = None so
     the crafting advisor can prefer them over archetype-level forecasts.
 
+    Every read here is against the rollup tables and the small reference tables;
+    nothing is written, and nothing reads the archetype forecasts back from the
+    database, so the caller can (and does) run this on a read-only connection
+    before its write transaction opens (issue #107).
+
     Args:
-        conn:               Open DB connection (within an active transaction).
+        conn:               Open DB connection, used read-only.
         run_id:             FK for provenance in forecast_outputs.
-        archetype_forecasts: Archetype-level ForecastOutputs just written to DB.
+        archetype_forecasts: Archetype-level ForecastOutputs, in memory; they
+                            need not have been persisted yet.
         realm_slug:         Realm to fetch current prices for.
         min_history_days:   Min distinct observation days required for non-recipe
                             items to be included (default 14).
@@ -384,6 +413,19 @@ def _generate_item_forecasts(
 
     item_current_prices = _fetch_item_prices(conn, item_ids_with_arch, realm_slug, run_date)
     archetype_current_prices = _fetch_archetype_prices(conn, archetype_ids, realm_slug, run_date)
+
+    if not item_current_prices:
+        # Every candidate is about to be skipped for want of a current price.
+        # With the prices coming from the rollups, that is what a stalled rollup
+        # step looks like from here, and it must not pass in silence while the
+        # archetype forecasts keep flowing (the #123 rule).
+        logger.warning(
+            "realm=%s: daily_rollup_item holds no priced rows for any of the %d "
+            "candidate items in the 7 days ending %s; no item-level forecasts this "
+            "run. If the hourly rollup step has been failing, 'backfill-rollups' "
+            "is the repair path.",
+            realm_slug, len(item_ids_with_arch), run_date.isoformat(),
+        )
 
     item_forecasts: list[ForecastOutput] = []
     for item_id, archetype_id in item_archetype_map.items():
@@ -459,6 +501,67 @@ def _fetch_recipe_item_ids(conn: sqlite3.Connection) -> list[int]:
     return [int(r[0]) for r in rows if r[0] is not None]
 
 
+# ── Rollup queries ────────────────────────────────────────────────────────────
+#
+# Exposed through the *_sql() builders so tests can pin each query plan against
+# the exact string production runs rather than a copy that can drift.  All three
+# read the daily rollup tables (issue #107); see the module docstring.
+
+_ITEMS_WITH_HISTORY_SQL = """
+        SELECT item_id
+        FROM daily_rollup_item
+        WHERE realm_slug = ?
+          AND price_obs_count_pos > 0
+        GROUP BY item_id
+        HAVING COUNT(*) >= ?
+"""
+
+_ITEM_PRICES_SQL = """
+        SELECT item_id,
+               SUM(qty_weighted_price_sum_pos) / NULLIF(SUM(qty_weight_sum_pos), 0)
+        FROM daily_rollup_item
+        WHERE realm_slug = ?
+          AND obs_date >= ?
+          AND obs_date <  ?
+          AND item_id IN ({placeholders})
+        GROUP BY item_id
+"""
+
+_ARCHETYPE_PRICES_SQL = """
+        SELECT archetype_id,
+               SUM(qty_weighted_price_sum) / NULLIF(SUM(qty_weight_sum), 0)
+        FROM daily_rollup_archetype
+        WHERE realm_slug = ?
+          AND obs_date >= ?
+          AND obs_date <  ?
+          AND archetype_id IN ({placeholders})
+        GROUP BY archetype_id
+"""
+
+
+def _items_with_history_sql() -> str:
+    """Return the history query (no placeholder list to fill)."""
+    return _ITEMS_WITH_HISTORY_SQL
+
+
+def _item_prices_sql(n_items: int) -> str:
+    """Return the item price query for an ``item_id IN (...)`` list of ``n_items``."""
+    return _ITEM_PRICES_SQL.format(placeholders=",".join("?" * n_items))
+
+
+def _archetype_prices_sql(n_archetypes: int) -> str:
+    """Return the archetype price query for an ``IN (...)`` list of ``n_archetypes``."""
+    return _ARCHETYPE_PRICES_SQL.format(placeholders=",".join("?" * n_archetypes))
+
+
+def _price_window(run_date: date) -> tuple[str, str]:
+    """The 7-day window as half-open ``obs_date`` bounds: [run_date - 6, run_date + 1)."""
+    return (
+        (run_date - timedelta(days=6)).isoformat(),
+        (run_date + timedelta(days=1)).isoformat(),
+    )
+
+
 def _fetch_items_with_history(
     conn: sqlite3.Connection,
     realm_slug: str,
@@ -466,8 +569,17 @@ def _fetch_items_with_history(
 ) -> list[int]:
     """Return item IDs with at least min_days distinct observation days.
 
-    Uses COUNT(DISTINCT DATE(observed_at)) so a single day with many snapshots
-    counts as one day.  Outlier rows are excluded.
+    Counts ``daily_rollup_item`` rows per item.  A rollup row exists for a
+    (item, realm, day) only when that day had a non-outlier observation, and
+    ``price_obs_count_pos > 0`` says at least one of those carried a positive
+    price, so a counted row is exactly a day the old query's
+    ``is_outlier = 0 AND price_gold > 0`` filter would have counted; the
+    UNIQUE key makes ``COUNT(*)`` the distinct-day count.
+
+    The count runs over every rollup day the item has.  That is the definition
+    v1.12.0 wrote against the then-unbounded normalized table; between the
+    retention prune (#149) and #107 it was silently a rolling 30-day count,
+    because that is all the normalized table held.
 
     Args:
         conn:       Open DB connection.
@@ -477,18 +589,7 @@ def _fetch_items_with_history(
     Returns:
         List of item_ids that satisfy the history threshold.
     """
-    rows = conn.execute(
-        """
-        SELECT item_id
-        FROM market_observations_normalized
-        WHERE realm_slug = ?
-          AND is_outlier = 0
-          AND price_gold > 0
-        GROUP BY item_id
-        HAVING COUNT(DISTINCT DATE(observed_at)) >= ?
-        """,
-        (realm_slug, min_days),
-    ).fetchall()
+    rows = conn.execute(_items_with_history_sql(), (realm_slug, min_days)).fetchall()
     return [int(r[0]) for r in rows if r[0] is not None]
 
 
@@ -514,27 +615,23 @@ def _fetch_item_prices(
     realm_slug: str,
     run_date: date,
 ) -> dict[int, float]:
-    """7-day quantity-weighted mean price per item from market_observations_normalized."""
+    """7-day quantity-weighted mean price per item from ``daily_rollup_item``.
+
+    ``qty_weighted_price_sum_pos`` and ``qty_weight_sum_pos`` are the per-day
+    sums of ``price_gold * COALESCE(quantity_listed, 1)`` and of
+    ``COALESCE(quantity_listed, 1)`` over non-outlier rows with
+    ``price_gold > 0``, so their ratio across the window is exactly the mean
+    the old query computed over the normalized rows under the same filter.
+    The ``_pos`` pair is the right one here because this query always
+    excluded zero prices; an item whose window carries no positive-price
+    weight divides by NULL and is absent, as it was before.
+    """
     if not item_ids:
         return {}
-    start_ts = (run_date - timedelta(days=6)).isoformat()
-    end_ts = (run_date + timedelta(days=1)).isoformat()
-    placeholders = ",".join("?" * len(item_ids))
+    start_date, end_date = _price_window(run_date)
     rows = conn.execute(
-        f"""
-        SELECT item_id,
-               SUM(price_gold * COALESCE(quantity_listed, 1))
-                   / NULLIF(SUM(COALESCE(quantity_listed, 1)), 0)
-        FROM market_observations_normalized
-        WHERE realm_slug = ?
-          AND is_outlier = 0
-          AND observed_at >= ?
-          AND observed_at <  ?
-          AND price_gold > 0
-          AND item_id IN ({placeholders})
-        GROUP BY item_id
-        """,
-        [realm_slug, start_ts, end_ts] + list(item_ids),
+        _item_prices_sql(len(item_ids)),
+        [realm_slug, start_date, end_date, *item_ids],
     ).fetchall()
     return {int(r[0]): float(r[1]) for r in rows if r[1] is not None}
 
@@ -545,30 +642,24 @@ def _fetch_archetype_prices(
     realm_slug: str,
     run_date: date,
 ) -> dict[int, float]:
-    """7-day quantity-weighted mean price per archetype from market_observations_normalized."""
+    """7-day quantity-weighted mean price per archetype from ``daily_rollup_archetype``.
+
+    The archetype rollup's ``qty_weighted_price_sum`` / ``qty_weight_sum`` are
+    already positive-price-only and are grouped through ``items.archetype_id``
+    at build time, which is the JOIN the old query made at read time.  An
+    item reassigned to another archetype after a day was rolled up stays under
+    the old archetype for that day, the same acceptance the training features
+    (daily_agg) make.
+    """
     if not archetype_ids:
         return {}
-    start_ts = (run_date - timedelta(days=6)).isoformat()
-    end_ts = (run_date + timedelta(days=1)).isoformat()
-    placeholders = ",".join("?" * len(archetype_ids))
+    start_date, end_date = _price_window(run_date)
     rows = conn.execute(
-        f"""
-        SELECT i.archetype_id,
-               SUM(mon.price_gold * COALESCE(mon.quantity_listed, 1))
-                   / NULLIF(SUM(COALESCE(mon.quantity_listed, 1)), 0)
-        FROM market_observations_normalized mon
-        JOIN items i ON mon.item_id = i.item_id
-        WHERE mon.realm_slug = ?
-          AND mon.is_outlier = 0
-          AND mon.observed_at >= ?
-          AND mon.observed_at <  ?
-          AND mon.price_gold > 0
-          AND i.archetype_id IN ({placeholders})
-        GROUP BY i.archetype_id
-        """,
-        [realm_slug, start_ts, end_ts] + list(archetype_ids),
+        _archetype_prices_sql(len(archetype_ids)),
+        [realm_slug, start_date, end_date, *archetype_ids],
     ).fetchall()
     return {int(r[0]): float(r[1]) for r in rows if r[1] is not None}
+
 
 
 def _fetch_cold_start_blend_data(
