@@ -47,7 +47,7 @@ M0A is done except #11 (wall-clock verification tail through early August) and M
 
 ## Execution sequence (one issue per PR, per branch discipline)
 
-Order follows the ROADMAP work-order and the M1 milestone description (verified in sync). Dependencies and wall-clock realities annotated.
+Order follows the M1 table on the build-order tracker #167 (which replaced the ROADMAP work-order and the milestone lists on 2026-09-20). Dependencies and wall-clock realities annotated.
 
 | PR | Issue | Branch | Bump | Depends on | Notes |
 |----|-------|--------|------|-----------|-------|

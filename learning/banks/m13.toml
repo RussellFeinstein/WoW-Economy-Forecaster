@@ -745,7 +745,7 @@ blocked. Then find one place where the milestone numbers themselves were changed
 to match.
 """
 rubric = [
-  "The Work order section: within milestones, follow the issue order given there rather than raw issue numbers",
+  "The order is the pinned tracking issue #167 since 2026-09-20 (before that, the Work order section): within an area, follow the row order rather than raw issue numbers",
   "The sequence is most urgent first: stop permanent data loss, green CI, harden, restore, validate, then build outward",
   "The companion rule: when the lowest open milestone is waiting on wall clock, advance to the next milestone and circle back",
   "Milestones were renumbered to match: M7 became M0.5 (v2.3.7), and paper trading moved from M4 to M2 while the warehouse moved from M2 to M3 (v2.3.8)",
@@ -779,9 +779,20 @@ it.
 The habit worth taking: when the order changes, change the numbers. A milestone
 list whose numbers no longer match the intended order is a document that has to be
 read with a correction applied, and everyone applies it slightly differently.
+
+Where the rule lives moved on 2026-09-20 (v2.14.27), and the move is the same
+lesson one level up. The issue-level sequence had two copies, the Work order
+section of the roadmap and a numbered list on every milestone description, and
+they drifted against each other every time the order changed: M1's list carried a
+closed issue and omitted an open one for eight weeks, and two issues sat in their
+milestones and in no list at all. Both copies were retired for one pinned tracking
+issue, #167, with a table per milestone; row 1 of M0A is what gets built next, and
+the roadmap's Work order section now says how the tracker reads. The rule itself
+is unchanged: an issue's number records when it was noticed, and the row order on
+the tracker records when it should be done.
 """
 source = "docs/ROADMAP.md"
-anchor = "Most urgent first. Milestone numbers match this sequence; within milestones, follow the issue order given here rather than raw issue numbers."
+anchor = "Row 1 of M0A is what gets built next"
 see_also = ["CHANGELOG.md"]
 
 [[question]]
