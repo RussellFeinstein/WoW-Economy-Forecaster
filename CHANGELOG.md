@@ -7,6 +7,23 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- The daily forecast no longer holds the database write lock through a scan of the normalized table ([#107](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/107)). `ForecastStage` used to insert the archetype forecasts and then build the item-level forecasts on the same connection, so the transaction the inserts opened stayed open through `_fetch_items_with_history`'s pass over every normalized row (23 to 38 minutes on the production database), and the 07:16 hourly's ingest failed with `database is locked` on every day the daily ran (08-29, 08-30, 08-31, 09-20). The item forecasts are now built first, on a read-only connection, and the write transaction holds inserts only; a second connection can insert while they are being built, which a stage-level test checks the way production found it.
+- The three item-forecast helpers (`_fetch_items_with_history`, `_fetch_item_prices`, `_fetch_archetype_prices`) read `daily_rollup_item` and `daily_rollup_archetype` instead of `market_observations_normalized`. The swap is exact by the same argument as #123: a rollup row with `price_obs_count_pos > 0` is precisely a day the old `is_outlier = 0 AND price_gold > 0` filter counted, and the `_pos` quantity-weighted sums are the old numerator and denominator under that filter. The three queries return in under a second where the scan took 23 minutes, and the daily forecast can now produce item rows from a restored durable backup, which excludes both observation tables.
+
+### Changed
+- Item eligibility for a per-item forecast is the lifetime count of distinct observation days again. Since the retention prune ([#149](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/149)) the count had silently become a rolling 30-day one, because that is all the normalized table held; on the rollups it is the definition v1.12.0 wrote against. On the production database that is 10,303 eligible items against 9,146 under the bounded scan, and an item still needs a price inside the 7-day window to get a row.
+- `_generate_item_forecasts` warns, naming `daily_rollup_item` and `backfill-rollups`, when candidate items exist and the 7-day rollup window prices none of them, so a stalled rollup step cannot erase every item forecast in silence while the archetype forecasts keep flowing.
+- `ForecastStage._execute`'s `now` argument, when given, also anchors the item-forecast price window, so stage-level tests can pin a fixed date.
+
+### Added
+- 17 tests: two stage-level tests in tests/test_pipeline/test_forecast_stage_writes.py (a second writer inserts a `run_metadata` row while the item forecasts are being built; item rows come out of a database whose observation tables are empty), and in tests/test_pipeline/test_item_forecasts.py parity of each helper against its pre-change query on the same seeded observations, query-plan pins on the seek terms with `market_observations_normalized` absent, the window edges, zero-price and outlier handling, the lifetime count, and the empty-window warning. Every fixture builds its rollups through the real `upsert_rollups_for_date()`.
+- Learning bank question m11-q19 on the failure class this fix removes (a write transaction spanning a long read) and why the fix is structural rather than a faster query.
+
+### Notes
+- #107 alone does not give the 07:16 hour back. The recommend stage has the same shape (`RecommendStage._execute` inserts the recommendations and then runs the item-overlay enrichment inside that transaction, scanning 3-day windows of the normalized table once per recommendation) and runs 43 to 61 minutes straight after the forecast stage; the day the forecast stage becomes sub-second, the 07:16 hourly lands inside the recommend stage's transaction instead. Filed as [#169](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/169), M0A row 2, found by the #107 re-audit. #107 stays open with `waiting: wall clock` until the first daily-run day after both have landed shows a clean 07:16 ingest.
+- The freshness gate (`_fetch_max_observation_age_hours`) still reads the normalized table on purpose: a single-`MAX` index seek on its own connection, outside any transaction, whose job is to refuse forecasting when ingest has stopped. A restored backup with empty observation tables cannot answer that, so an off-box run sets `forecast.max_data_age_hours = 0`.
+
 ## [2.14.27] - 2026-09-20
 
 ### Changed
