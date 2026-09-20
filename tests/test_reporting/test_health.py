@@ -9,12 +9,16 @@ collect_health_report():
   - Per-realm: gaps correctly identified when days are missing.
   - Per-realm: no gaps when all days in window have data.
   - Per-realm: coverage_pct computed correctly.
-  - Per-realm: last_ingest_at populated from market_observations_raw.
-  - Per-realm: last_ingest_age_hours reflects age of last ingest.
+  - Per-realm: newest_obs_at is MAX(observed_at) over the realm's non-outlier
+    normalized rows (issue #155: this replaced MAX(ingested_at) over the raw
+    table, whose only index was dropped after it corrupted).
+  - Per-realm: newest_obs_age_hours reflects the age of that row.
+  - Raw rows with no normalized child do not count as fresh data.
   - Realm isolation: stats only include rows for the queried realm.
-  - is_stale=True when last ingest is older than stale_threshold_hours.
-  - is_stale=False when last ingest is within threshold.
-  - is_stale=True when no ingest snapshots exist.
+  - is_stale=True when the newest observation is older than
+    stale_threshold_hours.
+  - is_stale=False when it is within threshold.
+  - is_stale=True when no normalized rows exist.
   - last_hourly_run populated from run_metadata (orchestrator stage).
   - last_forecast_run populated from run_metadata (recommend stage).
   - item_forecast_count counts distinct item_ids.
@@ -98,12 +102,33 @@ def _insert_obs(
     conn.commit()
 
 
+def _insert_norm_row(
+    conn, realm: str, hours_ago: float, is_outlier: int = 0,
+) -> None:
+    """Insert one normalized observation whose observed_at is hours_ago old.
+
+    This is the row the freshness probe reads: MAX(observed_at) over the
+    realm's non-outlier normalized rows. Fresh data means a normalized row
+    exists, which is also what ForecastStage's own freshness gate requires.
+    """
+    ts = (datetime.now(tz=UTC) - timedelta(hours=hours_ago)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    conn.execute(
+        "INSERT INTO market_observations_normalized "
+        "(obs_id, item_id, realm_slug, observed_at, price_gold, is_outlier) "
+        "VALUES (1, 1, ?, ?, 10.0, ?)",
+        (realm, ts, is_outlier),
+    )
+    conn.commit()
+
+
 def _insert_ingested_row(conn, realm: str, hours_ago: float) -> None:
     """Insert one raw observation whose ingested_at is hours_ago old.
 
-    Only successful ingest runs write market_observations_raw rows, so
-    inserting a row IS the record of a successful ingest.  A failed ingest
-    leaves no row, which the tests model by simply not calling this helper.
+    A raw row records that an ingest landed data. It is deliberately NOT what
+    the freshness probe reads (issue #155): an ingest whose normalize step
+    failed has raw rows and no fresh data, and the probe must say stale.
     """
     ts = (datetime.now(tz=UTC) - timedelta(hours=hours_ago)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
@@ -233,36 +258,67 @@ class TestCollectHealthReport:
         assert len(report.realms) == 1
         assert report.realms[0].realm_slug == "us"
 
-    def test_last_ingest_at_from_raw_observations(self, conn):
-        _insert_ingested_row(conn, "us", hours_ago=1.5)
+    def test_newest_obs_at_from_normalized_rows(self, conn):
+        _insert_norm_row(conn, "us", hours_ago=1.5)
         report = collect_health_report(conn, ["us"])
-        assert report.realms[0].last_ingest_at is not None
-        assert report.realms[0].last_ingest_age_hours is not None
-        assert report.realms[0].last_ingest_age_hours < 3.0
+        assert report.realms[0].newest_obs_at is not None
+        assert report.realms[0].newest_obs_age_hours is not None
+        assert report.realms[0].newest_obs_age_hours < 3.0
 
-    def test_newest_ingested_row_wins(self, conn):
-        _insert_ingested_row(conn, "us", hours_ago=50.0)
-        _insert_ingested_row(conn, "us", hours_ago=2.0)
+    def test_newest_normalized_row_wins(self, conn):
+        _insert_norm_row(conn, "us", hours_ago=50.0)
+        _insert_norm_row(conn, "us", hours_ago=2.0)
         report = collect_health_report(conn, ["us"])
-        assert report.realms[0].last_ingest_age_hours < 3.0
+        assert report.realms[0].newest_obs_age_hours < 3.0
 
-    def test_ingest_realm_isolation(self, conn):
-        _insert_ingested_row(conn, "eu", hours_ago=0.5)
+    def test_newest_obs_realm_isolation(self, conn):
+        _insert_norm_row(conn, "eu", hours_ago=0.5)
         report = collect_health_report(conn, ["us"])
-        # Another realm's ingest is not this realm's last ingest
-        assert report.realms[0].last_ingest_at is None
+        # Another realm's data is not this realm's newest observation
+        assert report.realms[0].newest_obs_at is None
 
-    def test_is_stale_when_no_ingests(self, conn):
+    def test_raw_rows_alone_do_not_make_a_realm_fresh(self, conn):
+        """The behavior change from issue #155, pinned.
+
+        The probe used to read MAX(ingested_at) over the raw table, so an
+        ingest that landed rows read as fresh even if nothing was normalized.
+        The forecast reads the normalized table, so fresh means a normalized
+        row exists; a raw-only realm is stale.
+        """
+        _insert_ingested_row(conn, "us", hours_ago=0.5)
+        report = collect_health_report(conn, ["us"], stale_threshold_hours=4.0)
+        assert report.realms[0].newest_obs_at is None
+        assert report.is_stale is True
+
+    def test_outlier_rows_do_not_count_as_fresh(self, conn):
+        """Pins the is_outlier = 0 term, which is also what lets the query
+        seek idx_obs_norm_realm_outlier_time instead of scanning it."""
+        _insert_norm_row(conn, "us", hours_ago=0.5, is_outlier=1)
+        _insert_norm_row(conn, "us", hours_ago=6.0)
+        report = collect_health_report(conn, ["us"], stale_threshold_hours=4.0)
+        assert report.realms[0].newest_obs_age_hours > 5.0
+        assert report.is_stale is True
+
+    def test_last_obs_date_is_derived_from_newest_obs(self, conn):
+        """One MAX(observed_at) probe serves both the date line and the
+        freshness timestamp; the two must never disagree."""
+        _insert_norm_row(conn, "us", hours_ago=1.0)
+        report = collect_health_report(conn, ["us"])
+        stats = report.realms[0]
+        assert stats.newest_obs_at is not None
+        assert stats.last_obs_date == stats.newest_obs_at[:10]
+
+    def test_is_stale_when_no_observations(self, conn):
         report = collect_health_report(conn, ["us"], stale_threshold_hours=4.0)
         assert report.is_stale is True
 
-    def test_is_stale_when_ingest_too_old(self, conn):
-        _insert_ingested_row(conn, "us", hours_ago=6.0)
+    def test_is_stale_when_newest_obs_too_old(self, conn):
+        _insert_norm_row(conn, "us", hours_ago=6.0)
         report = collect_health_report(conn, ["us"], stale_threshold_hours=4.0)
         assert report.is_stale is True
 
-    def test_not_stale_when_fresh_ingest(self, conn):
-        _insert_ingested_row(conn, "us", hours_ago=1.0)
+    def test_not_stale_when_fresh_observation(self, conn):
+        _insert_norm_row(conn, "us", hours_ago=1.0)
         report = collect_health_report(conn, ["us"], stale_threshold_hours=4.0)
         assert report.is_stale is False
 
@@ -487,7 +543,7 @@ class TestBackupFreshnessCheck:
         """The default (no backup_dir) leaves the check inert: a would-be-stale
         backup can never affect a caller that does not opt in (the daily
         forecast freshness gate)."""
-        _insert_ingested_row(conn, "us", hours_ago=1.0)  # otherwise is_stale
+        _insert_norm_row(conn, "us", hours_ago=1.0)  # otherwise is_stale
         report = collect_health_report(conn, ["us"])
         assert report.backup_checked is False
         assert report.backup_is_stale is False
@@ -532,7 +588,7 @@ class TestBackupFreshnessCheck:
         """The run_daily gate guard: with backup_dir omitted, a stale backup on
         disk is ignored entirely, so a stale backup never fails a caller (like
         the forecast gate) that did not ask for the check."""
-        _insert_ingested_row(conn, "us", hours_ago=1.0)  # keep the data fresh
+        _insert_norm_row(conn, "us", hours_ago=1.0)  # keep the data fresh
         _make_backup(tmp_path, age_hours=200.0)
         report = collect_health_report(conn, ["us"])  # no backup_dir
         assert report.backup_is_stale is False
@@ -573,6 +629,18 @@ class TestFormatHealthReport:
         report = self._base_report(is_stale=True)
         output = format_health_report(report)
         assert "[STALE]" in output
+
+    def test_newest_obs_line_names_what_it_measures(self):
+        """The freshness line reads the newest normalized observation (issue
+        #155), and its label says so; 'Last ingest' would describe the raw
+        MAX(ingested_at) probe this replaced."""
+        report = self._base_report()
+        report.realms[0].newest_obs_at = "2026-03-10T09:16:04.898974+00:00"
+        report.realms[0].newest_obs_age_hours = 0.7
+        output = format_health_report(report)
+        assert "Newest obs" in output
+        assert "2026-03-10T09:16:04" in output
+        assert "Last ingest" not in output
 
     def test_gap_dates_shown(self):
         from wow_forecaster.reporting.health import RealmHealthStats
@@ -718,7 +786,7 @@ def _corrupt_table_root_page(path: Path, table: str) -> None:
 
 class TestIntegrityScope:
     def test_scope_none_is_the_default_and_inert(self, conn):
-        _insert_ingested_row(conn, "us", hours_ago=1.0)
+        _insert_norm_row(conn, "us", hours_ago=1.0)
         report = collect_health_report(conn, ["us"])
         assert report.integrity_checked is False
         assert report.integrity_failures == {}
@@ -729,7 +797,7 @@ class TestIntegrityScope:
             collect_health_report(conn, ["us"], integrity_scope="bogus")
 
     def test_clean_db_passes_durable_scope(self, conn):
-        _insert_ingested_row(conn, "us", hours_ago=1.0)
+        _insert_norm_row(conn, "us", hours_ago=1.0)
         report = collect_health_report(conn, ["us"], integrity_scope="durable")
         assert report.integrity_checked is True
         assert report.integrity_failures == {}

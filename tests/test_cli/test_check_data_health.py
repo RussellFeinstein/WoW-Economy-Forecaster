@@ -80,6 +80,28 @@ def _insert_fresh_raw(tree: Path, observed_days_ago: float = 0.02) -> None:
     conn.close()
 
 
+def _insert_fresh_norm(tree: Path, observed_days_ago: float = 0.02) -> None:
+    """A normalized row is what the freshness probe reads (issue #155); the
+    raw helper above still seeds the retention sentinel, which keys on the
+    raw table's observed_at."""
+    db_path = tree / "db" / "health.db"
+    ts = (datetime.now(tz=UTC) - timedelta(days=observed_days_ago)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "PRAGMA foreign_keys = OFF;"
+    )
+    conn.execute(
+        "INSERT INTO market_observations_normalized "
+        "(obs_id, item_id, realm_slug, observed_at, price_gold) "
+        "VALUES (1, 1, 'us', ?, 10.0)",
+        (ts,),
+    )
+    conn.commit()
+    conn.close()
+
+
 def _run(tree: Path) -> tuple[int, str]:
     result = runner.invoke(
         app,
@@ -90,6 +112,7 @@ def _run(tree: Path) -> tuple[int, str]:
 
 def test_healthy_db_exits_zero(cli_tree: Path) -> None:
     _insert_fresh_raw(cli_tree)
+    _insert_fresh_norm(cli_tree)
     exit_code, output = _run(cli_tree)
     assert "[HEALTHY]" in output
     assert exit_code == 0
@@ -97,6 +120,7 @@ def test_healthy_db_exits_zero(cli_tree: Path) -> None:
 
 def test_stale_lock_exits_one_despite_fresh_data(cli_tree: Path) -> None:
     _insert_fresh_raw(cli_tree)
+    _insert_fresh_norm(cli_tree)
     lock = cli_tree / "db" / ".hourly.lock"
     lock.write_text("leaked", encoding="ascii")
     past = time.time() - 300 * 60.0  # 300 minutes, well past the 180 threshold
@@ -108,6 +132,7 @@ def test_stale_lock_exits_one_despite_fresh_data(cli_tree: Path) -> None:
 
 def test_retention_violation_exits_one_despite_fresh_data(cli_tree: Path) -> None:
     _insert_fresh_raw(cli_tree)
+    _insert_fresh_norm(cli_tree)
     _insert_fresh_raw(cli_tree, observed_days_ago=40.0)
     exit_code, output = _run(cli_tree)
     assert "[RETENTION]" in output

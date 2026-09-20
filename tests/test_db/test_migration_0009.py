@@ -12,13 +12,17 @@ import sqlite3
 from wow_forecaster.db.migrations import MIGRATIONS, run_migrations
 from wow_forecaster.db.schema import apply_schema, get_existing_indexes
 
-NEW_INDEXES = ("idx_obs_raw_observed", "idx_obs_raw_realm_ingested")
+# 0009 also created idx_obs_raw_realm_ingested, which migration 0012 dropped
+# after two of its entries went missing on the production database (issue
+# #155). The last-ingest query it served now reads the normalized table; see
+# NEWEST_OBS_SQL below and tests/test_db/test_migration_0012.py.
+NEW_INDEXES = ("idx_obs_raw_observed",)
 
-# Mirrors of the health.py hot-path query shapes the new indexes must serve.
+# Mirrors of the health.py hot-path query shapes the indexes must serve.
 RETENTION_SQL = "SELECT MIN(observed_at) AS oldest FROM market_observations_raw"
-LAST_INGEST_SQL = (
-    "SELECT MAX(ingested_at) AS last_ingest FROM market_observations_raw "
-    "WHERE realm_slug = 'us'"
+NEWEST_OBS_SQL = (
+    "SELECT MAX(observed_at) AS newest FROM market_observations_normalized "
+    "WHERE realm_slug = 'us' AND is_outlier = 0"
 )
 COVERAGE_SQL = (
     "SELECT DISTINCT DATE(observed_at) AS obs_date "
@@ -94,8 +98,18 @@ class TestQueryPlans:
     def test_retention_sentinel_uses_observed_index(self, in_memory_db):
         assert "idx_obs_raw_observed" in _plan(in_memory_db, RETENTION_SQL)
 
-    def test_last_ingest_uses_realm_ingested_index(self, in_memory_db):
-        assert "idx_obs_raw_realm_ingested" in _plan(in_memory_db, LAST_INGEST_SQL)
+    def test_newest_obs_seeks_realm_outlier_time_index(self, in_memory_db):
+        """The freshness probe must be a single seek, not a scan.
+
+        Both seek terms are asserted, not only the index name: a plan that
+        names the index but scans it (a lost equality term, or MAX() wrapped
+        in DATE()) would still contain the name and pass a name-only check
+        (project lesson 2026-07-22).
+        """
+        plan = _plan(in_memory_db, NEWEST_OBS_SQL)
+        assert "SEARCH market_observations_normalized" in plan
+        assert "idx_obs_norm_realm_outlier_time" in plan
+        assert "realm_slug=? AND is_outlier=?" in plan
 
     def test_coverage_range_uses_realm_outlier_time_index(self, in_memory_db):
         assert "idx_obs_norm_realm_outlier_time" in _plan(in_memory_db, COVERAGE_SQL)
