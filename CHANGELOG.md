@@ -7,6 +7,20 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.25] - 2026-09-20
+
+### Removed
+- `idx_obs_raw_realm_ingested` on `market_observations_raw`, via migration 0012 ([#155](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/155)). Two of its entries were missing on the production database, and when their hour slice entered the retention window on 2026-08-31 the raw DELETE for that slice raised `database disk image is malformed` on every hourly run for twenty days. The pruner stops at the first failing slice, so nothing behind it was pruned either: about 105M raw rows and their normalized children went past the 30-day ToS window, the file grew from 98 GB to 150 GB, and the daily forecast gate stayed red from 09-01 with fresh data the whole time. The index had exactly one reader, the health check's last-ingest probe, and that probe has moved (below), so the index is dropped rather than rebuilt: a REINDEX over roughly 270M rows is the multi-GB write job this machine has corrupted before, and a drop reads the index's pages once. Same call as #153, and the schema.py DDL leaves in the same change for the same reason (apply_schema runs before run_migrations and the constant uses IF NOT EXISTS, so a surviving line would rebuild it on every init-db)
+
+### Changed
+- `check-data-health` freshness reads the newest normalized observation per realm (`MAX(observed_at)` over `market_observations_normalized`, one seek on `idx_obs_norm_realm_outlier_time`) instead of `MAX(ingested_at)` over the raw table. That is the signal the forecast's own `StaleDataError` gate reads, so the two now agree; an ingest whose normalize step failed reads stale instead of fresh, and a catch-up drain of old snapshots no longer counts as fresh data. The report line is `Newest obs` (was `Last ingest`) and `RealmHealthStats.last_ingest_at` / `last_ingest_age_hours` are renamed `newest_obs_at` / `newest_obs_age_hours`, since a field named for ingestion that holds an observation timestamp would mislead the next reader. The `Last obs` date line derives from the same probe, so the two cannot disagree
+
+### Notes
+- Applied on rex-desktop the same day: `init-db` ran migration 0012 in 271 s with the scheduled tasks stopped, and the first `prune-snapshots` call afterward deleted the slice that had failed 364 times, plus the seven behind it, 1,612,341 rows from each table in 79 s with exit 0. The 104M-row remainder drains through the hourly's 1.5M-row budget; the retention sentinel and the daily gate stay red until the oldest row is inside 32 days. Evidence on #155
+- The discriminator verdict for #155 is real damage, by a stronger test than the runbook's two-pass check: the same DELETE on the same slice failed identically 364 times over twenty days across reboots and sleep cycles, which is the deterministic re-read the runbook asks for, run 364 times. docs/integrity-incidents.md now says so
+- Three backup-verification tests corrupted 256 bytes at the midpoint of the file to prove a bad page fails `integrity_check`. With one index fewer in the schema the midpoint moved onto a page the check never reads, and all three passed without corrupting anything. They now garble a named table's root page read from `sqlite_master`, the shape the health tests already used
+- Filed from the same recovery, all in M0A: [#160](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/160) the pruner should skip and report a failing slice instead of stalling every later one; [#161](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/161) the daily forecast gate should not block on the retention violation, which is not a freshness signal; [#162](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/162) the hourly run overruns its slot as the normalized table grows (35 minutes on 08-23, 65 to 70 by mid-September) and Task Scheduler drops the next trigger silently
+
 ## [2.14.24] - 2026-08-22
 
 ### Changed

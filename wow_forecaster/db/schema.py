@@ -102,22 +102,23 @@ CREATE TABLE IF NOT EXISTS market_observations_raw (
 );
 """
 
-# No (item_id, observed_at) index here, deliberately (issue #153). Nothing
-# queries this table by item_id: every read filters on observed_at,
-# is_processed or realm_slug, and per-item history is served from
-# market_observations_normalized and the rollups. The index that used to sit
-# here cost maintenance on every insert and every prune delete for no reader,
-# and was the only structure implicated when the table corrupted. Do not
-# reintroduce it without a query that needs it: apply_schema runs before
-# run_migrations in init-db, so a line here silently outranks migration 0011.
+# Two indexes are absent here, deliberately, and both were dropped after
+# they corrupted on the production database and stalled the retention prune.
+# No (item_id, observed_at) index (issue #153): nothing queries this table by
+# item_id, and per-item history is served from market_observations_normalized
+# and the rollups. No (realm_slug, ingested_at) index (issue #155): its one
+# reader, the health check's freshness probe, now reads the newest normalized
+# observation through idx_obs_norm_realm_outlier_time. Every remaining read
+# of this table filters on observed_at or is_processed. Do not reintroduce
+# either without a query that needs it: apply_schema runs before
+# run_migrations in init-db, so a line here silently outranks migrations
+# 0011 and 0012.
 _DDL_MARKET_OBS_RAW_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_obs_raw_unprocessed
     ON market_observations_raw(is_processed)
     WHERE is_processed = 0;
 CREATE INDEX IF NOT EXISTS idx_obs_raw_observed
     ON market_observations_raw(observed_at);
-CREATE INDEX IF NOT EXISTS idx_obs_raw_realm_ingested
-    ON market_observations_raw(realm_slug, ingested_at);
 """
 
 _DDL_MARKET_OBS_NORMALIZED = """

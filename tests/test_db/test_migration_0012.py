@@ -1,11 +1,13 @@
-"""Tests for DB migration 0011 - drop idx_obs_raw_item_time (issue #153).
+"""Tests for DB migration 0012 - drop idx_obs_raw_realm_ingested (issue #155).
 
-The index was corrupt on the production database ("row missing from index",
-100 reported occurrences, all naming this one index) and no query in the repo
-uses it: every read of ``market_observations_raw`` filters on ``observed_at``,
-``is_processed`` or ``realm_slug``. Dropping it is the smallest-write repair
-available, which matters on a machine with a documented history of corrupting
-large index builds.
+Two rows were missing from this index on the production database, and once
+their hour slice entered the prune window the raw DELETE for that slice
+raised "database disk image is malformed" on every hourly run for twenty
+days, stalling the whole retention prune behind it. The index served exactly
+one query, the health check's last-ingest lookup, and that query now reads
+the newest normalized observation through idx_obs_norm_realm_outlier_time
+instead. Dropping the index is the smallest-write repair available, the same
+call #153 made for idx_obs_raw_item_time.
 
 The pairing with schema.py is the part worth pinning. ``init-db`` runs
 ``apply_schema()`` before ``run_migrations()``, and the raw-index DDL constant
@@ -20,32 +22,31 @@ import sqlite3
 from wow_forecaster.db.migrations import MIGRATIONS, run_migrations
 from wow_forecaster.db.schema import apply_schema, get_existing_indexes
 
-DROPPED_INDEX = "idx_obs_raw_item_time"
+DROPPED_INDEX = "idx_obs_raw_realm_ingested"
 
-# The other raw-table indexes must survive: each one serves a live query.
-# idx_obs_raw_realm_ingested was in this tuple until migration 0012 dropped
-# it too (issue #155); test_migration_0012.py carries the same assertion.
+# The remaining raw-table indexes must survive: each one serves a live query
+# (the pruner's observed_at range and the normalizer's is_processed scan).
 SURVIVING_INDEXES = (
     "idx_obs_raw_observed",
     "idx_obs_raw_unprocessed",
 )
 
 _LEGACY_DDL = (
-    "CREATE INDEX IF NOT EXISTS idx_obs_raw_item_time "
-    "ON market_observations_raw(item_id, observed_at);"
+    "CREATE INDEX IF NOT EXISTS idx_obs_raw_realm_ingested "
+    "ON market_observations_raw(realm_slug, ingested_at);"
 )
 
 
-class TestMigration0011:
+class TestMigration0012:
     def test_registered(self):
-        assert "0011_drop_raw_item_time_index" in MIGRATIONS
+        assert "0012_drop_raw_realm_ingested_index" in MIGRATIONS
 
     def test_upgrade_path_drops_a_legacy_index(self):
         """A database that already carries the index loses it."""
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
         apply_schema(conn)
-        conn.execute(_LEGACY_DDL)  # simulate a pre-0011 database
+        conn.execute(_LEGACY_DDL)  # simulate a pre-0012 database
         assert DROPPED_INDEX in get_existing_indexes(conn)
 
         run_migrations(conn)
@@ -54,7 +55,7 @@ class TestMigration0011:
         conn.close()
 
     def test_survivors_untouched(self):
-        """Dropping one index must not disturb the ones that serve queries."""
+        """Dropping one index must not disturb the two that serve queries."""
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
         apply_schema(conn)
@@ -79,7 +80,7 @@ class TestMigration0011:
             row[0]
             for row in in_memory_db.execute("SELECT version_id FROM schema_versions")
         }
-        assert "0011_drop_raw_item_time_index" in versions
+        assert "0012_drop_raw_realm_ingested_index" in versions
 
     def test_idempotent(self, in_memory_db):
         run_migrations(in_memory_db)

@@ -87,6 +87,30 @@ def _make_backup(tmp_path: Path, name: str = "durable.db", *, n_forecasts: int =
     return out
 
 
+def _corrupt_root_page(db: Path, table: str = "daily_rollup_item") -> bytes:
+    """Return the file's bytes with the start of one table's root page overwritten.
+
+    A named root page, not a byte offset: the tests used to garble 256 bytes
+    at the midpoint of the file, and the page sitting there moves whenever the
+    schema changes shape. Dropping one index (migration 0012) shifted it onto
+    a page integrity_check does not read, and three corruption tests went
+    green without corrupting anything.
+    """
+    con = sqlite3.connect(str(db))
+    try:
+        rootpage = con.execute(
+            "SELECT rootpage FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone()[0]
+        page_size = con.execute("PRAGMA page_size").fetchone()[0]
+    finally:
+        con.close()
+    data = bytearray(db.read_bytes())
+    offset = (rootpage - 1) * page_size
+    data[offset : offset + 256] = b"\xff" * 256
+    return bytes(data)
+
+
 def _key_for(ts: datetime) -> str:
     u = ts.astimezone(UTC)
     return f"db_backups/{u:%Y/%m/%d}/durable_{u:%Y%m%dT%H%M%S}Z.db.gz"
@@ -139,10 +163,7 @@ def test_clean_backup_verifies_ok(tmp_path: Path) -> None:
 
 def test_corrupted_page_fails_verification(tmp_path: Path) -> None:
     db = _make_backup(tmp_path)
-    data = bytearray(db.read_bytes())
-    mid = len(data) // 2
-    data[mid : mid + 256] = b"\xff" * 256
-    db.write_bytes(bytes(data))
+    db.write_bytes(_corrupt_root_page(db))
 
     result = verify_backup_db(db)
     assert result.ok is False
@@ -202,11 +223,8 @@ def test_main_local_file_clean(tmp_path: Path) -> None:
 
 def test_main_local_file_corrupt(tmp_path: Path) -> None:
     db = _make_backup(tmp_path)
-    data = bytearray(db.read_bytes())
-    mid = len(data) // 2
-    data[mid : mid + 256] = b"\xff" * 256
     gz = tmp_path / "durable.db.gz"
-    gz.write_bytes(gzip.compress(bytes(data)))
+    gz.write_bytes(gzip.compress(_corrupt_root_page(db)))
     assert main([str(gz)]) == 1
 
 
@@ -244,12 +262,12 @@ def _stub_bucket(
 ) -> _StubS3:
     now = datetime.now(tz=UTC)
     newest_db = _make_backup(tmp_path, "newest.db", n_forecasts=newest_forecasts)
-    newest_bytes = bytearray(newest_db.read_bytes())
     if corrupt_newest:
-        mid = len(newest_bytes) // 2
-        newest_bytes[mid : mid + 256] = b"\xff" * 256
+        newest_bytes = _corrupt_root_page(newest_db)
+    else:
+        newest_bytes = newest_db.read_bytes()
     objects = {
-        _key_for(now - timedelta(hours=newest_age_hours)): gzip.compress(bytes(newest_bytes)),
+        _key_for(now - timedelta(hours=newest_age_hours)): gzip.compress(newest_bytes),
     }
     if include_prev:
         prev_db = _make_backup(tmp_path, "prev.db", n_forecasts=prev_forecasts)

@@ -59,6 +59,32 @@ Run the exact same check twice and compare the error lists.
    small amount of genuine damage with transient reads layered on top. Treat
    the repeating subset as real.
 
+A write that fails identically on every scheduled run is the same
+discriminator, already run for you. Issue #155 is the worked example: the
+retention prune's DELETE for one hour slice raised `database disk image is
+malformed` 364 times over twenty days, across reboots and sleep cycles, on the
+two rows a single integrity pass had named a month earlier. That is a
+deterministic re-read finding the same broken page 364 times, and a fresh
+`PRAGMA integrity_check` (an hour or more on the full-size table, starving
+ingest while it runs) would have added nothing to it. Record the run count and
+the first and last failure timestamps as the verdict instead.
+
+## Repair by dropping, when the damaged structure is an index with one reader
+
+An index can be dropped without reading its entries, so a corrupt index whose
+only consumer can be served another way is repaired by deleting it, never by
+rebuilding it. That is the smallest write available on this machine, and it
+has been the answer twice: `idx_obs_raw_item_time` (#153, no reader at all)
+and `idx_obs_raw_realm_ingested` (#155, one reader, the health check's
+freshness probe, which moved to the normalized table). Both drops shipped as
+migrations with the schema.py DDL removed in the same change, because
+`init-db` runs `apply_schema()` before `run_migrations()` and a surviving
+`IF NOT EXISTS` line would rebuild the index on every run. The DROP itself
+walks the index's pages to free them and writes only freelist trunks, as long
+as `PRAGMA secure_delete` is 0 (it is; a 1 would rewrite every freed page).
+Check that before the drop, and check the drive: the freed pages stay in the
+file for inserts to reuse, and nothing here reclaims them.
+
 ## Standing rules
 
 - **Never REINDEX or VACUUM the production DB as a repair step on this

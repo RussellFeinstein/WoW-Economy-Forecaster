@@ -43,7 +43,7 @@ class TestApplySchema:
         indexes = get_existing_indexes(in_memory_db)
         expected_indexes = [
             "idx_obs_raw_observed",
-            "idx_obs_raw_realm_ingested",
+            "idx_obs_norm_realm_outlier_time",
             "idx_obs_norm_item_time",
             "idx_events_type_date",
             "idx_forecast_archetype_date",
@@ -63,6 +63,17 @@ class TestApplySchema:
         index that migration 0011 had just dropped.
         """
         assert "idx_obs_raw_item_time" not in get_existing_indexes(in_memory_db)
+
+    def test_raw_realm_ingested_index_not_created(self, in_memory_db):
+        """A fresh database must not carry idx_obs_raw_realm_ingested (issue #155).
+
+        Dropped after two of its entries went missing on the production
+        database and stalled the retention prune for twenty days. Its one
+        reader, the health check's freshness probe, now seeks
+        idx_obs_norm_realm_outlier_time instead. Same pairing rule as above:
+        a surviving DDL line would rebuild it on every init-db.
+        """
+        assert "idx_obs_raw_realm_ingested" not in get_existing_indexes(in_memory_db)
 
 
 class TestForeignKeyEnforcement:
