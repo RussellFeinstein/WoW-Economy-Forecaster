@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.28] - 2026-09-20
+
 ### Fixed
 - The daily forecast no longer holds the database write lock through a scan of the normalized table ([#107](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/107)). `ForecastStage` used to insert the archetype forecasts and then build the item-level forecasts on the same connection, so the transaction the inserts opened stayed open through `_fetch_items_with_history`'s pass over every normalized row (23 to 38 minutes on the production database), and the 07:16 hourly's ingest failed with `database is locked` on every day the daily ran (08-29, 08-30, 08-31, 09-20). The item forecasts are now built first, on a read-only connection, and the write transaction holds inserts only; a second connection can insert while they are being built, which a stage-level test checks the way production found it.
 - The three item-forecast helpers (`_fetch_items_with_history`, `_fetch_item_prices`, `_fetch_archetype_prices`) read `daily_rollup_item` and `daily_rollup_archetype` instead of `market_observations_normalized`. The swap is exact by the same argument as #123: a rollup row with `price_obs_count_pos > 0` is precisely a day the old `is_outlier = 0 AND price_gold > 0` filter counted, and the `_pos` quantity-weighted sums are the old numerator and denominator under that filter. The three queries return in under a second where the scan took 23 minutes, and the daily forecast can now produce item rows from a restored durable backup, which excludes both observation tables.
