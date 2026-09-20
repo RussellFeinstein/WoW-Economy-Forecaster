@@ -7,6 +7,16 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.27] - 2026-09-20
+
+### Changed
+- The build order now lives on one pinned tracking issue, [#167](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/167), in the shape adopted for every repo on 2026-09-20: one table per milestone (`# | Issue | Flag | Runs | Needs | What`), holding only what is not built yet, rows leaving on close, `live` and `gate` as the only flags, every order change a dated comment. All 51 open issues are on it (50 positioned, #86 under Not buildable yet), with the ordering principles the milestone descriptions and ROADMAP.md had accumulated carried over as its Decisions in force
+- The two older copies of the order are retired. Each milestone description now opens with `Work order (pinned): #167.` and keeps only its scope paragraph, and the Work order section of docs/ROADMAP.md says how the tracker reads and what governed the order before it; the issue-level sequence and the done prose leave both, since the CHANGELOG, the closed issues and git (v2.14.26 is the last revision of ROADMAP.md with the full section) already hold them. The milestone-list convention from [#46](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/46) (v2.14.18) ends here: two copies of one order drifted against each other every time it moved (M1's list carried a closed #100 and omitted #107 for eight weeks; #72 and #102 sat in their milestones and in no list at all). CLAUDE.md's Roadmap section and docs/m1-model-validation-plan.md point at the tracker
+- Three learning-bank questions that cited the old Work order section (m13-q17, m20-q11, m20-q17) are re-anchored onto the sentences in the rewritten section that carry the same rules, and each answer gains a paragraph on where the order lives now. The drift guard caught all three in the suite, which is the mechanism working as designed; no question was removed
+
+### Notes
+- Auditing the old lists before retiring them surfaced that [#72](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/72) is live: today's hourly logs `Event shock | active=13` and the forecast stage applies `drift CI multiplier=1.25`, so the open-ended-event floor is on every forecast being issued. It carries the `live` flag at the head of M5 on the tracker, in the milestone it was filed to
+
 ## [2.14.26] - 2026-09-20
 
 ### Changed

@@ -379,9 +379,15 @@ and #33's A/B maturation both make you wait calendar time you cannot compress. M
 is the designated place to spend that wait productively, because it can start and
 finish without touching the blocked chain. The design turns idle wall-clock into
 a shippable milestone rather than dead time.
+
+Since 2026-09-20 the order itself lives on the pinned tracking issue #167 rather
+than in the roadmap's Work order section, and the filler rule survived the move
+intact: the roadmap now states it in one sentence, the tracker's M5 area heading
+says "beside everything after M0A" for the same reason, and the wait that triggers
+it widened from a date alone to a date or an operator step.
 """
 source = "docs/ROADMAP.md"
-anchor = "M5 (#34-#36) formally sits here but is the designated filler"
+anchor = "M5 is the designated filler, because it needs only rollups and events"
 see_also = ["PLAN.md"]
 
 [[question]]
@@ -564,6 +570,13 @@ no dependency on the blocked chain, and is explicitly the designated filler. So 
 start the event study now, let #11 and #33 keep counting in the background, and
 return to them when their clocks have run. You do not sit idle waiting, and you do
 not try to force a significance test on too few pairs.
+
+The rule moved house on 2026-09-20 without changing: the order is the pinned
+tracking issue #167, whose Needs column names each wait, and the roadmap's Work
+order section keeps the sentence. One thing the move added is a name for the wait
+that is not a date: an operator step (a credential, an account, a manual suspend)
+holds a row the same way a calendar does, and the answer is the same, advance and
+circle back.
 """
 options = [
   { text = "Advance and circle back: pull M5 (the event-study filler) forward while #11 and #33 keep maturing", correct = true },
@@ -572,5 +585,5 @@ options = [
   { text = "Jump ahead to M6 publish, since it is independent of the blocked items", note = "M6 is not independent; it is gated on M3 marts and M1/M2 numbers, which the blocked items are still producing. M5 is the independent filler; M6 is the most-blocked milestone, not a candidate to pull forward." },
 ]
 source = "docs/ROADMAP.md"
-anchor = "When the lowest open milestone's remaining issues are waiting on wall clock"
+anchor = "when a milestone's remaining rows are waiting on a date, work advances to the next area and circles back"
 see_also = ["PLAN.md"]
