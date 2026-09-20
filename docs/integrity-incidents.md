@@ -35,6 +35,18 @@ flaky RAM can take a healthy file and write actual damage into it.
 - Application errors: `sqlite3.DatabaseError: database disk image is
   malformed` during a pipeline run (local read; the discriminator applies,
   and one self-healed occurrence is already on record).
+- A value that no query should ever have written: a realm slug outside the
+  configured set, a date outside the observed range. None of the checks
+  above can see this class, because `integrity_check` verifies pages and
+  b-trees and never reads a value, and the CI verification runs the same
+  pragma. The on-record case (2026-09-20, #165) is four rows in the rollup
+  tables written between 07-28 and 09-09, three of them one bit from a
+  valid value (`}s` for `us`, `ur` for `us`, `2027-09-09` for
+  `2026-09-09`), each with obs_count 1, each sitting beside the correct
+  row for the same day. Until #165 lands the only way to find one is a
+  domain query by hand; the discriminator applies to it like any other
+  local read, and a value that reads the same on a second connection is
+  on disk. Repair is a targeted DELETE of the bad rows, never a rebuild.
 
 ## The two-pass discriminator
 
