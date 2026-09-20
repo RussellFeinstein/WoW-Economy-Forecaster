@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.25] - 2026-09-20
+
 ### Removed
 - `idx_obs_raw_realm_ingested` on `market_observations_raw`, via migration 0012 ([#155](https://github.com/RussellFeinstein/WoW-Economy-Forecaster/issues/155)). Two of its entries were missing on the production database, and when their hour slice entered the retention window on 2026-08-31 the raw DELETE for that slice raised `database disk image is malformed` on every hourly run for twenty days. The pruner stops at the first failing slice, so nothing behind it was pruned either: about 105M raw rows and their normalized children went past the 30-day ToS window, the file grew from 98 GB to 150 GB, and the daily forecast gate stayed red from 09-01 with fresh data the whole time. The index had exactly one reader, the health check's last-ingest probe, and that probe has moved (below), so the index is dropped rather than rebuilt: a REINDEX over roughly 270M rows is the multi-GB write job this machine has corrupted before, and a drop reads the index's pages once. Same call as #153, and the schema.py DDL leaves in the same change for the same reason (apply_schema runs before run_migrations and the constant uses IF NOT EXISTS, so a surviving line would rebuild it on every init-db)
 
